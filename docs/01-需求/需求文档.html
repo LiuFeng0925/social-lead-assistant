@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书自动化获客工具 · 需求文档 (PRD)</title>
+<style>
+  :root{
+    --bg:#f5f6f8;--card:#fff;--ink:#1d2330;--muted:#5b6478;--line:#e6e9ef;
+    --brand:#ff2742;--green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;
+    --red:#c92a2a;--red-bg:#fdecec;--blue:#1f6fd6;--blue-bg:#eaf2fc;
+    --shadow:0 1px 3px rgba(20,30,50,.06),0 8px 24px rgba(20,30,50,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.7;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 80px}
+  header{background:linear-gradient(135deg,#23272f 0%,#3a1f24 60%,#5e1620 100%);color:#fff;padding:42px 20px 36px;border-bottom:4px solid var(--brand)}
+  header .inner{max-width:1000px;margin:0 auto;padding:0 20px}
+  .tag{display:inline-block;background:var(--brand);color:#fff;font-size:12px;font-weight:600;padding:4px 12px;border-radius:30px;letter-spacing:.5px}
+  header h1{font-size:28px;margin:14px 0 6px;font-weight:800}
+  header p{margin:0;color:#cfd3dc;font-size:14px}
+  .meta{margin-top:16px;font-size:13px;color:#9aa1ad}
+  .meta span{margin-right:18px}
+  section{margin-bottom:34px}
+  h2.sec{font-size:21px;margin:30px 0 8px;font-weight:800;display:flex;align-items:center;gap:10px;border-bottom:2px solid var(--line);padding-bottom:8px}
+  h2.sec .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;background:var(--ink);color:#fff;border-radius:7px;font-size:14px;padding:0 6px}
+  h3{font-size:16px;margin:18px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;box-shadow:var(--shadow);margin-bottom:14px}
+  p{margin:0 0 10px}
+  ul{margin:0 0 10px;padding-left:20px}li{margin-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);margin:6px 0 14px}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f2f6;font-weight:700;font-size:12.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td strong{color:var(--ink)}
+  .badge{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap}
+  .b-green{background:var(--green-bg);color:var(--green)}
+  .b-amber{background:var(--amber-bg);color:var(--amber)}
+  .b-red{background:var(--red-bg);color:var(--red)}
+  .b-blue{background:var(--blue-bg);color:var(--blue)}
+  .b-gray{background:#eceef2;color:#5b6478}
+  .callout{border-radius:10px;padding:13px 17px;margin:12px 0;font-size:14px}
+  .c-red{background:var(--red-bg);border:1px solid #f3c2c2;color:#7a1f1f}
+  .c-amber{background:var(--amber-bg);border:1px solid #f0d59a;color:#73490a}
+  .c-blue{background:var(--blue-bg);border:1px solid #b9d6f6;color:#16467f}
+  .c-green{background:var(--green-bg);border:1px solid #b6e3cd;color:#0a5c41}
+  .callout strong{display:block;margin-bottom:3px}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 22px;box-shadow:var(--shadow);margin:24px 0}
+  nav.toc strong{font-size:13px;color:var(--muted);display:block;margin-bottom:8px}
+  nav.toc a{color:var(--blue);text-decoration:none;font-size:13.5px;display:inline-block;margin:3px 16px 3px 0}
+  nav.toc a:hover{text-decoration:underline}
+  code{background:#eef0f4;border-radius:4px;padding:1px 6px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:8px 0}
+  .step{flex:1;min-width:130px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  .step .num{font-size:11px;font-weight:800;color:var(--brand)}
+  .step h4{margin:3px 0 5px;font-size:13.5px}
+  .step p{font-size:12px;color:var(--muted);margin:0}
+  .fid{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--brand);font-weight:700}
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
+  .open{background:#fffdf6;border:1px dashed var(--amber);border-radius:8px;padding:4px 0}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <span class="tag">需求文档 · PRD · 需求已闭环</span>
+  <h1>小红书自动化获客工具 · 需求文档</h1>
+  <p>面向租房中介的全自动线索获取系统 ｜ 桌面客户端 + 中央后台</p>
+  <div class="meta"><span>📅 2026-06-24</span><span>📌 版本 v0.2</span><span>✅ 状态:10 项决策已闭环,待你终审</span></div>
+</div></header>
+
+<div class="wrap">
+  <nav class="toc"><strong>目录</strong>
+    <a href="#bg">1 背景与目标</a>
+    <a href="#role">2 角色与用户</a>
+    <a href="#flow">3 核心业务流程</a>
+    <a href="#fr">4 功能需求</a>
+    <a href="#anti">5 防封号与养号(重点)</a>
+    <a href="#arch">6 账号·租户·后台</a>
+    <a href="#nfr">7 非功能需求</a>
+    <a href="#tech">8 技术与架构决策</a>
+    <a href="#scope">9 范围(MVP/后期/不做)</a>
+    <a href="#risk">10 关键风险与红线</a>
+    <a href="#kpi">11 成功标准</a>
+    <a href="#open">12 需求决策结论 ✅</a>
+    <a href="#dec">13 决策记录</a>
+  </nav>
+
+  <div class="callout c-blue"><strong>怎么读这份文档</strong>
+  绿色 <span class="badge b-green">P0</span> = MVP 必须;蓝色 <span class="badge b-blue">P1</span> = MVP 应有;灰色 <span class="badge b-gray">P2</span> = 后期。<a href="#open" style="color:#16467f;font-weight:700">第 12 节</a>记录了 10 项关键决策的结论——需求已闭环,部分明细按文档链下沉到《产品功能文档》。</div>
+
+  <!-- 1 -->
+  <section id="bg"><h2 class="sec"><span class="n">1</span>背景与目标</h2>
+  <div class="card">
+    <h3>1.1 背景</h3>
+    <p>租房中介公司目前依赖人工在小红书上找线索:搜索"成都租房"等相关笔记,在求租帖下评论自家房源吸引私聊,或私信评论区的潜在客户,引导对方添加微信成为线索。该过程<strong>人力重、效率低、难规模化</strong>。</p>
+    <h3>1.2 目标</h3>
+    <p>做一套工具,<strong>自动完成</strong>"检索相关笔记 → 按条件匹配 → 自动评论/私信(带匹配房源图文) → 引导加微/留联系方式 → 线索沉淀"的全链路获客动作,在<strong>可控封号风险</strong>下放大中介的获客产能。</p>
+    <h3>1.3 一句话定义</h3>
+    <p>一个"<strong>每账号一个桌面客户端 + 一个中央汇总后台</strong>"的小红书全自动获客系统,客户端驱动用户真实浏览器在小红书上自动获客,后台统一观测所有账号与线索。</p>
+  </div></section>
+
+  <!-- 2 -->
+  <section id="role"><h2 class="sec"><span class="n">2</span>角色与用户</h2>
+  <table>
+    <thead><tr><th style="width:22%">角色</th><th style="width:30%">使用什么</th><th>职责 / 诉求</th></tr></thead>
+    <tbody>
+      <tr><td><strong>中介运营(客户端使用者)</strong></td><td>桌面客户端(1 人/1 账号)</td><td>配置匹配条件、维护房源素材、启动自动化、接手高意向对话、查看本账号线索</td></tr>
+      <tr><td><strong>管理者(后台使用者)</strong></td><td>中央后台</td><td>跨账号观测运行情况/配额/健康、汇总查看与管理全部线索</td></tr>
+      <tr><td><strong>租户(Tenant)</strong></td><td>—(数据隔离单位)</td><td>一个公司/团队 = 一个租户,其下多个账号与客户端;<span class="badge b-gray">P2</span> 租户管理 UI 后期做,本期 schema 预留</td></tr>
+    </tbody>
+  </table></section>
+
+  <!-- 3 -->
+  <section id="flow"><h2 class="sec"><span class="n">3</span>核心业务流程</h2>
+  <div class="flow">
+    <div class="step"><div class="num">1 检索</div><h4>找笔记</h4><p>按城市/关键词检索求租&房源笔记及其评论区</p></div>
+    <div class="step"><div class="num">2 匹配</div><h4>分层漏斗</h4><p>地区+时间→意向→预算户型→诉求语义,打分命中</p></div>
+    <div class="step"><div class="num">3 生成</div><h4>话术+配图</h4><p>AI 按诉求生成话术,从房源库选匹配房源与图</p></div>
+    <div class="step"><div class="num">4 触达</div><h4>评论/私信</h4><p>全自动直发(限频+反检测),四类动作</p></div>
+    <div class="step"><div class="num">5 转化</div><h4>引导加微</h4><p>诱导对方给微信,识别入库;高意向转人工</p></div>
+    <div class="step"><div class="num">6 沉淀</div><h4>线索归集</h4><p>本地保留+上报后台,预留外部对接</p></div>
+  </div>
+  <div class="callout c-amber"><strong>两条玩法(都要支持)</strong>
+  ① 在<strong>求租帖</strong>下评论自家房源,吸引对方私聊;② 对<strong>房源帖/评论区提问者</strong>主动私信引导。匹配引擎根据"意向类型"判断笔记走哪条玩法。</div>
+  </section>
+
+  <!-- 4 -->
+  <section id="fr"><h2 class="sec"><span class="n">4</span>功能需求</h2>
+
+  <h3>4.1 检索 <span class="badge b-green">P0</span></h3>
+  <ul>
+    <li><span class="fid">FR-1.1</span> 按城市 + 关键词检索相关笔记(求租 / 房源)。</li>
+    <li><span class="fid">FR-1.2</span> 读取笔记正文、标签、发布时间、作者信息。</li>
+    <li><span class="fid">FR-1.3</span> 读取笔记评论区,识别"问房子信息"的潜在客户评论。</li>
+    <li><span class="fid">FR-1.4</span> 低频、模拟人工节奏地翻页/采集,受全局限频约束(见第 5 节)。</li>
+  </ul>
+
+  <h3>4.2 匹配引擎(分层漏斗) <span class="badge b-green">P0</span></h3>
+  <table>
+    <thead><tr><th>层</th><th>维度</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>L1 硬过滤</td><td><strong>地区 + 时间</strong></td><td>地区匹配<strong>可开关</strong>,且目标城市由<strong>用户自定义(可多城)</strong>——不绑定账号属地(人在 A 城、业务在 B 城的情况)。可细到区/商圈。时间 = 发帖/评论在配置的时间窗内。不满足直接淘汰。</td></tr>
+      <tr><td>L2 意向</td><td>求租 / 出租</td><td>识别笔记意向类型,决定走"评论"还是"私信"玩法。</td></tr>
+      <tr><td>L3 结构化</td><td>预算 / 户型</td><td>价格区间、几居室、整租/合租等结构化条件。</td></tr>
+      <tr><td>L4 语义</td><td>诉求关键词</td><td>LLM 提取"近地铁/带阳台/可短租/可养宠/押一付一"等软诉求,输出匹配分,并<strong>驱动选哪套房源、配哪张图</strong>。</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--muted)"><span class="fid">FR-2.x</span> 匹配条件可由运营在客户端配置;L1/L2/L3 为低成本规则筛,L4 为 LLM 精筛(失败时 fail-open 保留并标记待人工)。</p>
+
+  <h3>4.3 内容生成(话术 + 房源配图) <span class="badge b-green">P0</span></h3>
+  <ul>
+    <li><span class="fid">FR-3.1</span> LLM 按笔记上下文生成个性化、不雷同的评论/私信话术(规避复制粘贴刷屏特征)。</li>
+    <li><span class="fid">FR-3.2</span> 按 L4 诉求关键词从房源素材库匹配房源,附带对应图文("提到地铁→发地铁房")。</li>
+    <li><span class="fid">FR-3.3</span> 话术中<strong>不出现明文联系方式</strong>(走第 4.5 节策略)。</li>
+  </ul>
+
+  <h3>4.4 触达动作(全自动直发) <span class="badge b-green">P0</span></h3>
+  <p>四类动作全部要做,<strong>实现按风险从低到高排期</strong>:</p>
+  <table>
+    <thead><tr><th>动作</th><th>说明</th><th>风险</th><th>建议排期</th></tr></thead>
+    <tbody>
+      <tr><td><span class="fid">FR-4.1</span> 自动评论笔记</td><td>在匹配的求租/房源笔记下发带房源图文的评论</td><td><span class="badge b-amber">中</span></td><td>先做</td></tr>
+      <tr><td><span class="fid">FR-4.2</span> 回复他人评论区</td><td>在别人笔记评论区回复问房子的提问者</td><td><span class="badge b-amber">中</span></td><td>先做</td></tr>
+      <tr><td><span class="fid">FR-4.3</span> 自动回复私信</td><td>别人私信我→机器多轮自动应答</td><td><span class="badge b-amber">中</span></td><td>其次</td></tr>
+      <tr><td><span class="fid">FR-4.4</span> 主动发起私信</td><td>主动私信发帖人/评论提问者</td><td><span class="badge b-red">最高</span></td><td>最后,最克制</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4.5 加微转化 <span class="badge b-green">P0</span></h3>
+  <p>主策略:<strong>混合(诱导为主 + 高意向转人工)</strong>。</p>
+  <ul>
+    <li><span class="fid">FR-5.1</span> 话术用暗语诱导对方主动留/加微信(不主动发我方联系方式)。</li>
+    <li><span class="fid">FR-5.2</span> <strong>微信号识别入库器</strong>:自动识别对方消息里的微信号/手机号/暗号并提取入库。</li>
+    <li><span class="fid">FR-5.3</span> <strong>对话意向分级器</strong>:LLM 判断对话意向/复杂度,达到阈值则<strong>标记转人工接手</strong>,客户端提醒运营。默认转人工触发:对方明确问价 / 约看房 / 索要或给出联系方式 / 连续多轮深入咨询(规则可配置)。</li>
+    <li><span class="fid">FR-5.4</span> <strong>话术库管理功能</strong>:提供让用户自行填写/维护诱导话术、模板与暗语的功能(用户用自己"在用且没被封"的真实话术),不内置写死。</li>
+  </ul>
+
+  <h3>4.6 房源素材库 <span class="badge b-green">P0</span> <span class="badge b-blue">外部同步 P2</span></h3>
+  <ul>
+    <li><span class="fid">FR-6.1</span> 工具内结构化录入房源:城市/商圈、价格、户型、整租合租、卖点标签、多张图。</li>
+    <li><span class="fid">FR-6.2</span> 标签体系与 L4 诉求关键词建立映射(用于自动选房配图)。</li>
+    <li><span class="fid">FR-6.3</span> 预留"外部同步接口",将来对接公司现有房源系统(本期不实现)。</li>
+  </ul>
+
+  <h3>4.7 线索管理 <span class="badge b-green">P0</span></h3>
+  <ul>
+    <li><span class="fid">FR-7.1</span> 线索(对方微信/手机、来源笔记、对话、意向、状态)在客户端<strong>本地保留</strong>。</li>
+    <li><span class="fid">FR-7.2</span> 线索与账号状态<strong>上报中央后台</strong>汇总(失败重试、断网不丢)。</li>
+    <li><span class="fid">FR-7.3</span> 预留外部对接出口(企微/CRM/Excel 导出),本期不实现。</li>
+  </ul>
+
+  <h3>4.8 中央后台 <span class="badge b-blue">P1(薄层)</span></h3>
+  <ul>
+    <li><span class="fid">FR-8.1</span> 接收所有客户端上报的线索与账号状态。</li>
+    <li><span class="fid">FR-8.2</span> 跨账号看板:每个账号的运行情况、配额用量、健康/限流状态可见。</li>
+    <li><span class="fid">FR-8.3</span> 汇总查看与管理全部线索。</li>
+    <li><span class="fid">FR-8.4</span> 数据按 <code>tenant_id</code> 隔离;<span class="badge b-gray">P2</span> 租户管理 UI 后期。</li>
+    <li><span class="fid">FR-8.5</span> 后台为"观察者",<strong>不向客户端下指令</strong>(客户端自主运行)。</li>
+  </ul>
+
+  <h3>4.9 可配置性需求(横切) <span class="badge b-green">P0</span></h3>
+  <div class="callout c-blue"><strong>原则:能配置的都不写死</strong>
+  系统运行参数必须由用户在客户端自助配置。本节只声明"<strong>哪些必须可配置</strong>"(需求层);具体的<strong>配置项明细、界面、字段、默认值、交互</strong>由后续《产品功能文档》定义,本文档不展开。</div>
+  <ul>
+    <li><span class="fid">FR-C.1</span> <strong>检索配置</strong>:<strong>自定义目标城市(可多城、不绑账号属地)</strong>、搜索关键词、笔记类型(求租/房源)、时间窗(无预设默认,用户首次配置时填)、采集范围/翻页深度。</li>
+    <li><span class="fid">FR-C.2</span> <strong>匹配规则配置</strong>:四层各自的条件、阈值与<strong>启用开关(如地区匹配可整体开/关)</strong>。</li>
+    <li><span class="fid">FR-C.3</span> <strong>话术与配图配置</strong>:话术风格/模板/变量、是否带图及配图规则。</li>
+    <li><span class="fid">FR-C.4</span> <strong>加微策略配置</strong>:诱导话术/暗语(话术库见 FR-5.4)、"转人工"触发条件。</li>
+    <li><span class="fid">FR-C.5</span> <strong>限频与节奏配置</strong>:各类动作每日上限、操作间隔、工作时间窗、养号阶梯、紧急刹车——<strong>具体数值均可由用户配置</strong>(默认保守,小号实测校准)。</li>
+    <li><span class="fid">FR-C.6</span> <strong>房源库配置</strong>:字段定义、标签体系、标签↔诉求映射。</li>
+    <li><span class="fid">FR-C.7</span> <strong>系统配置</strong>:账号信息、后台上报地址、LLM 提供商/Key。</li>
+  </ul>
+  </section>
+
+  <!-- 5 -->
+  <section id="anti"><h2 class="sec"><span class="n">5</span>防封号与养号(重点) <span class="badge b-green">P0</span></h2>
+  <div class="callout c-red"><strong>这是全自动方案能否存活的命根子</strong>
+  既然选了"全自动直发",必须把下列保护机制作为一等公民,与业务功能同等优先。</div>
+  <ul>
+    <li><span class="fid">FR-9.1 反检测</span>:CDP 驱动真实浏览器(<code>isTrusted=true</code> 输入)、贝塞尔鼠标轨迹、不均匀打字、阅读滚动节奏(复用 BOSS)。</li>
+    <li><span class="fid">FR-9.2 限频</span>:每类动作(评论/私信/采集)独立的每日上限与操作间随机延时;支持配额浮动(±随机)破坏规律性。</li>
+    <li><span class="fid">FR-9.3 工作时间窗</span>:仅在配置的工作时段运行,可按周几区分。</li>
+    <li><span class="fid">FR-9.4 养号阶梯</span>:新号/低权重号自动降速,逐步放量。</li>
+    <li><span class="fid">FR-9.5 账号健康监控</span>:检测限流/异常信号(如发送失败率、功能受限),异常自动降速或暂停并上报后台。</li>
+    <li><span class="fid">FR-9.6 紧急刹车(kill switch)</span>:一键/自动停止该账号所有自动化动作。</li>
+    <li><span class="fid">FR-9.7 不碰明文红线</span>:不在内容/评论中出现明文微信/电话/二维码/外链(系统秒判违规)。</li>
+  </ul>
+  </section>
+
+  <!-- 6 -->
+  <section id="arch"><h2 class="sec"><span class="n">6</span>账号 · 租户 · 后台模型</h2>
+  <ul>
+    <li>一个<strong>客户端实例 = 一个小红书账号</strong>。</li>
+    <li>一个<strong>账号绑定一个真实 Chrome / 一台机器</strong>(天然住宅 IP + 真实指纹,利于防关联)。</li>
+    <li>一个<strong>租户</strong>下可有多个账号/客户端;后台按租户隔离数据。</li>
+    <li>本期先跑通<strong>单账号</strong>;架构与数据模型按多账号/多租户预留,不返工。</li>
+    <li>每个账号的运行情况在后台<strong>可见</strong>。</li>
+  </ul>
+  </section>
+
+  <!-- 7 -->
+  <section id="nfr"><h2 class="sec"><span class="n">7</span>非功能需求</h2>
+  <table>
+    <thead><tr><th style="width:20%">类别</th><th>要求</th></tr></thead>
+    <tbody>
+      <tr><td><strong>合规与风险</strong></td><td>承认违反平台协议与封号风险存在;以"克制 + 拟人 + 限频"降低风险;明确不做明文导流;附使用免责说明。</td></tr>
+      <tr><td><strong>可靠性</strong></td><td>客户端断网仍可运行、本地不丢数据;上报失败可重试;任务崩溃可恢复(状态追踪表 + 心跳)。</td></tr>
+      <tr><td><strong>安全</strong></td><td>本地敏感配置(如 LLM Key)加密存储;客户端与后台通信鉴权;线索数据按租户隔离。</td></tr>
+      <tr><td><strong>性能</strong></td><td>动作吞吐以"安全"为先,受限频上限约束(非追求高 QPS)。</td></tr>
+      <tr><td><strong>可维护</strong></td><td>小红书改版后页面选择器需可快速更新(刚性维护成本);页面操作层与业务层解耦。</td></tr>
+      <tr><td><strong>可观测</strong></td><td>运行事件、动作流水、异常、配额可在客户端与后台查看。</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- 8 -->
+  <section id="tech"><h2 class="sec"><span class="n">8</span>技术与架构决策(已定)</h2>
+  <table>
+    <thead><tr><th style="width:26%">决策</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>客户端形态</td><td><strong>桌面端 Electron + CDP</strong>,复用 BOSS 寻源助手代码资产</td></tr>
+      <tr><td>反爬策略</td><td><strong>驱动用户真实浏览器</strong>,由页面自身生成 <code>x-s/x-t</code> 签名,绕过签名墙(不逆向 API)</td></tr>
+      <tr><td>推进方式</td><td><strong>方案 A</strong>:客户端先行(可独立跑)、后台薄层汇总,schema 预留租户</td></tr>
+      <tr><td>客户端存储</td><td>本地 SQLite</td></tr>
+      <tr><td>后台</td><td>中央服务 + 多租户数据库(建议 PostgreSQL),仅汇总观测,不下指令</td></tr>
+      <tr><td>LLM</td><td>用于匹配精筛、话术生成、对话意向分级、微信号识别。<strong>国产大模型</strong>(火山 Ark / 阿里百炼等),具体型号待定;做成<strong>可切换的 provider</strong>,型号/Key 在配置中填</td></tr>
+      <tr><td>后台部署</td><td><strong>云服务器 + Token 鉴权</strong>(客户端用 Token 上报)</td></tr>
+      <tr><td>授权 license</td><td>本期<strong>不做</strong>(仅内部用);对外交付时再加(可复用 BOSS)</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- 9 -->
+  <section id="scope"><h2 class="sec"><span class="n">9</span>范围</h2>
+  <div class="card">
+    <h3><span class="badge b-green">MVP(本期)</span></h3>
+    <ul>
+      <li>桌面客户端:单账号跑通"检索 → 四级匹配 → 话术+配图 → 四类触达 → 加微/转人工 → 线索本地入库"。</li>
+      <li>工具内结构化房源素材库 + 标签映射。</li>
+      <li>防封号/养号全套保护机制。</li>
+      <li>薄后台:接收上报、跨账号看板、线索汇总查看;数据库带 tenant_id。</li>
+    </ul>
+    <h3><span class="badge b-gray">后期(P2)</span></h3>
+    <ul>
+      <li>租户管理 UI;多账号矩阵的高级调度。</li>
+      <li>房源系统外部对接同步;线索推送企微/CRM/Excel 导出。</li>
+      <li>授权激活/收费产品化(如对外交付)。</li>
+    </ul>
+    <h3><span class="badge b-red">明确不做</span></h3>
+    <ul>
+      <li>不做逆向 API 直连(签名维护无底洞 + 高封号)。</li>
+      <li>不在内容里发明文联系方式/外链。</li>
+      <li>后台不远程操控客户端账号行为(本期)。</li>
+    </ul>
+  </div>
+  </section>
+
+  <!-- 10 -->
+  <section id="risk"><h2 class="sec"><span class="n">10</span>关键风险与红线</h2>
+  <ul>
+    <li><span class="badge b-red">封号</span> 小红书风控("天枢",200+ 维度)严打机器操作与站外引流;主动私信陌生人风险最高。</li>
+    <li><span class="badge b-red">合规</span> 2025 起官方私信通为唯一合规导流通道,绕过它属违规;批量数据采集涉《个人信息保护法》。</li>
+    <li><span class="badge b-amber">维护</span> 小红书改版会导致页面选择器失效,需持续维护。</li>
+    <li><span class="badge b-amber">连坐</span> 多账号矩阵存在关联封禁风险,需防关联(IP/指纹/设备隔离)。</li>
+  </ul>
+  <div class="callout c-amber"><strong>缓解</strong> 真实浏览器 + 拟人节奏 + 严格限频 + 工作时间窗 + 账号健康监控 + 紧急刹车 + 测试小号优先(主力号不裸跑)。</div>
+  </section>
+
+  <!-- 11 -->
+  <section id="kpi"><h2 class="sec"><span class="n">11</span>成功标准</h2>
+  <ul>
+    <li>单测试账号连续运行 <span class="open">N 天(待定)</span> 不被封/限流。</li>
+    <li>匹配准确率(命中真实目标客户)达到 <span class="open">目标值(待定)</span>。</li>
+    <li>每账号每日产出有效线索 <span class="open">X 条(待定)</span>。</li>
+    <li>加微/留资转化率较人工提升 <span class="open">目标值(待定)</span>。</li>
+    <li>后台可准确反映每个账号的运行与线索情况。</li>
+  </ul>
+  <p style="font-size:13px;color:var(--muted)">具体指标值<strong>待运营基线设定</strong>:需结合你们现有人工获客基线,或在测试小号试跑出数据后再定。</p>
+  </section>
+
+  <!-- 12 -->
+  <section id="open"><h2 class="sec"><span class="n">12</span>需求决策结论 ✅</h2>
+  <div class="callout c-green"><strong>这 10 项已全部决策,需求正式闭环</strong> 其中 5 项明细按文档链下沉到《产品功能文档》或运营基线,在此标注去向。</div>
+  <table>
+    <thead><tr><th style="width:4%">#</th><th style="width:28%">问题</th><th>决策结论</th></tr></thead>
+    <tbody>
+      <tr><td>Q1</td><td>"同城"如何判定?</td><td><strong>地区匹配可开关</strong>;目标城市<strong>由用户自定义(可多城、不绑账号属地)</strong>;来源优先用笔记/主页城市 + IP 属地,细到商圈用 LLM 从文本提取。(见 4.2 / FR-C.1)</td></tr>
+      <tr><td>Q2</td><td>时间窗 N 与基准?</td><td><strong>不设预设默认</strong>,做成可配置由用户首次填;基准:求租帖按发帖时间、评论区客户按评论时间。</td></tr>
+      <tr><td>Q3</td><td>每类动作配额阶梯?</td><td><strong>可配置(含具体数值)</strong>,默认保守、随养号放量,小号实测校准。(见 FR-C.5)</td></tr>
+      <tr><td>Q4</td><td>"转人工"判定标准?</td><td>默认:问价 / 约看房 / 索要或给联系方式 / 连续多轮深入;<strong>规则可配置</strong>。(见 FR-5.3)</td></tr>
+      <tr><td>Q5</td><td>房源结构化字段清单?</td><td><span class="badge b-gray">下沉</span> 明细 → 《产品功能文档》;需求层已由 FR-6.1 / FR-C.6 覆盖。</td></tr>
+      <tr><td>Q6</td><td>LLM 用哪家?</td><td><strong>国产大模型</strong>(火山 Ark / 阿里百炼),具体型号待定;做成<strong>可切换 provider</strong>。</td></tr>
+      <tr><td>Q7</td><td>后台部署 + 鉴权?</td><td><strong>云服务器 + Token 鉴权</strong>。</td></tr>
+      <tr><td>Q8</td><td>本期是否做 license?</td><td><strong>不做</strong>(仅内部用);对外交付再加。</td></tr>
+      <tr><td>Q9</td><td>成功指标目标值?</td><td><span class="badge b-gray">下沉</span> <strong>待运营基线设定</strong>(现有人工基线或试跑数据后定)。</td></tr>
+      <tr><td>Q10</td><td>加微话术样本?</td><td>做成<strong>话术库管理功能</strong>由用户自填(见 FR-5.4);<span class="badge b-gray">下沉</span> 样本由用户提供。</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- 13 -->
+  <section id="dec"><h2 class="sec"><span class="n">13</span>决策记录(9 轮确认)</h2>
+  <table>
+    <thead><tr><th style="width:5%">#</th><th style="width:24%">决策点</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>自动化程度</td><td>全自动·机器直发(限频/养号/刹车/健康监控为一等公民)</td></tr>
+      <tr><td>2</td><td>触达动作</td><td>全部四种:评论笔记 / 主动私信 / 自动回复私信 / 回复他人评论区</td></tr>
+      <tr><td>3</td><td>加微策略</td><td>混合:诱导为主 + 高意向转人工(意向分级器 + 微信号识别入库)</td></tr>
+      <tr><td>4</td><td>匹配维度</td><td>地区+时间 / 意向 / 预算户型 / 诉求语义,分层漏斗</td></tr>
+      <tr><td>5</td><td>账号·租户</td><td>客户端=1 账号;后台汇总看全部;租户预留,管理后期;每账号可见</td></tr>
+      <tr><td>6</td><td>客户端形态</td><td>桌面端 Electron+CDP,复用 BOSS,驱动真实浏览器绕签名</td></tr>
+      <tr><td>7</td><td>房源素材库</td><td>本期工具内结构化搭建,预留外部同步</td></tr>
+      <tr><td>8</td><td>线索去向</td><td>本地保留 + 后台汇总可见 + 预留外部对接</td></tr>
+      <tr><td>9</td><td>推进方式</td><td>方案 A:客户端先行、后台薄层,schema 预留租户</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <footer>小红书自动化获客工具 · 需求文档 v0.2 ｜ 2026-06-24 ｜ 需求已闭环,待终审</footer>
+</div>
+</body>
+</html>

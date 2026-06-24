@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书自动化获客工具 · 产品功能文档</title>
+<style>
+  :root{
+    --bg:#f5f6f8;--card:#fff;--ink:#1d2330;--muted:#5b6478;--line:#e6e9ef;
+    --brand:#ff2742;--green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;
+    --red:#c92a2a;--red-bg:#fdecec;--blue:#1f6fd6;--blue-bg:#eaf2fc;--gray-bg:#eceef2;
+    --shadow:0 1px 3px rgba(20,30,50,.06),0 8px 24px rgba(20,30,50,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.7;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 20px 80px}
+  header{background:linear-gradient(135deg,#23272f 0%,#3a1f24 60%,#5e1620 100%);color:#fff;padding:42px 20px 36px;border-bottom:4px solid var(--brand)}
+  header .inner{max-width:1040px;margin:0 auto;padding:0 20px}
+  .tag{display:inline-block;background:var(--brand);color:#fff;font-size:12px;font-weight:600;padding:4px 12px;border-radius:30px}
+  header h1{font-size:28px;margin:14px 0 6px;font-weight:800}
+  header p{margin:0;color:#cfd3dc;font-size:14px}
+  .meta{margin-top:16px;font-size:13px;color:#9aa1ad}.meta span{margin-right:18px}
+  section{margin-bottom:34px}
+  h2.sec{font-size:21px;margin:30px 0 10px;font-weight:800;display:flex;align-items:center;gap:10px;border-bottom:2px solid var(--line);padding-bottom:8px}
+  h2.sec .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;background:var(--ink);color:#fff;border-radius:7px;font-size:14px;padding:0 6px}
+  h3{font-size:16px;margin:18px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;box-shadow:var(--shadow);margin-bottom:14px}
+  p{margin:0 0 10px}ul{margin:0 0 10px;padding-left:20px}li{margin-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);margin:6px 0 14px}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f2f6;font-weight:700;font-size:12.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td strong{color:var(--ink)}
+  code{background:#eef0f4;border-radius:4px;padding:1px 6px;font-size:13px;font-family:ui-monospace,Menlo,monospace}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap}
+  .p0{background:var(--green-bg);color:var(--green)}.p1{background:var(--blue-bg);color:var(--blue)}.p2{background:var(--gray-bg);color:var(--muted)}
+  .b-amber{background:var(--amber-bg);color:var(--amber)}
+  .callout{border-radius:10px;padding:13px 17px;margin:12px 0;font-size:14px}
+  .c-blue{background:var(--blue-bg);border:1px solid #b9d6f6;color:#16467f}
+  .c-amber{background:var(--amber-bg);border:1px solid #f0d59a;color:#73490a}
+  .c-green{background:var(--green-bg);border:1px solid #b6e3cd;color:#0a5c41}
+  .callout strong{display:block;margin-bottom:3px}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 22px;box-shadow:var(--shadow);margin:24px 0}
+  nav.toc strong{font-size:13px;color:var(--muted);display:block;margin-bottom:8px}
+  nav.toc ul{columns:2;font-size:13.5px;margin:0}
+  nav.toc li{margin-bottom:4px}
+  .done{color:var(--green);font-weight:700;font-size:11px}
+  .todo{color:var(--muted);font-size:11px}
+  /* 功能卡 */
+  .fcard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:14px 0 26px;overflow:hidden}
+  .fhead{background:#23272f;color:#fff;padding:12px 18px;font-size:16px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .ftbl{margin:0;border-radius:0;box-shadow:none}
+  .ftbl th{width:108px;background:#f7f8fa;color:var(--ink);font-weight:700;border-right:1px solid var(--line)}
+  .ftbl td{font-size:13.5px}
+  .cfg{width:100%;border-collapse:collapse;margin:4px 0;box-shadow:none}
+  .cfg th,.cfg td{border:1px solid var(--line);padding:6px 9px;font-size:12.5px}
+  .cfg th{background:#eef0f4}
+  .accept{margin:0;padding:14px 18px;background:var(--green-bg);border-top:1px solid #b6e3cd}
+  .accept b{color:var(--green);display:block;margin-bottom:6px;font-size:13px}
+  .accept ul{margin:0;padding-left:20px;font-size:13px;color:#0a5c41}
+  /* 高保真 mockup */
+  .mockwrap{padding:16px 18px;background:#f0f2f6;border-top:1px solid var(--line)}
+  .mockcap{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .mock{border:1px solid #d7dbe2;border-radius:10px;overflow:hidden;box-shadow:0 6px 20px rgba(20,30,50,.12);background:#fff;font-size:12.5px}
+  .mtbar{background:#e9ebf0;border-bottom:1px solid #d7dbe2;padding:8px 12px;display:flex;align-items:center;gap:7px}
+  .mdot{width:10px;height:10px;border-radius:50%}.mdot.r{background:#ff5f57}.mdot.y{background:#febc2e}.mdot.g{background:#28c840}
+  .mtitle{margin-left:8px;font-weight:700;color:#3a3f4a}
+  .macct{margin-left:auto;color:var(--muted);font-size:11.5px}
+  .mrun{color:var(--green);font-weight:700}
+  .mbody{display:flex;min-height:340px}
+  .mside{width:138px;background:#fafbfc;border-right:1px solid #eceef2;padding:8px 0;flex:none}
+  .mside a{display:block;padding:7px 14px;color:#5b6478;font-size:12.5px;border-left:3px solid transparent;cursor:default}
+  .mside a.on{background:#fff0f1;color:var(--brand);border-left-color:var(--brand);font-weight:700}
+  .mmain{flex:1;padding:16px 18px;background:#fff;overflow:hidden}
+  .mh{font-size:15px;font-weight:800;margin:0 0 2px}
+  .msub{color:var(--muted);font-size:11.5px;margin:0 0 14px}
+  .mcard{border:1px solid #e6e9ef;border-radius:9px;padding:13px 15px;margin-bottom:12px}
+  .mcard h5{margin:0 0 10px;font-size:13px;font-weight:700}
+  .frow{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+  .flabel{width:84px;color:#5b6478;font-size:12px;flex:none;text-align:right}
+  .fctl{flex:1}
+  .pill{display:inline-block;background:#eef2f8;color:#2c3340;border:1px solid #dbe1ea;border-radius:16px;padding:2px 10px;font-size:11.5px;margin:0 5px 4px 0}
+  .pill .x{color:#9aa1ad;margin-left:5px}
+  .pill.add{background:#fff;border-style:dashed;color:var(--brand);border-color:#f5b8bd}
+  .inp{display:inline-block;border:1px solid #cfd5de;border-radius:6px;padding:5px 9px;background:#fff;color:#2c3340;font-size:12px;min-width:54px}
+  .inp.wide{display:block;width:100%;min-height:46px;white-space:pre-wrap;color:#5b6478}
+  .chk{display:inline-block;border:1px solid #cfd5de;border-radius:6px;padding:4px 11px;font-size:12px;margin-right:8px;background:#fff}
+  .chk.on{background:#fff0f1;border-color:#f5b8bd;color:var(--brand);font-weight:700}
+  .sw{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#2c3340}
+  .toggle{width:34px;height:19px;border-radius:12px;background:var(--brand);position:relative;display:inline-block}
+  .toggle::after{content:"";position:absolute;width:15px;height:15px;border-radius:50%;background:#fff;top:2px;right:2px}
+  .toggle.off{background:#cfd5de}.toggle.off::after{right:auto;left:2px}
+  .btn{display:inline-block;border-radius:7px;padding:7px 15px;font-size:12.5px;font-weight:700;cursor:default}
+  .btn.primary{background:var(--brand);color:#fff}
+  .btn.ghost{background:#fff;border:1px solid #cfd5de;color:#3a3f4a}
+  .mtable{width:100%;border-collapse:collapse;font-size:11.5px;box-shadow:none;margin:0}
+  .mtable th,.mtable td{border-bottom:1px solid #eceef2;padding:6px 8px;text-align:left}
+  .mtable th{background:#f7f8fa;color:#5b6478;font-weight:700}
+  .tagk{background:var(--green-bg);color:var(--green);border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700}
+  .tagk.b{background:var(--blue-bg);color:var(--blue)}.tagk.a{background:var(--amber-bg);color:var(--amber)}
+  .progress{height:7px;background:#eef0f4;border-radius:5px;overflow:hidden;margin:8px 0}
+  .progress i{display:block;height:100%;background:var(--brand);border-radius:5px}
+  .stat{display:inline-block;margin-right:20px}.stat b{font-size:18px;color:var(--ink)}.stat span{font-size:11px;color:var(--muted);display:block}
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <span class="tag">产品功能文档 · 第 1 批(总览 + 样板模块)</span>
+  <h1>小红书自动化获客工具 · 产品功能文档</h1>
+  <p>按功能模块组织 ｜ 每功能含验收标准 ｜ 关键页面高保真 mockup</p>
+  <div class="meta"><span>📅 2026-06-24</span><span>📌 版本 v0.1</span><span>🔗 上游:需求文档 v0.2</span></div>
+</div></header>
+
+<div class="wrap">
+
+  <div class="callout c-blue"><strong>怎么读 / 与需求文档的关系</strong>
+  需求文档说"要做什么";本文档说"<strong>具体怎么用、有哪些配置项、长什么样</strong>"。每个功能模块用统一"功能卡"描述,并回链需求文档的 <code>FR 编号</code>。<strong>本次是第 1 批</strong>:先给出完整骨架 + 产品总览 + 1 个样板模块(检索),供你校准风格与深度;确认后我按同模板补齐其余模块。</div>
+
+  <nav class="toc"><strong>全文结构(✅=本批已写 ｜ ○=待写)</strong>
+  <ul>
+    <li><span class="done">✅</span> 1 产品总览</li>
+    <li><span class="done">✅</span> 2.2 检索配置与执行(样板)</li>
+    <li><span class="todo">○</span> 2.1 接入与账号</li>
+    <li><span class="todo">○</span> 2.3 匹配引擎</li>
+    <li><span class="todo">○</span> 2.4 内容生成</li>
+    <li><span class="todo">○</span> 2.5 房源素材库</li>
+    <li><span class="todo">○</span> 2.6 话术库管理</li>
+    <li><span class="todo">○</span> 2.7 触达执行</li>
+    <li><span class="todo">○</span> 2.8 加微转化</li>
+    <li><span class="todo">○</span> 2.9 线索管理</li>
+    <li><span class="todo">○</span> 2.10 防封号与运行控制</li>
+    <li><span class="todo">○</span> 2.11 配置中心</li>
+    <li><span class="todo">○</span> 2.12 运行监控与日志</li>
+    <li><span class="todo">○</span> 3 中央后台(看板/线索/租户)</li>
+    <li><span class="todo">○</span> 4 配置项总表</li>
+    <li><span class="todo">○</span> 5 关键页面 mockup 汇总</li>
+    <li><span class="todo">○</span> 6 状态与流转(状态机)</li>
+    <li><span class="todo">○</span> 7 异常与边界 · 8 术语表</li>
+  </ul>
+  </nav>
+
+  <!-- ========== 1 产品总览 ========== -->
+  <section id="overview"><h2 class="sec"><span class="n">1</span>产品总览</h2>
+
+  <h3>1.1 角色与使用场景</h3>
+  <table>
+    <thead><tr><th style="width:20%">角色</th><th style="width:26%">用什么</th><th>典型场景</th></tr></thead>
+    <tbody>
+      <tr><td><strong>中介运营</strong></td><td>桌面客户端(1 人 1 账号)</td><td>配置城市/关键词/匹配/话术/房源 → 一键启动 → 机器自动获客 → 收到"转人工"提醒时接手聊 → 查看本账号线索</td></tr>
+      <tr><td><strong>管理者</strong></td><td>中央后台(网页)</td><td>看所有账号今天跑得怎么样、有没有被限流、共产出多少线索;汇总导出线索</td></tr>
+    </tbody>
+  </table>
+
+  <h3>1.2 信息架构 / 页面地图</h3>
+  <div class="card">
+    <p><strong>桌面客户端</strong>(左侧导航):</p>
+    <ul>
+      <li><strong>控制台</strong> — 启停总开关、今日数据、账号状态一览</li>
+      <li><strong>检索</strong> · <strong>匹配规则</strong> · <strong>内容生成</strong> — 获客策略三件套</li>
+      <li><strong>房源素材库</strong> · <strong>话术库</strong> — 素材两件套</li>
+      <li><strong>触达执行</strong> — 四类动作开关与节奏</li>
+      <li><strong>线索</strong> — 本账号线索列表 / 待接管对话</li>
+      <li><strong>防封号与运行控制</strong> — 限频、工作时间、养号、健康、紧急刹车</li>
+      <li><strong>配置中心</strong> · <strong>运行日志</strong> · <strong>账号/接入设置</strong></li>
+    </ul>
+    <p style="margin-top:8px"><strong>中央后台</strong>(网页):账号总览看板 · 线索汇总 · <span class="badge p2">P2</span> 租户管理</p>
+  </div>
+
+  <h3>1.3 端到端使用流程</h3>
+  <table>
+    <thead><tr><th style="width:14%">阶段</th><th>用户/系统做什么</th></tr></thead>
+    <tbody>
+      <tr><td><strong>① 接入</strong></td><td>安装客户端 → 启动/连接已登录小红书的 Chrome → 绑定账号</td></tr>
+      <tr><td><strong>② 配置</strong></td><td>设目标城市(可多城)+ 关键词 + 匹配条件 + 话术库 + 房源库 + 限频/工作时间</td></tr>
+      <tr><td><strong>③ 启动</strong></td><td>控制台一键启动;系统在限频与拟人节奏下自动运行</td></tr>
+      <tr><td><strong>④ 自动获客</strong></td><td>检索 → 分层匹配 → 生成话术+配图 → 评论/私信触达</td></tr>
+      <tr><td><strong>⑤ 沟通转化</strong></td><td>对方回复→自动多轮沟通、诱导加微;识别对方微信入库</td></tr>
+      <tr><td><strong>⑥ 转人工</strong></td><td>高意向/复杂对话→标记并提醒运营接手</td></tr>
+      <tr><td><strong>⑦ 沉淀</strong></td><td>线索本地保留 + 上报后台;管理者在后台统一观测</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- ========== 2.2 检索(样板模块) ========== -->
+  <section id="search"><h2 class="sec"><span class="n">2.2</span>检索配置与执行 <span class="badge p0">P0</span></h2>
+  <p class="msub" style="margin-bottom:14px">↓ 这是"样板模块",展示每个功能模块的统一写法:功能卡 + 高保真 mockup + 验收标准。</p>
+
+  <div class="fcard">
+    <div class="fhead">功能卡 · 检索配置与执行</div>
+    <table class="ftbl">
+      <tr><th>功能目的</th><td>让运营自定义检索条件,系统据此在小红书上找到相关求租/房源笔记及其评论区,作为后续匹配与触达的来源。</td></tr>
+      <tr><th>用户怎么用</th><td>在"检索"页配置:目标城市(可多城、可开关)、搜索关键词、笔记类型、时间窗、采集范围 → 点"保存配置";运行可由控制台总开关统一调度,也可在本页"开始检索"单独试跑。</td></tr>
+      <tr><th>详细规则</th><td>
+        ① 系统按"关键词 × 城市"组合生成检索词,逐个搜索;<br>
+        ② 读取每条笔记:标题/正文/标签/发布时间/作者/地区,以及评论区(识别"问房子"的潜在客户);<br>
+        ③ 受全局限频与拟人节奏约束(翻页有随机间隔);<br>
+        ④ 采集到的笔记/评论进入匹配漏斗(见 2.3);<br>
+        ⑤ 已处理过的笔记/评论去重,不重复触达。</td></tr>
+      <tr><th>配置项</th><td>
+        <table class="cfg">
+          <tr><th>配置项</th><th>默认</th><th>取值/说明</th></tr>
+          <tr><td>地区匹配开关</td><td>开</td><td>关闭则不限城市</td></tr>
+          <tr><td>目标城市</td><td>空</td><td>可多城;<strong>不绑账号属地</strong>(人在A城业务在B城)</td></tr>
+          <tr><td>搜索关键词</td><td>空</td><td>多个,逗号/换行分隔</td></tr>
+          <tr><td>笔记类型</td><td>求租+房源</td><td>求租帖 / 房源帖 可分别勾选</td></tr>
+          <tr><td>时间窗</td><td>无预设</td><td>N 天内;求租按发帖、评论客户按评论时间</td></tr>
+          <tr><td>采集范围</td><td>—</td><td>每次最多 N 条、翻页深度 N 页</td></tr>
+        </table></td></tr>
+      <tr><th>输入 / 输出</th><td><strong>输入</strong>:检索配置。<strong>输出</strong>:候选笔记/评论列表(含元数据),写入本地待匹配队列。</td></tr>
+      <tr><th>异常与边界</th><td>搜索无结果→提示并跳过;页面改版/选择器失效→记录错误并告警(不静默失败);触发限流→自动降速/暂停并上报;重复内容→去重跳过。</td></tr>
+      <tr><th>优先级</th><td><span class="badge p0">P0</span></td></tr>
+      <tr><th>关联需求</th><td><code>FR-1.1~1.4</code> · <code>FR-C.1</code> · <code>4.2 L1</code></td></tr>
+    </table>
+    <div class="accept">
+      <b>验收标准</b>
+      <ul>
+        <li>配置 ≥2 个目标城市 + 多个关键词后,系统能按"关键词×城市"逐组检索并返回候选笔记。</li>
+        <li>关闭"地区匹配"后,检索不再受城市限制。</li>
+        <li>采集到的每条笔记都带:标题、正文、标签、发布时间、作者、地区、评论。</li>
+        <li>同一笔记/评论不会被重复采集进待处理队列。</li>
+        <li>翻页/采集间隔存在随机抖动,非固定节奏。</li>
+        <li>页面结构异常时有明确错误提示与日志,不静默丢数据。</li>
+      </ul>
+    </div>
+    <div class="mockwrap">
+      <div class="mockcap">高保真 mockup · 客户端「检索」页</div>
+      <div class="mock">
+        <div class="mtbar"><span class="mdot r"></span><span class="mdot y"></span><span class="mdot g"></span>
+          <span class="mtitle">小红书获客助手</span>
+          <span class="macct">账号:成都租房小琳 ·&nbsp;<span class="mrun">● 运行中</span></span>
+        </div>
+        <div class="mbody">
+          <nav class="mside">
+            <a>控制台</a>
+            <a class="on">检索</a>
+            <a>匹配规则</a>
+            <a>内容生成</a>
+            <a>房源素材库</a>
+            <a>话术库</a>
+            <a>触达执行</a>
+            <a>线索</a>
+            <a>防封号</a>
+            <a>配置中心</a>
+            <a>运行日志</a>
+          </nav>
+          <div class="mmain">
+            <div class="mh">检索配置</div>
+            <div class="msub">设定要在小红书上找什么样的笔记 · 所有条件均可配置</div>
+
+            <div class="mcard">
+              <h5>检索条件</h5>
+              <div class="frow"><div class="flabel">地区匹配</div><div class="fctl"><span class="sw"><span class="toggle"></span> 已开启 · 仅匹配下列城市</span></div></div>
+              <div class="frow"><div class="flabel">目标城市</div><div class="fctl"><span class="pill">成都 <span class="x">×</span></span><span class="pill">重庆 <span class="x">×</span></span><span class="pill add">+ 添加城市</span><div style="color:#9aa1ad;font-size:11px;margin-top:2px">可多城,不绑定账号所在地</div></div></div>
+              <div class="frow"><div class="flabel">搜索关键词</div><div class="fctl"><span class="inp wide">成都租房, 成都求租, 天府新区整租, 高新区 单间</span></div></div>
+              <div class="frow"><div class="flabel">笔记类型</div><div class="fctl"><span class="chk on">✓ 求租帖</span><span class="chk on">✓ 房源帖</span></div></div>
+              <div class="frow"><div class="flabel">时间窗</div><div class="fctl"><span class="inp">3</span> 天内 &nbsp;<span style="color:#9aa1ad;font-size:11px">求租按发帖时间 · 评论客户按评论时间</span></div></div>
+              <div class="frow"><div class="flabel">采集范围</div><div class="fctl">每次最多 <span class="inp">50</span> 条 · 翻页 <span class="inp">5</span> 页</div></div>
+              <div class="frow"><div class="flabel"></div><div class="fctl"><span class="btn primary">▶ 开始检索</span> &nbsp;<span class="btn ghost">保存配置</span></div></div>
+            </div>
+
+            <div class="mcard">
+              <h5>本次运行</h5>
+              <div>已检索 <strong>4 / 8</strong> 组关键词 · 命中候选 <strong>23</strong> 条</div>
+              <div class="progress"><i style="width:50%"></i></div>
+              <table class="mtable">
+                <tr><th>笔记</th><th>城市</th><th>发布</th><th>类型</th><th>状态</th></tr>
+                <tr><td>求租！高新区近地铁单间…</td><td>成都</td><td>2 小时前</td><td><span class="tagk">求租</span></td><td>待匹配</td></tr>
+                <tr><td>天府三街整租一居 押一付一</td><td>成都</td><td>今天</td><td><span class="tagk b">房源</span></td><td>已入队</td></tr>
+                <tr><td>求租 江北观音桥附近…</td><td>重庆</td><td>1 天前</td><td><span class="tagk">求租</span></td><td>待匹配</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </section>
+
+  <div class="callout c-amber"><strong>请校准:这就是后续每个模块的"样子"</strong>
+  每个功能模块都会是这样一张「功能卡(目的/用法/规则/配置项/输入输出/异常/优先级/FR回链)+ 验收标准 + 该页高保真 mockup」。请看:① 功能卡的<strong>详略</strong>合适吗?② mockup 的<strong>保真度/风格</strong>是你要的吗?③ 配置项颗粒度对吗?确认后我按此把其余 ~13 个模块补齐。</div>
+
+  <footer>小红书自动化获客工具 · 产品功能文档 v0.1(第 1 批) ｜ 2026-06-24</footer>
+</div>
+</body>
+</html>

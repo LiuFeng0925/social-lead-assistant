@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书自动化获客工具 · 文档导航中心</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--ink:#1d2330;--muted:#5b6478;--line:#e6e9ef;--brand:#ff2742;
+    --green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;--blue:#1f6fd6;--blue-bg:#eaf2fc;--gray-bg:#eceef2;
+    --shadow:0 1px 3px rgba(20,30,50,.06),0 8px 24px rgba(20,30,50,.06);}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.7;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:0 20px 70px}
+  header{background:linear-gradient(135deg,#23272f 0%,#3a1f24 60%,#5e1620 100%);color:#fff;padding:40px 20px 34px;border-bottom:4px solid var(--brand)}
+  header .inner{max-width:900px;margin:0 auto;padding:0 20px}
+  .tag{display:inline-block;background:var(--brand);color:#fff;font-size:12px;font-weight:600;padding:4px 12px;border-radius:30px}
+  header h1{font-size:26px;margin:14px 0 6px;font-weight:800}
+  header p{margin:0;color:#cfd3dc;font-size:14px}
+  .chain{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 10px}
+  .chain .node{flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);font-size:13px}
+  .chain .node b{display:block;font-size:14px}
+  .st{font-size:11px;font-weight:700;padding:1px 8px;border-radius:20px}
+  .s-done{background:var(--green-bg);color:var(--green)}.s-wip{background:var(--amber-bg);color:var(--amber)}.s-todo{background:var(--gray-bg);color:var(--muted)}
+  h2{font-size:16px;margin:28px 0 10px;color:var(--muted)}
+  .doc{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:12px;text-decoration:none;color:inherit;transition:.15s}
+  a.doc:hover{border-color:var(--brand);transform:translateY(-1px)}
+  .doc .ic{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff}
+  .doc .t{flex:1}
+  .doc .t b{font-size:15px;display:block}
+  .doc .t span{font-size:12.5px;color:var(--muted)}
+  .doc.dim{opacity:.6;cursor:default}
+  .arrow{color:var(--muted);font-size:18px}
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:36px;padding-top:18px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <span class="tag">文档导航中心</span>
+  <h1>小红书自动化获客工具 · 文档</h1>
+  <p>租房中介的小红书全自动获客系统 ｜ 桌面客户端 + 中央后台</p>
+</div></header>
+
+<div class="wrap">
+  <div class="chain">
+    <div class="node"><b>调研</b><span class="st s-done">完成</span></div>
+    <div class="node"><b>需求</b><span class="st s-done">完成</span></div>
+    <div class="node"><b>产品功能</b><span class="st s-wip">进行中</span></div>
+    <div class="node"><b>技术设计</b><span class="st s-todo">待写</span></div>
+    <div class="node"><b>实现计划</b><span class="st s-todo">待写</span></div>
+  </div>
+
+  <h2>00 · 调研</h2>
+  <a class="doc" href="00-调研/可行性调研报告.html">
+    <div class="ic" style="background:#0a8a5f">A</div>
+    <div class="t"><b>可行性调研报告</b><span>市场/技术/风控/合规全景 · 是否可行、有无成熟产品、实现路径</span></div>
+    <span class="arrow">→</span>
+  </a>
+  <a class="doc" href="00-调研/系统调研报告(另一版).html">
+    <div class="ic" style="background:#1d9e75">A</div>
+    <div class="t"><b>系统调研报告(另一版)</b><span>另一版调研报告(待确认是否与上者合并)</span></div>
+    <span class="arrow">→</span>
+  </a>
+
+  <h2>01 · 需求</h2>
+  <a class="doc" href="01-需求/需求文档.html">
+    <div class="ic" style="background:#1f6fd6">B</div>
+    <div class="t"><b>需求文档(PRD) · v0.2</b><span>要做什么/为什么 · 功能需求(FR)· 防封号 · 范围 · 10 项决策结论</span></div>
+    <span class="arrow">→</span>
+  </a>
+
+  <h2>02 · 产品功能</h2>
+  <a class="doc" href="02-产品/产品功能文档.html">
+    <div class="ic" style="background:#ff2742">C</div>
+    <div class="t"><b>产品功能文档 · v0.1(第 1 批)</b><span>怎么用/长什么样 · 功能卡 + 高保真 mockup + 验收标准(按模块分批补齐)</span></div>
+    <span class="arrow">→</span>
+  </a>
+
+  <h2>03 · 技术设计 <span style="font-size:12px;font-weight:400">(待写)</span></h2>
+  <div class="doc dim">
+    <div class="ic" style="background:#b4b2a9">D</div>
+    <div class="t"><b>技术设计文档</b><span>架构 · 组件 · 数据模型 · 数据流(待写)</span></div>
+  </div>
+
+  <h2>04 · 实现计划 <span style="font-size:12px;font-weight:400">(待写)</span></h2>
+  <div class="doc dim">
+    <div class="ic" style="background:#b4b2a9">E</div>
+    <div class="t"><b>实现计划 / 任务拆解</b><span>分阶段开发计划(待写)</span></div>
+  </div>
+
+  <footer>文档导航中心 ｜ 更新于 2026-06-24 ｜ 根目录 README.md / CLAUDE.md 为项目入口</footer>
+</div>
+</body>
+</html>
