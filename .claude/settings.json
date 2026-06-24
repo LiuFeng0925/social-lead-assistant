@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "检查产品文档双版本同步",
+            "command": "jq -r '.tool_input.file_path // empty' | grep -qE '/产品功能文档\\.(html|md)$' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"你刚修改了《产品功能文档》的其中一个版本(md 或 html)。请同步更新另一个版本以保持一致:docs/02-产品/产品功能文档.md(文本源真相)与 docs/02-产品/产品功能文档.html(可视化+mockup)。若两版本已一致可忽略此提醒。\"}}' || true"
+          }
+        ]
+      }
+    ]
+  }
+}
