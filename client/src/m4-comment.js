@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
 const { check } = require('./compliance');
+const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const SEND = process.argv.includes('--send');
@@ -52,8 +53,10 @@ async function main() {
   if (SEND && fs.existsSync(path.join(TMP, 'STOP'))) { log('⛔ 检测到 tmp/STOP,紧急刹车生效,拒绝发送。'); process.exit(0); }
 
   const data = JSON.parse(fs.readFileSync(latestToSend(), 'utf8'));
-  const item = (data.queue || [])[INDEX];
-  if (!item) { log('队列里没有第', INDEX, '条'); process.exit(1); }
+  const rawItem = (data.queue || [])[INDEX];
+  if (!rawItem) { log('队列里没有第', INDEX, '条'); process.exit(1); }
+  const item = { ...rawItem, searchUrl: rawItem.searchUrl || data.searchUrl };
+  if (!item.searchUrl) { log('✗ 发送队列缺 searchUrl,请重新跑 m3-read-notes.js 和 m3-generate-demo.js'); process.exit(1); }
 
   const comment = CUSTOM_TEXT || item.comment;
   log(SEND ? '⚠ 发送模式' : 'DRY-RUN(只定位 + 截图,不发)');
@@ -66,40 +69,43 @@ async function main() {
 
   const client = new XhsCdpClient({ endpoint: ENDPOINT });
   const target = await client.resolvePageTarget();
-  await client.navigate({ target, url: item.url });
-  for (let k = 0; k < 12; k++) { await sleep(900); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
-  await sleep(1500);
-  await client.evaluate({ target, expression: 'window.scrollBy(0, 600);"ok"' }).catch(() => {});
-  await sleep(rand(900, 1600));
+  await openNoteFromList({ client, target, note: item, onLog: log });
+  try {
+    for (let k = 0; k < 12; k++) { await sleep(900); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
+    await sleep(1500);
+    await client.wheelScroll({ target, x: 600, y: 400, totalDeltaY: 600 }).catch(() => {});
+    await sleep(rand(900, 1600));
 
-  const pr = await client.evaluate({ target, expression: PROBE });
-  let probe; try { probe = JSON.parse(pr.value); } catch (e) { probe = { inputs: [], sendBtns: [] }; }
-  console.log('\n—— 评论框候选 ——'); console.log(JSON.stringify(probe.inputs, null, 1));
-  console.log('—— 发送按钮候选 ——'); console.log(JSON.stringify(probe.sendBtns, null, 1));
-  await shot(client, target, 'probe');
+    const pr = await client.evaluate({ target, expression: PROBE });
+    let probe; try { probe = JSON.parse(pr.value); } catch (e) { probe = { inputs: [], sendBtns: [] }; }
+    console.log('\n—— 评论框候选 ——'); console.log(JSON.stringify(probe.inputs, null, 1));
+    console.log('—— 发送按钮候选 ——'); console.log(JSON.stringify(probe.sendBtns, null, 1));
+    await shot(client, target, 'probe');
 
-  if (!SEND) { log('\nDRY-RUN 结束。看截图 + 候选定位准不准,确认后加 --send 真发。'); process.exit(0); }
+    if (!SEND) { log('\nDRY-RUN 结束。已定位并关闭当前笔记。确认后加 --send 真发。'); return; }
 
-  // —— 真发 ——
-  const box = probe.inputs[0];
-  if (!box) { log('✗ 没定位到评论框,中止(评论未发)。把上面候选发我调选择器。'); process.exit(1); }
-  log('① 点击评论框 @', box.x, box.y);
-  await client.click({ target, x: box.x, y: box.y });
-  await sleep(rand(700, 1400));
-  log('② 拟人输入评论…');
-  await client.typeText({ target, text: comment });
-  await sleep(rand(1200, 2200));
-  await shot(client, target, 'typed');
-  const pr2 = await client.evaluate({ target, expression: PROBE });
-  let probe2; try { probe2 = JSON.parse(pr2.value); } catch (e) { probe2 = { sendBtns: [] }; }
-  const btn = (probe2.sendBtns || [])[0] || (probe.sendBtns || [])[0];
-  if (!btn) { log('✗ 没找到发送按钮(评论已输入但未发出)。把 typed 截图发我。'); process.exit(1); }
-  log('③ 点击发送 @', btn.x, btn.y);
-  await client.click({ target, x: btn.x, y: btn.y });
-  await sleep(2200);
-  await shot(client, target, 'sent');
-  log('✓ 已点发送。看 sent 截图确认评论是否出现在笔记下。');
-  process.exit(0);
+    // —— 真发 ——
+    const box = probe.inputs[0];
+    if (!box) { log('✗ 没定位到评论框,中止(评论未发)。把上面候选发我调选择器。'); process.exitCode = 1; return; }
+    log('① 点击评论框 @', box.x, box.y);
+    await client.click({ target, x: box.x, y: box.y });
+    await sleep(rand(700, 1400));
+    log('② 拟人输入评论…');
+    await client.typeText({ target, text: comment });
+    await sleep(rand(1200, 2200));
+    await shot(client, target, 'typed');
+    const pr2 = await client.evaluate({ target, expression: PROBE });
+    let probe2; try { probe2 = JSON.parse(pr2.value); } catch (e) { probe2 = { sendBtns: [] }; }
+    const btn = (probe2.sendBtns || [])[0] || (probe.sendBtns || [])[0];
+    if (!btn) { log('✗ 没找到发送按钮(评论已输入但未发出)。把 typed 截图发我。'); process.exitCode = 1; return; }
+    log('③ 点击发送 @', btn.x, btn.y);
+    await client.click({ target, x: btn.x, y: btn.y });
+    await sleep(2200);
+    await shot(client, target, 'sent');
+    log('✓ 已点发送并关闭当前笔记。看 sent 截图确认评论是否出现在笔记下。');
+  } finally {
+    await closeCurrentNote({ client, target, note: item, onLog: log });
+  }
 }
 
 main().catch((e) => { console.error('未捕获错误:', e); process.exit(1); });

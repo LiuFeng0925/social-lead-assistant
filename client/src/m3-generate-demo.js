@@ -45,11 +45,11 @@ function main() {
     console.log(`  合规检查:${comp.ok ? '✓ 通过(无明文联系方式)' : '✗ 拦截 → ' + comp.violations.map((v) => v.hint).join('、')}`);
     if (agentReject) console.log('  ⚠ 该帖明确"中介勿扰" → 建议跳过,或确认为个人房东身份再发');
     console.log('');
-    if (comp.ok && !agentReject) queue.push({ id: d.id, url: d.url, title: d.title, comment });
+    if (comp.ok && !agentReject) queue.push({ id: d.id, url: d.url, searchUrl: d.searchUrl || data.searchUrl, title: d.title, comment });
   });
 
   const out = path.join(TMP, `to-send-${Date.now()}.json`);
-  fs.writeFileSync(out, JSON.stringify({ direction: DIRECTION, count: queue.length, queue }, null, 2));
+  fs.writeFileSync(out, JSON.stringify({ direction: DIRECTION, keyword: data.keyword, searchUrl: data.searchUrl, count: queue.length, queue }, null, 2));
   console.log('================= 小结 =================');
   console.log(`生成 ${details.length} 条 · 合规通过 ${details.filter((d, i) => check(GEN[i] || '').ok).length} 条 · 排斥中介需人工确认 ${details.filter((d) => rejectsAgent((d.title || '') + (d.desc || ''))).length} 条`);
   console.log(`→ 可直接进入发送队列(合规且非中介勿扰):${queue.length} 条,已存 ${path.basename(out)}`);

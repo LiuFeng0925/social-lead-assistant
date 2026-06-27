@@ -5,6 +5,7 @@
 
 const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
 const { check, rejectsAgent } = require('./compliance');
+const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
@@ -93,8 +94,12 @@ async function connect(endpoint, onPointer) {
 }
 
 // ── 检索 + 滚动扫全 + 干净取数 ──
+function buildSearchUrl(keyword) {
+  return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_search_result_notes`;
+}
+
 async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {} }) {
-  const url = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_search_result_notes`;
+  const url = buildSearchUrl(keyword);
   onLog(`导航到搜索页:${keyword}`);
   await client.navigate({ target, url });
   let ready = false;
@@ -109,22 +114,29 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
     let res = { notes: [] };
     try { const r = await client.evaluate({ target, expression: EXPR_EXTRACT }); res = JSON.parse(r.value); } catch (e) {}
     const before = all.size;
-    for (const n of (res.notes || [])) { if (n.id && !all.has(n.id)) all.set(n.id, n); }
+    for (const n of (res.notes || [])) { if (n.id && !all.has(n.id)) all.set(n.id, { ...n, searchUrl: url }); }
     const added = all.size - before;
     onLog(`第 ${round + 1} 轮:本屏 ${res.count || 0},新增 ${added},累计 ${all.size}`);
     if (added === 0) stale++; else stale = 0;
-    await client.evaluate({ target, expression: 'window.scrollBy(0,900);"ok"' }).catch(() => {});
-    await sleep(rand(1100, 2200));
+    await client.wheelScroll({ target, x: rand(400, 800), y: rand(300, 520), totalDeltaY: rand(700, 1100) }).catch(() => {}); // trusted 滚轮(拟人)
+    await sleep(rand(700, 1700) + (Math.random() < 0.14 ? rand(800, 1600) : 0)); // 拟人停顿:随机 + 14% 概率长停
   }
   return [...all.values()];
 }
 
 // ── 进详情读正文 ──
-async function readDetail({ client, target, url, onLog = () => {} }) {
-  await client.navigate({ target, url });
-  for (let k = 0; k < 12; k++) { await sleep(800); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
-  await sleep(1300);
-  try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); return JSON.parse(r.value); } catch (e) { return { ok: false, error: e.message }; }
+async function readDetail({ client, target, note, onLog = () => {} }) {
+  if (!note || !note.id) throw new Error('read_detail_note_required');
+  await openNoteFromList({ client, target, note, onLog });
+  try {
+    for (let k = 0; k < 12; k++) { await sleep(800); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
+    await sleep(rand(1100, 2200));
+    await client.wheelScroll({ target, x: rand(520, 820), y: rand(360, 620), totalDeltaY: rand(220, 520) }).catch(() => {});
+    await sleep(rand(700, 1500));
+    try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); return JSON.parse(r.value); } catch (e) { return { ok: false, error: e.message }; }
+  } finally {
+    await closeCurrentNote({ client, target, note, onLog });
+  }
 }
 
 // ── 生成评论(开发期模板;接 LLM 后替换为 API 调用)──
@@ -137,4 +149,4 @@ function genComment(note, direction) {
   return `看你在找${region}的${hu}呀~我手上正好有挺合适的房源,通勤方便、可以拎包入住。要不要看看?主页有实拍,合适的话私聊我聊细节~`;
 }
 
-module.exports = { connect, scanClean, matchNotes, readDetail, genComment, classify, check, rejectsAgent };
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, classify, check, rejectsAgent };

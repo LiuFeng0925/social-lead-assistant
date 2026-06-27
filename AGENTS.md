@@ -1,4 +1,4 @@
-# CLAUDE.md — 项目协作指南(给 AI/Agent 读)
+# AGENTS.md — 项目协作指南(给 AI/Agent 读)
 
 > 新会话进入本项目时,先读这份。它告诉你项目是什么、东西在哪、关键决策与规则。人看的入口是 [README.md](README.md)。
 
@@ -52,3 +52,5 @@
 ## 工作流程
 
 brainstorming(需求/设计)→ writing-plans(实现计划)。设计获批前不写代码。
+
+## Imported Claude Cowork project instructions

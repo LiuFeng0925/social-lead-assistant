@@ -6,9 +6,14 @@
   "type": "commonjs",
   "scripts": {
     "m1": "node src/m1-search.js",
-    "launch": "bash scripts/launch-chrome.sh"
+    "launch": "bash scripts/launch-chrome.sh",
+    "ui": "node src/server.js",
+    "app": "electron electron/main.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^42.5.0"
   }
 }

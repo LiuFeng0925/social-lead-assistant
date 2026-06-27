@@ -9,11 +9,21 @@
     --green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;--red:#c92a2a;--red-bg:#fdecec;--blue:#1f6fd6;--blue-bg:#eaf2fc;}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
-  .top{display:flex;align-items:center;gap:10px;padding:11px 18px;background:#fff;border-bottom:1px solid var(--line)}
-  .top .logo{width:9px;height:9px;border-radius:50%;background:var(--brand)}
-  .top b{font-size:15px}
-  .top .acct{margin-left:auto;font-size:12px;color:var(--muted)}
-  .wrap{max-width:1080px;margin:0 auto;padding:16px 18px 60px}
+  .app{display:flex;min-height:100vh}
+  /* 左侧菜单 */
+  .side{width:174px;flex:none;background:#20242c;color:#c4c9d4;padding:12px 0}
+  .side .brand{display:flex;align-items:center;gap:7px;padding:4px 16px 13px;font-weight:700;color:#fff;font-size:14px;border-bottom:1px solid #2f343d;margin-bottom:8px}
+  .side .brand .d{width:9px;height:9px;border-radius:50%;background:var(--brand)}
+  .side .nav{display:block;padding:9px 16px;color:#aab0bd;cursor:pointer;font-size:13px;border-left:3px solid transparent}
+  .side .nav:hover{background:#262b34}
+  .side .nav.on{background:#2b303a;color:#fff;border-left-color:var(--brand);font-weight:600}
+  .side .nav.dim{color:#666d78;cursor:default}.side .nav.dim:hover{background:transparent}
+  .side .grp{font-size:10.5px;color:#5f6671;padding:13px 16px 4px;letter-spacing:.5px}
+  /* 主区 */
+  .main{flex:1;min-width:0}
+  .bar{display:flex;align-items:center;gap:10px;padding:11px 20px;background:#fff;border-bottom:1px solid var(--line)}
+  .bar b{font-size:15px}.bar .acct{margin-left:auto;font-size:12px;color:var(--muted)}
+  .page{padding:16px 26px 50px;display:none}.page.on{display:block}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,30,50,.05)}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
   .fld label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
@@ -22,192 +32,293 @@
   .btn{border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;background:var(--brand);color:#fff}
   .btn:disabled{opacity:.5;cursor:default}
   .btn.ghost{background:#fff;border:1px solid #d6dae2;color:var(--ink);padding:6px 12px;font-size:12px}
-  .pipe{display:flex;gap:6px;margin:4px 0 0}
+  .pipe{display:flex;gap:6px;margin:12px 0 0}
   .pp{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center;font-size:12px;color:var(--muted);background:#fafbfc}
   .pp.on{background:#fff4f5;border-color:#f5b8bd;color:var(--brand);font-weight:600}
   .pp.done{background:var(--green-bg);border-color:#b6e3cd;color:var(--green)}
   .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
   .metric{background:#f7f8fa;border-radius:8px;padding:10px 12px}
   .metric .l{font-size:11px;color:var(--muted)}.metric .v{font-size:22px;font-weight:800}
-  .log{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;color:#43505f;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:170px;overflow:auto;white-space:pre-wrap}
+  .log{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;color:#43505f;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:180px;overflow:auto;white-space:pre-wrap}
   .note{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
-  .note h4{margin:0 0 4px;font-size:14px}
-  .note .meta{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .note h4{margin:0 0 4px;font-size:14px}.note .meta{font-size:12px;color:var(--muted);margin-bottom:8px}
   .badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:20px;margin-right:6px}
   .b-seek{background:var(--blue-bg);color:var(--blue)}.b-ok{background:var(--green-bg);color:var(--green)}.b-warn{background:var(--amber-bg);color:var(--amber)}.b-bad{background:var(--red-bg);color:var(--red)}
-  .note textarea{width:100%;min-height:54px;margin-top:4px}
-  .note .acts{display:flex;gap:8px;margin-top:8px;align-items:center}
+  .note textarea{width:100%;min-height:54px;margin-top:4px}.note .acts{display:flex;gap:8px;margin-top:8px;align-items:center}
   a{color:var(--blue);text-decoration:none;font-size:12px}
   .hint{font-size:12px;color:var(--muted)}
-  .screen{position:relative;background:#0d0f12;border-radius:8px;overflow:hidden;min-height:180px;display:flex;align-items:center;justify-content:center}
-  .screen img{width:100%;display:block}
+  /* 监控 */
+  .screen{position:relative;background:#0d0f12;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;width:100%;min-height:200px}
+  .screen img{width:100%;height:auto;display:block;cursor:crosshair}
+  .cols{display:flex;gap:14px;margin-bottom:14px;align-items:stretch}
+  @media(max-width:920px){.cols{flex-direction:column}}
+  /* Electron 一体窗口:主区让出右侧给内嵌浏览器;去掉投屏(右侧就是真浏览器) */
+  html.electron .app{max-width:50vw;overflow-x:hidden}
+  html.electron .cols > .card:first-child{display:none}
+  html.electron .row{gap:8px}
+  html.electron .fld input,html.electron .fld textarea{font-size:12px}
   #cursor{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(255,39,66,.9);border:3px solid #fff;box-shadow:0 0 0 2px #ff2742,0 0 14px 5px rgba(255,39,66,.75);opacity:0;pointer-events:none;transition:left .1s,top .1s;z-index:5}
   #cursor.ping{animation:ping .6s ease-out}
   @keyframes ping{0%{box-shadow:0 0 0 2px #ff2742,0 0 0 0 rgba(255,39,66,.7)}100%{box-shadow:0 0 0 2px #ff2742,0 0 0 28px rgba(255,39,66,0)}}
-  .screen img{cursor:crosshair}
   .screen-empty{position:absolute;color:#6b7280;font-size:12px}
+  table.rec{width:100%;font-size:12px;border-collapse:collapse}
+  table.rec td{padding:5px 6px;border-bottom:1px solid var(--line)}
+  table.rec tr:first-child td{color:var(--muted);font-weight:600}
 </style>
 </head>
 <body>
-<div class="top">
-  <span class="logo"></span><b>小红书获客 · 控制台</b>
-  <span class="acct" id="acct">本地界面 · 引擎复用 M1-M4</span>
+<div class="app">
+  <div class="side">
+    <div class="brand"><span class="d"></span>小红书获客</div>
+    <div class="nav on" data-p="console" onclick="showPage('console')">🏠 控制台</div>
+    <div class="nav" data-p="comments" onclick="showPage('comments')">📋 评论记录</div>
+    <div class="nav" data-p="notes" onclick="showPage('notes')">🔍 采集记录</div>
+    <div class="grp">配置(待做)</div>
+    <div class="nav dim">🎯 匹配规则</div>
+    <div class="nav dim">💬 话术库</div>
+    <div class="nav dim">🏘️ 房源库</div>
+    <div class="nav" data-p="throttle" onclick="showPage('throttle')">🛡️ 防封控制</div>
+    <div class="nav dim">⚙️ 设置</div>
+  </div>
+
+  <div class="main">
+    <div class="bar"><b id="pagetitle">控制台</b><span class="acct">本地界面 · 引擎 M1-M5</span></div>
+
+    <!-- ===== 控制台 ===== -->
+    <div class="page on" id="page-console">
+      <div class="card" id="loginbar" style="display:none;background:#fdecec;border-color:#f3c2c2">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="font-weight:600;color:#c92a2a">⚠ 浏览器未登录小红书 — 检索和评论都不能用,请先登录</div>
+          <button class="btn" style="margin-left:auto" onclick="triggerLogin()">点我登录(弹出扫码)</button>
+        </div>
+        <div class="hint" id="loginhint" style="margin-top:6px;color:#c92a2a"></div>
+      </div>
+      <div class="card">
+        <div class="row">
+          <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
+          <div class="fld" style="flex:3"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
+          <div class="fld"><label>抓取上限</label><input id="max" type="number" value="40" style="width:90px"></div>
+          <button class="btn" id="go" onclick="start()">▶ 开始</button>
+        </div>
+        <div class="pipe">
+          <div class="pp" id="p-search">① 检索</div>
+          <div class="pp" id="p-match">② 匹配</div>
+          <div class="pp" id="p-generate">③ 读正文+生成</div>
+          <div class="pp" id="p-done">④ 待发送</div>
+        </div>
+        <div class="mgrid">
+          <div class="metric"><div class="l">检索到</div><div class="v" id="m-total">–</div></div>
+          <div class="metric"><div class="l">求租帖</div><div class="v" id="m-seek">–</div></div>
+          <div class="metric"><div class="l">房源/中介</div><div class="v" id="m-supply">–</div></div>
+          <div class="metric"><div class="l">该评论</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
+        </div>
+      </div>
+
+      <div class="cols">
+        <div class="card" style="flex:1.7;min-width:0;margin-bottom:0">
+          <div style="display:flex;align-items:center;margin-bottom:8px">
+            <div style="font-size:13px;font-weight:600">📺 实时监控 · 机器正在操作的浏览器</div>
+            <span class="hint" id="caststatus" style="margin-left:auto">连接中…</span>
+          </div>
+          <div class="screen" id="screen">
+            <img id="cast" alt="实时画面" style="display:none">
+            <div id="cursor"></div>
+            <div class="screen-empty" id="castempty">连接中…(画面可点击操作;红点 = 机器点击位置)</div>
+          </div>
+        </div>
+        <div class="card" style="flex:1;min-width:0;margin-bottom:0;display:flex;flex-direction:column">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">实时日志 · 引擎在干什么</div>
+          <div class="log" id="log" style="flex:1;max-height:none">点「开始」后,这里逐行显示引擎动作…</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:600">待发送评论 <span class="hint" id="rcount"></span></div>
+          <span class="hint" style="margin-left:auto">⚠ 发送=真发到对方笔记,用小号、看清内容再发</span>
+        </div>
+        <div id="results"></div>
+      </div>
+    </div>
+
+    <!-- ===== 评论记录(单独) ===== -->
+    <div class="page" id="page-comments">
+      <div class="card">
+        <div style="display:flex;align-items:center;margin-bottom:10px">
+          <div style="font-size:14px;font-weight:600">📋 评论记录 · 评论过哪些笔记、分别评了什么</div>
+          <span class="hint" id="recstats" style="margin-left:auto"></span>
+          <button class="btn ghost" style="margin-left:10px" onclick="loadRecords()">刷新</button>
+        </div>
+        <div id="reccomments"><div class="hint">(还没有评论记录,去控制台跑一轮并发送)</div></div>
+      </div>
+    </div>
+
+    <!-- ===== 采集记录(单独) ===== -->
+    <div class="page" id="page-notes">
+      <div class="card">
+        <div style="display:flex;align-items:center;margin-bottom:10px">
+          <div style="font-size:14px;font-weight:600">🔍 采集记录 · 看过哪些笔记</div>
+          <button class="btn ghost" style="margin-left:auto" onclick="loadRecords()">刷新</button>
+        </div>
+        <div id="recnotes"><div class="hint">(还没有采集记录)</div></div>
+      </div>
+    </div>
+
+    <!-- ===== 防封控制(全部可配置) ===== -->
+    <div class="page" id="page-throttle">
+      <div class="card">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px">🛡️ 防封控制 · 限频 / 工作时间 / 养号(全部可配,改完即生效)</div>
+        <div id="throttle-status" class="hint" style="margin-bottom:14px;font-size:13px"></div>
+        <div id="throttle-form"></div>
+        <button class="btn" onclick="saveConfig()" style="margin-top:10px">保存配置</button>
+        <span class="hint" id="savehint" style="margin-left:10px"></span>
+        <div class="hint" style="margin-top:12px">⚠ 养号阶梯开启时,"评论每日上限"由账号天数自动决定(1-3天3条 / 4-7天8条 / 8-14天15条 / 15天后30条)。</div>
+      </div>
+    </div>
+  </div>
 </div>
-<div class="wrap">
 
-  <div class="card">
-    <div class="row">
-      <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
-      <div class="fld" style="flex:3"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
-      <div class="fld"><label>抓取上限</label><input id="max" type="number" value="40" style="width:90px"></div>
-      <button class="btn" id="go" onclick="start()">▶ 开始</button>
-    </div>
-    <div class="pipe" style="margin-top:12px">
-      <div class="pp" id="p-search">① 检索</div>
-      <div class="pp" id="p-match">② 匹配</div>
-      <div class="pp" id="p-generate">③ 读正文+生成</div>
-      <div class="pp" id="p-done">④ 待发送</div>
-    </div>
-    <div class="mgrid">
-      <div class="metric"><div class="l">检索到</div><div class="v" id="m-total">–</div></div>
-      <div class="metric"><div class="l">求租帖</div><div class="v" id="m-seek">–</div></div>
-      <div class="metric"><div class="l">房源/中介</div><div class="v" id="m-supply">–</div></div>
-      <div class="metric"><div class="l">该评论</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div style="display:flex;align-items:center;margin-bottom:8px">
-      <div style="font-size:13px;font-weight:600">📺 实时监控 · 机器正在操作的浏览器</div>
-      <span class="hint" id="caststatus" style="margin-left:auto">连接中…</span>
-    </div>
-    <div class="screen" id="screen">
-      <img id="cast" alt="实时画面" style="display:none">
-      <div id="cursor"></div>
-      <div class="screen-empty" id="castempty">等画面加载…(投屏只在页面变化时刷新;红点 = 机器点击位置)</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">实时日志 · 引擎在干什么</div>
-    <div class="log" id="log">点「开始」后,这里逐行显示引擎动作…</div>
-  </div>
-
-  <div class="card">
-    <div style="display:flex;align-items:center;margin-bottom:8px">
-      <div style="font-size:13px;font-weight:600">待发送评论 <span class="hint" id="rcount"></span></div>
-      <span class="hint" style="margin-left:auto">⚠ 发送=真发到对方笔记,用小号、看清内容再发</span>
-    </div>
-    <div id="results"></div>
-  </div>
-
-</div>
 <script>
 const $ = (id) => document.getElementById(id);
-let es = null;
+if (navigator.userAgent.indexOf('Electron') >= 0) document.documentElement.classList.add('electron');
+let es = null, frameW = 0, frameH = 0;
 
-function setPhase(p) {
-  ['search','match','generate','done'].forEach((k) => {
-    const el = $('p-' + k); if (!el) return;
-    el.classList.remove('on','done');
-  });
-  const order = ['search','match','generate','done'];
-  const idx = order.indexOf(p);
-  order.forEach((k, i) => { const el = $('p-'+k); if (i < idx) el.classList.add('done'); else if (i === idx) el.classList.add('on'); });
+function showPage(p) {
+  document.querySelectorAll('.page').forEach(e => e.classList.remove('on'));
+  $('page-' + p).classList.add('on');
+  document.querySelectorAll('.side .nav').forEach(e => e.classList.toggle('on', e.dataset.p === p));
+  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', throttle: '防封控制' }[p] || '';
+  if (p === 'comments' || p === 'notes') loadRecords();
+  if (p === 'throttle') loadThrottle();
 }
-function addLog(m) { const el = $('log'); el.textContent += (el.textContent ? '\n' : '') + m; el.scrollTop = el.scrollHeight; }
-function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function setPhase(p) {
+  const order = ['search','match','generate','done']; const idx = order.indexOf(p);
+  order.forEach((k, i) => { const el = $('p-'+k); el.classList.remove('on','done'); if (i < idx) el.classList.add('done'); else if (i === idx) el.classList.add('on'); });
+}
+function addLog(m){ const el = $('log'); el.textContent += (el.textContent ? '\n' : '') + m; el.scrollTop = el.scrollHeight; }
 
 function addResult(r) {
-  const div = document.createElement('div');
-  div.className = 'note';
+  const div = document.createElement('div'); div.className = 'note';
   const comp = r.compliant ? '<span class="badge b-ok">合规 ✓</span>' : '<span class="badge b-bad">合规 ✗ ' + esc((r.violations||[]).map(v=>v.hint).join('、')) + '</span>';
   const warn = r.agentReject ? '<span class="badge b-warn">该帖中介勿扰</span>' : '';
   div.innerHTML =
     '<h4>' + esc(r.title) + '  <span class="badge b-seek">求租</span>' + warn + '</h4>' +
-    '<div class="meta">' + esc(r.author||'?') + ' · ' + esc(r.region||'') + ' · 赞' + esc(r.likes) + '/藏' + esc(r.collects) + '/评' + esc(r.comments) +
-      '　<a href="' + esc(r.url) + '" target="_blank">🔗 打开笔记</a></div>' +
+    '<div class="meta">' + esc(r.author||'?') + ' · ' + esc(r.region||'') + ' · 赞' + esc(r.likes) + '/藏' + esc(r.collects) + '/评' + esc(r.comments) + '　<a href="' + esc(r.url) + '" target="_blank">🔗 打开笔记</a></div>' +
     (r.descSample ? '<div class="hint" style="margin-bottom:6px">诉求:' + esc(r.descSample) + '</div>' : '') +
     '<label class="hint">生成评论(可改)' + comp + '</label>' +
     '<textarea id="cmt' + r.index + '">' + esc(r.comment) + '</textarea>' +
-    '<div class="acts">' +
-      '<button class="btn ghost" onclick="doSend(' + r.index + ',true)">dry-run 定位</button>' +
-      '<button class="btn" style="padding:6px 14px;font-size:12px" onclick="doSend(' + r.index + ',false)">发送</button>' +
-      '<span class="hint" id="st' + r.index + '"></span>' +
-    '</div>';
+    '<div class="acts"><button class="btn ghost" onclick="doSend(' + r.index + ',true)">dry-run 定位</button>' +
+    '<button class="btn" style="padding:6px 14px;font-size:12px" onclick="doSend(' + r.index + ',false)">发送</button>' +
+    '<span class="hint" id="st' + r.index + '"></span></div>';
   $('results').appendChild(div);
 }
 
-function start() {
-  $('go').disabled = true;
-  $('log').textContent = '';
-  $('results').innerHTML = '';
-  ['m-total','m-seek','m-supply','m-target'].forEach(id=>$(id).textContent='–');
-  $('rcount').textContent = '';
+async function start() {
+  const logged = await checkLogin();
+  if (!logged) { $('loginhint').textContent = '⚠ 还没登录,先点上面的「点我登录」扫码,登录后再开始'; return; }
+  $('go').disabled = true; $('log').textContent = ''; $('results').innerHTML = '';
+  ['m-total','m-seek','m-supply','m-target'].forEach(id => $(id).textContent = '–'); $('rcount').textContent = '';
   const kw = encodeURIComponent($('kw').value), dir = encodeURIComponent($('dir').value), max = $('max').value;
   setPhase('search');
   es = new EventSource('/api/run?keyword=' + kw + '&max=' + max + '&direction=' + dir);
   es.addEventListener('log', e => addLog(JSON.parse(e.data)));
   es.addEventListener('phase', e => setPhase(JSON.parse(e.data).phase));
-  es.addEventListener('stats', e => {
-    const s = JSON.parse(e.data);
-    $('m-total').textContent = s.total;
-    $('m-seek').textContent = s.byIntent['求租'] || 0;
-    $('m-supply').textContent = (s.byIntent['房源'] || 0);
-    $('m-target').textContent = s.targetCount;
-  });
+  es.addEventListener('stats', e => { const s = JSON.parse(e.data); $('m-total').textContent = s.total; $('m-seek').textContent = s.byIntent['求租']||0; $('m-supply').textContent = s.byIntent['房源']||0; $('m-target').textContent = s.targetCount; });
   es.addEventListener('result', e => addResult(JSON.parse(e.data)));
-  es.addEventListener('done', e => {
-    const d = JSON.parse(e.data);
-    setPhase('done');
-    addLog(d.error ? ('出错:' + d.error) : ('完成:生成 ' + (d.generated||0) + ' 条待发送'));
-    $('rcount').textContent = d.generated ? ('· ' + d.generated + ' 条') : '';
-    $('go').disabled = false;
-    es.close();
-  });
+  es.addEventListener('done', e => { const d = JSON.parse(e.data); setPhase('done'); addLog(d.error ? ('出错:'+d.error) : ('完成:生成 '+(d.generated||0)+' 条待发送')); $('rcount').textContent = d.generated ? ('· '+d.generated+' 条') : ''; $('go').disabled = false; loadRecords(); es.close(); });
   es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; es && es.close(); };
 }
 
 function doSend(i, dry) {
   if (!dry && !confirm('确认真发这条评论到对方笔记?(用的是你登录的小号)')) return;
-  const ta = $('cmt' + i);
-  const st = $('st' + i);
-  st.textContent = dry ? '定位中…' : '发送中…';
+  const ta = $('cmt' + i), st = $('st' + i); st.textContent = dry ? '定位中…' : '发送中…';
   fetch('/api/send?index=' + i + '&confirm=' + (dry ? '0' : '1') + '&comment=' + encodeURIComponent(ta.value))
-    .then(r => r.json())
-    .then(d => { st.textContent = (d.ok ? '✓ ' : '✗ ') + d.msg; })
+    .then(r => r.json()).then(d => { st.textContent = (d.ok ? '✓ ' : '✗ ') + d.msg; if (d.ok && !d.dry) loadRecords(); })
     .catch(e => { st.textContent = '✗ ' + e.message; });
 }
 
-// 实时监控:投屏画面 + 鼠标点击叠加
-let frameW = 0, frameH = 0;
+// 实时监控
 function connectMonitor() {
   const mes = new EventSource('/api/screencast');
-  mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接' : ('连接失败:' + (h.msg || '')); });
-  mes.addEventListener('frame', e => {
-    const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH;
-    const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block';
-    const ce = $('castempty'); if (ce) ce.style.display = 'none';
-  });
+  mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接' : ('连接失败:'+(h.msg||'')); });
+  mes.addEventListener('frame', e => { const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH; const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block'; const ce = $('castempty'); if (ce) ce.style.display = 'none'; });
   mes.addEventListener('pointer', e => { const p = JSON.parse(e.data); showCursor(p.x, p.y); });
   mes.onerror = () => { $('caststatus').textContent = '○ 重连中…'; };
 }
 function showCursor(x, y) {
   const img = $('cast'); if (!frameW || !frameH || !img.clientWidth) return;
-  const dx = x / frameW * img.clientWidth, dy = y / frameH * img.clientHeight;
-  const cur = $('cursor'); cur.style.left = dx + 'px'; cur.style.top = dy + 'px'; cur.style.opacity = '1'; // 常驻,不再消失
+  const cur = $('cursor'); cur.style.left = (x/frameW*img.clientWidth)+'px'; cur.style.top = (y/frameH*img.clientHeight)+'px'; cur.style.opacity = '1';
   cur.classList.remove('ping'); void cur.offsetWidth; cur.classList.add('ping');
 }
-// 画面可点击:你点哪,机器就让真实浏览器点哪(人机共用)
-const castImg = $('cast');
-castImg.addEventListener('click', e => {
-  if (!frameW || !frameH || !castImg.clientWidth) return;
-  const x = Math.round(e.offsetX / castImg.clientWidth * frameW);
-  const y = Math.round(e.offsetY / castImg.clientHeight * frameH);
-  showCursor(x, y);
-  fetch('/api/click?x=' + x + '&y=' + y).catch(() => {});
+$('cast').addEventListener('click', e => {
+  if (!frameW || !frameH || !e.target.clientWidth) return;
+  const x = Math.round(e.offsetX / e.target.clientWidth * frameW), y = Math.round(e.offsetY / e.target.clientHeight * frameH);
+  showCursor(x, y); fetch('/api/click?x=' + x + '&y=' + y).catch(() => {});
 });
 connectMonitor();
+
+function loadRecords() {
+  fetch('/api/records').then(r => r.json()).then(d => {
+    if (!d.ok) return;
+    $('recstats').textContent = '已评论 ' + d.stats.commented + ' · 看过笔记 ' + d.stats.notes + ' · 潜客 ' + d.stats.leads;
+    $('reccomments').innerHTML = d.comments.length ? d.comments.map(c =>
+      '<div class="note" style="padding:9px 12px"><div style="font-size:13px;font-weight:600">' + esc(c.note_title || '(无标题)') +
+      ' <span class="badge ' + (c.status === 'sent' ? 'b-ok' : 'b-warn') + '">' + esc(c.status) + '</span> <a href="' + esc(c.note_url) + '" target="_blank">🔗 打开笔记</a></div>' +
+      '<div style="font-size:12.5px;margin:4px 0">' + esc(c.content) + '</div>' +
+      '<div class="hint">' + esc((c.created_at || '').replace('T',' ').slice(0,16)) + '</div></div>'
+    ).join('') : '<div class="hint">(还没有评论记录,去控制台跑一轮并发送)</div>';
+    $('recnotes').innerHTML = d.notes.length ? ('<table class="rec"><tr><td>标题</td><td>作者</td><td>意向</td><td>赞/评</td><td></td></tr>' +
+      d.notes.map(n => '<tr><td>' + esc((n.title||'(无标题)').slice(0,30)) + '</td><td>' + esc(n.author||'') + '</td><td>' + esc(n.intent||'') + '</td><td>' + esc(n.likes||'') + '/' + esc(n.comments||'') + '</td><td><a href="' + esc(n.url) + '" target="_blank">🔗</a></td></tr>').join('') + '</table>') : '<div class="hint">(还没有采集记录)</div>';
+  }).catch(() => {});
+}
+loadRecords();
+
+// 登录状态检测 + 引导
+function checkLogin() {
+  return fetch('/api/login-status').then(r => r.json()).then(d => {
+    const logged = d.ok && d.loggedIn; $('loginbar').style.display = logged ? 'none' : 'block'; return logged;
+  }).catch(() => false);
+}
+function triggerLogin() {
+  $('loginhint').textContent = '正在让机器点开登录、弹出扫码框…';
+  fetch('/api/trigger-login').then(r => r.json()).then(d => {
+    $('loginhint').textContent = d.ok ? (d.msg || '已打开登录流程') : ('✗ ' + d.msg);
+    if (d.ok && d.loggedIn) checkLogin();
+    else if (d.ok) pollLogin();
+  }).catch(e => { $('loginhint').textContent = '✗ ' + e.message; });
+}
+function pollLogin() {
+  let n = 0; const iv = setInterval(() => { n++; checkLogin().then(logged => { if (logged) { clearInterval(iv); $('loginhint').textContent = '✓ 已登录!现在可以点「开始」了'; } else if (n > 60) clearInterval(iv); }); }, 2000);
+}
+// 防封控制:状态 + 配置
+function loadThrottle() {
+  fetch('/api/throttle').then(r => r.json()).then(d => {
+    if (!d.ok) return; const c = d.config;
+    $('throttle-status').innerHTML = '账号第 <b>' + d.accountDays + '</b> 天 · 今日评论 <b>' + d.commentToday + '/' + d.commentDailyLimit + '</b> · 本小时 ' + d.commentLastHour + '/' + c.comment_hourly + ' · ' + (d.inWork ? '<span style="color:var(--green)">● 在工作时段</span>' : '<span style="color:var(--red)">○ 不在工作时段</span>');
+    $('throttle-form').innerHTML =
+      cfgNum('comment_daily', '评论每日上限(养号关闭时生效)', c.comment_daily) +
+      cfgNum('comment_hourly', '评论每小时上限', c.comment_hourly) +
+      cfgNum('comment_gap_min', '两条评论最小间隔(分钟)', c.comment_gap_min) +
+      cfgNum('collect_daily', '采集每日上限', c.collect_daily) +
+      cfgTxt('work_start', '工作开始 HH:MM', c.work_start) +
+      cfgTxt('work_end', '工作结束 HH:MM', c.work_end) +
+      cfgChk('nurture_enabled', '养号阶梯(新号自动从低频爬坡)', c.nurture_enabled);
+  });
+}
+function cfgNum(k, label, v) { return '<div class="fld" style="margin-bottom:8px"><label>' + label + '</label><input id="cfg_' + k + '" type="number" value="' + v + '" style="width:130px"></div>'; }
+function cfgTxt(k, label, v) { return '<div class="fld" style="margin-bottom:8px"><label>' + label + '</label><input id="cfg_' + k + '" type="text" value="' + esc(v) + '" style="width:130px"></div>'; }
+function cfgChk(k, label, v) { return '<div class="fld" style="margin-bottom:8px"><label style="cursor:pointer"><input id="cfg_' + k + '" type="checkbox" ' + (v ? 'checked' : '') + '> ' + label + '</label></div>'; }
+function saveConfig() {
+  const data = {
+    comment_daily: Number($('cfg_comment_daily').value), comment_hourly: Number($('cfg_comment_hourly').value),
+    comment_gap_min: Number($('cfg_comment_gap_min').value), collect_daily: Number($('cfg_collect_daily').value),
+    work_start: $('cfg_work_start').value, work_end: $('cfg_work_end').value, nurture_enabled: $('cfg_nurture_enabled').checked
+  };
+  $('savehint').textContent = '保存中…';
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('savehint').textContent = d.ok ? '✓ 已保存,立即生效' : ('✗ ' + d.msg); loadThrottle(); });
+}
+checkLogin();
 </script>
 </body>
 </html>

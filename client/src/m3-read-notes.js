@@ -8,6 +8,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
+const { buildSearchUrl } = require('./engine');
+const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const N = Number(process.argv[2] || 5);
@@ -48,34 +50,40 @@ async function main() {
   const targets = (m.targets || []).slice(0, N);
   if (!targets.length) { console.log('match 结果里没有 target'); process.exit(1); }
   log(`关键词「${m.keyword}」· 读前 ${targets.length} 条目标笔记详情`);
+  const searchUrl = buildSearchUrl(m.keyword);
 
   const client = new XhsCdpClient({ endpoint: ENDPOINT });
   const target = await client.resolvePageTarget();
 
   const details = [];
   for (let i = 0; i < targets.length; i++) {
-    const t = targets[i];
-    await client.navigate({ target, url: t.url });
-    for (let k = 0; k < 12; k++) {
-      await sleep(900);
-      const rs = await client.evaluate({ target, expression: 'document.readyState' });
-      if (rs && rs.value === 'complete') break;
-    }
-    await sleep(1400); // 正文异步
-    let d = { ok: false };
-    try { const r = await client.evaluate({ target, expression: EXTRACT }); d = JSON.parse(r.value); } catch (e) { d.error = e.message; }
-    if (d.ok) {
-      d.url = t.url;
-      details.push(d);
-      log(`${i + 1}/${targets.length} ✓ ${d.title || '(无标题)'} · ${d.author} · 评${d.comments} · [${d.tags.slice(0, 4).join('/')}]`);
-    } else {
-      log(`${i + 1}/${targets.length} ✗ 提取失败:${d.reason || d.error || '?'}`);
+    const t = { ...targets[i], searchUrl };
+    await openNoteFromList({ client, target, note: t, onLog: log });
+    try {
+      for (let k = 0; k < 12; k++) {
+        await sleep(900);
+        const rs = await client.evaluate({ target, expression: 'document.readyState' });
+        if (rs && rs.value === 'complete') break;
+      }
+      await sleep(1400); // 正文异步
+      let d = { ok: false };
+      try { const r = await client.evaluate({ target, expression: EXTRACT }); d = JSON.parse(r.value); } catch (e) { d.error = e.message; }
+      if (d.ok) {
+        d.url = t.url;
+        d.searchUrl = searchUrl;
+        details.push(d);
+        log(`${i + 1}/${targets.length} ✓ ${d.title || '(无标题)'} · ${d.author} · 评${d.comments} · [${d.tags.slice(0, 4).join('/')}]`);
+      } else {
+        log(`${i + 1}/${targets.length} ✗ 提取失败:${d.reason || d.error || '?'}`);
+      }
+    } finally {
+      await closeCurrentNote({ client, target, note: t, onLog: log });
     }
     await sleep(rand(1500, 3000)); // 拟人停顿
   }
 
   const out = path.join(TMP, `details-${Date.now()}.json`);
-  fs.writeFileSync(out, JSON.stringify({ keyword: m.keyword, count: details.length, details }, null, 2));
+  fs.writeFileSync(out, JSON.stringify({ keyword: m.keyword, searchUrl, count: details.length, details }, null, 2));
   console.log(`\n已存详情清单:${path.basename(out)}(${details.length} 条)`);
   console.log('\n—— 生成清单(喂给下一步生成评论)——');
   details.forEach((d, i) => {

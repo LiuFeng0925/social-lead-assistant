@@ -7,6 +7,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
+const { buildSearchUrl } = require('./engine');
+const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -52,23 +54,29 @@ const DUMP = `(function(){
 
 (async () => {
   const m = JSON.parse(fs.readFileSync(latestMatch(), 'utf8'));
-  const t = (m.targets || [])[0];
-  if (!t) { console.log('match 结果里没有 target'); process.exit(1); }
+  const searchUrl = buildSearchUrl(m.keyword);
+  const rawTarget = (m.targets || [])[0];
+  if (!rawTarget) { console.log('match 结果里没有 target'); process.exit(1); }
+  const t = { ...rawTarget, searchUrl };
   console.log('目标笔记:', t.title);
   console.log('URL:', t.url, '\n');
 
   const c = new XhsCdpClient({ endpoint: ENDPOINT });
   const target = await c.resolvePageTarget();
-  await c.navigate({ target, url: t.url });
-  for (let i = 0; i < 12; i++) {
-    await sleep(1000);
-    const r = await c.evaluate({ target, expression: 'document.readyState' });
-    if (r && r.value === 'complete') break;
-  }
-  await sleep(1800); // 详情/正文异步渲染,多等一下
+  await openNoteFromList({ client: c, target, note: t, onLog: console.log });
+  try {
+    for (let i = 0; i < 12; i++) {
+      await sleep(1000);
+      const r = await c.evaluate({ target, expression: 'document.readyState' });
+      if (r && r.value === 'complete') break;
+    }
+    await sleep(1800); // 详情/正文异步渲染,多等一下
 
-  const r = await c.evaluate({ target, expression: DUMP });
-  console.log('—— explore 详情页正文 ——');
-  console.log(r && r.value);
+    const r = await c.evaluate({ target, expression: DUMP });
+    console.log('—— explore 详情页正文 ——');
+    console.log(r && r.value);
+  } finally {
+    await closeCurrentNote({ client: c, target, note: t, onLog: console.log });
+  }
   process.exit(0);
 })().catch((e) => { console.error('探测失败:', e.message); process.exit(1); });
