@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书获客 · 控制台</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--ink:#1d2330;--muted:#5b6478;--line:#e6e9ef;--brand:#ff2742;
+    --green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;--red:#c92a2a;--red-bg:#fdecec;--blue:#1f6fd6;--blue-bg:#eaf2fc;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  .top{display:flex;align-items:center;gap:10px;padding:11px 18px;background:#fff;border-bottom:1px solid var(--line)}
+  .top .logo{width:9px;height:9px;border-radius:50%;background:var(--brand)}
+  .top b{font-size:15px}
+  .top .acct{margin-left:auto;font-size:12px;color:var(--muted)}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px 18px 60px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,30,50,.05)}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+  .fld label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  input,textarea{border:1px solid #d6dae2;border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--ink);background:#fff}
+  input:focus,textarea:focus{outline:none;border-color:var(--brand)}
+  .btn{border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;background:var(--brand);color:#fff}
+  .btn:disabled{opacity:.5;cursor:default}
+  .btn.ghost{background:#fff;border:1px solid #d6dae2;color:var(--ink);padding:6px 12px;font-size:12px}
+  .pipe{display:flex;gap:6px;margin:4px 0 0}
+  .pp{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center;font-size:12px;color:var(--muted);background:#fafbfc}
+  .pp.on{background:#fff4f5;border-color:#f5b8bd;color:var(--brand);font-weight:600}
+  .pp.done{background:var(--green-bg);border-color:#b6e3cd;color:var(--green)}
+  .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
+  .metric{background:#f7f8fa;border-radius:8px;padding:10px 12px}
+  .metric .l{font-size:11px;color:var(--muted)}.metric .v{font-size:22px;font-weight:800}
+  .log{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;color:#43505f;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:170px;overflow:auto;white-space:pre-wrap}
+  .note{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+  .note h4{margin:0 0 4px;font-size:14px}
+  .note .meta{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:20px;margin-right:6px}
+  .b-seek{background:var(--blue-bg);color:var(--blue)}.b-ok{background:var(--green-bg);color:var(--green)}.b-warn{background:var(--amber-bg);color:var(--amber)}.b-bad{background:var(--red-bg);color:var(--red)}
+  .note textarea{width:100%;min-height:54px;margin-top:4px}
+  .note .acts{display:flex;gap:8px;margin-top:8px;align-items:center}
+  a{color:var(--blue);text-decoration:none;font-size:12px}
+  .hint{font-size:12px;color:var(--muted)}
+  .screen{position:relative;background:#0d0f12;border-radius:8px;overflow:hidden;min-height:180px;display:flex;align-items:center;justify-content:center}
+  .screen img{width:100%;display:block}
+  #cursor{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(255,39,66,.9);border:3px solid #fff;box-shadow:0 0 0 2px #ff2742,0 0 14px 5px rgba(255,39,66,.75);opacity:0;pointer-events:none;transition:left .1s,top .1s;z-index:5}
+  #cursor.ping{animation:ping .6s ease-out}
+  @keyframes ping{0%{box-shadow:0 0 0 2px #ff2742,0 0 0 0 rgba(255,39,66,.7)}100%{box-shadow:0 0 0 2px #ff2742,0 0 0 28px rgba(255,39,66,0)}}
+  .screen img{cursor:crosshair}
+  .screen-empty{position:absolute;color:#6b7280;font-size:12px}
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="logo"></span><b>小红书获客 · 控制台</b>
+  <span class="acct" id="acct">本地界面 · 引擎复用 M1-M4</span>
+</div>
+<div class="wrap">
+
+  <div class="card">
+    <div class="row">
+      <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
+      <div class="fld" style="flex:3"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
+      <div class="fld"><label>抓取上限</label><input id="max" type="number" value="40" style="width:90px"></div>
+      <button class="btn" id="go" onclick="start()">▶ 开始</button>
+    </div>
+    <div class="pipe" style="margin-top:12px">
+      <div class="pp" id="p-search">① 检索</div>
+      <div class="pp" id="p-match">② 匹配</div>
+      <div class="pp" id="p-generate">③ 读正文+生成</div>
+      <div class="pp" id="p-done">④ 待发送</div>
+    </div>
+    <div class="mgrid">
+      <div class="metric"><div class="l">检索到</div><div class="v" id="m-total">–</div></div>
+      <div class="metric"><div class="l">求租帖</div><div class="v" id="m-seek">–</div></div>
+      <div class="metric"><div class="l">房源/中介</div><div class="v" id="m-supply">–</div></div>
+      <div class="metric"><div class="l">该评论</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:600">📺 实时监控 · 机器正在操作的浏览器</div>
+      <span class="hint" id="caststatus" style="margin-left:auto">连接中…</span>
+    </div>
+    <div class="screen" id="screen">
+      <img id="cast" alt="实时画面" style="display:none">
+      <div id="cursor"></div>
+      <div class="screen-empty" id="castempty">等画面加载…(投屏只在页面变化时刷新;红点 = 机器点击位置)</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">实时日志 · 引擎在干什么</div>
+    <div class="log" id="log">点「开始」后,这里逐行显示引擎动作…</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:600">待发送评论 <span class="hint" id="rcount"></span></div>
+      <span class="hint" style="margin-left:auto">⚠ 发送=真发到对方笔记,用小号、看清内容再发</span>
+    </div>
+    <div id="results"></div>
+  </div>
+
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let es = null;
+
+function setPhase(p) {
+  ['search','match','generate','done'].forEach((k) => {
+    const el = $('p-' + k); if (!el) return;
+    el.classList.remove('on','done');
+  });
+  const order = ['search','match','generate','done'];
+  const idx = order.indexOf(p);
+  order.forEach((k, i) => { const el = $('p-'+k); if (i < idx) el.classList.add('done'); else if (i === idx) el.classList.add('on'); });
+}
+function addLog(m) { const el = $('log'); el.textContent += (el.textContent ? '\n' : '') + m; el.scrollTop = el.scrollHeight; }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function addResult(r) {
+  const div = document.createElement('div');
+  div.className = 'note';
+  const comp = r.compliant ? '<span class="badge b-ok">合规 ✓</span>' : '<span class="badge b-bad">合规 ✗ ' + esc((r.violations||[]).map(v=>v.hint).join('、')) + '</span>';
+  const warn = r.agentReject ? '<span class="badge b-warn">该帖中介勿扰</span>' : '';
+  div.innerHTML =
+    '<h4>' + esc(r.title) + '  <span class="badge b-seek">求租</span>' + warn + '</h4>' +
+    '<div class="meta">' + esc(r.author||'?') + ' · ' + esc(r.region||'') + ' · 赞' + esc(r.likes) + '/藏' + esc(r.collects) + '/评' + esc(r.comments) +
+      '　<a href="' + esc(r.url) + '" target="_blank">🔗 打开笔记</a></div>' +
+    (r.descSample ? '<div class="hint" style="margin-bottom:6px">诉求:' + esc(r.descSample) + '</div>' : '') +
+    '<label class="hint">生成评论(可改)' + comp + '</label>' +
+    '<textarea id="cmt' + r.index + '">' + esc(r.comment) + '</textarea>' +
+    '<div class="acts">' +
+      '<button class="btn ghost" onclick="doSend(' + r.index + ',true)">dry-run 定位</button>' +
+      '<button class="btn" style="padding:6px 14px;font-size:12px" onclick="doSend(' + r.index + ',false)">发送</button>' +
+      '<span class="hint" id="st' + r.index + '"></span>' +
+    '</div>';
+  $('results').appendChild(div);
+}
+
+function start() {
+  $('go').disabled = true;
+  $('log').textContent = '';
+  $('results').innerHTML = '';
+  ['m-total','m-seek','m-supply','m-target'].forEach(id=>$(id).textContent='–');
+  $('rcount').textContent = '';
+  const kw = encodeURIComponent($('kw').value), dir = encodeURIComponent($('dir').value), max = $('max').value;
+  setPhase('search');
+  es = new EventSource('/api/run?keyword=' + kw + '&max=' + max + '&direction=' + dir);
+  es.addEventListener('log', e => addLog(JSON.parse(e.data)));
+  es.addEventListener('phase', e => setPhase(JSON.parse(e.data).phase));
+  es.addEventListener('stats', e => {
+    const s = JSON.parse(e.data);
+    $('m-total').textContent = s.total;
+    $('m-seek').textContent = s.byIntent['求租'] || 0;
+    $('m-supply').textContent = (s.byIntent['房源'] || 0);
+    $('m-target').textContent = s.targetCount;
+  });
+  es.addEventListener('result', e => addResult(JSON.parse(e.data)));
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    setPhase('done');
+    addLog(d.error ? ('出错:' + d.error) : ('完成:生成 ' + (d.generated||0) + ' 条待发送'));
+    $('rcount').textContent = d.generated ? ('· ' + d.generated + ' 条') : '';
+    $('go').disabled = false;
+    es.close();
+  });
+  es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; es && es.close(); };
+}
+
+function doSend(i, dry) {
+  if (!dry && !confirm('确认真发这条评论到对方笔记?(用的是你登录的小号)')) return;
+  const ta = $('cmt' + i);
+  const st = $('st' + i);
+  st.textContent = dry ? '定位中…' : '发送中…';
+  fetch('/api/send?index=' + i + '&confirm=' + (dry ? '0' : '1') + '&comment=' + encodeURIComponent(ta.value))
+    .then(r => r.json())
+    .then(d => { st.textContent = (d.ok ? '✓ ' : '✗ ') + d.msg; })
+    .catch(e => { st.textContent = '✗ ' + e.message; });
+}
+
+// 实时监控:投屏画面 + 鼠标点击叠加
+let frameW = 0, frameH = 0;
+function connectMonitor() {
+  const mes = new EventSource('/api/screencast');
+  mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接' : ('连接失败:' + (h.msg || '')); });
+  mes.addEventListener('frame', e => {
+    const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH;
+    const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block';
+    const ce = $('castempty'); if (ce) ce.style.display = 'none';
+  });
+  mes.addEventListener('pointer', e => { const p = JSON.parse(e.data); showCursor(p.x, p.y); });
+  mes.onerror = () => { $('caststatus').textContent = '○ 重连中…'; };
+}
+function showCursor(x, y) {
+  const img = $('cast'); if (!frameW || !frameH || !img.clientWidth) return;
+  const dx = x / frameW * img.clientWidth, dy = y / frameH * img.clientHeight;
+  const cur = $('cursor'); cur.style.left = dx + 'px'; cur.style.top = dy + 'px'; cur.style.opacity = '1'; // 常驻,不再消失
+  cur.classList.remove('ping'); void cur.offsetWidth; cur.classList.add('ping');
+}
+// 画面可点击:你点哪,机器就让真实浏览器点哪(人机共用)
+const castImg = $('cast');
+castImg.addEventListener('click', e => {
+  if (!frameW || !frameH || !castImg.clientWidth) return;
+  const x = Math.round(e.offsetX / castImg.clientWidth * frameW);
+  const y = Math.round(e.offsetY / castImg.clientHeight * frameH);
+  showCursor(x, y);
+  fetch('/api/click?x=' + x + '&y=' + y).catch(() => {});
+});
+connectMonitor();
+</script>
+</body>
+</html>

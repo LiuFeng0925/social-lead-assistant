@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书自动化获客工具 · 第一期:评论闭环(范围与界面)</title>
+<style>
+  :root{
+    --bg:#f5f6f8;--card:#fff;--ink:#1d2330;--muted:#5b6478;--line:#e6e9ef;--brand:#ff2742;
+    --green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;
+    --red:#c92a2a;--red-bg:#fdecec;--blue:#1f6fd6;--blue-bg:#eaf2fc;--purple:#534ab7;--purple-bg:#eeedfe;
+    --shadow:0 1px 3px rgba(20,30,50,.06),0 8px 24px rgba(20,30,50,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.7;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 20px 80px}
+  header{background:linear-gradient(135deg,#23272f 0%,#3a1f24 60%,#5e1620 100%);color:#fff;padding:42px 20px 36px;border-bottom:4px solid var(--brand)}
+  header .inner{max-width:1040px;margin:0 auto;padding:0 20px}
+  .tag{display:inline-block;background:var(--brand);color:#fff;font-size:12px;font-weight:600;padding:4px 12px;border-radius:30px}
+  header h1{font-size:27px;margin:14px 0 6px;font-weight:800}
+  header p{margin:0;color:#cfd3dc;font-size:14px}
+  .meta{margin-top:16px;font-size:13px;color:#9aa1ad}.meta span{margin-right:18px}
+  section{margin-bottom:30px}
+  h2.sec{font-size:21px;margin:30px 0 10px;font-weight:800;display:flex;align-items:center;gap:10px;border-bottom:2px solid var(--line);padding-bottom:8px}
+  h2.sec .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;background:var(--ink);color:#fff;border-radius:7px;font-size:14px;padding:0 6px}
+  h3{font-size:16px;margin:20px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;box-shadow:var(--shadow);margin-bottom:14px}
+  p{margin:0 0 10px}ul{margin:0 0 10px;padding-left:20px}li{margin-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);margin:6px 0 14px}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f2f6;font-weight:700;font-size:12.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td strong{color:var(--ink)}
+  code{background:#eef0f4;border-radius:4px;padding:1px 6px;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap}
+  .b-green{background:var(--green-bg);color:var(--green)}.b-amber{background:var(--amber-bg);color:var(--amber)}
+  .b-red{background:var(--red-bg);color:var(--red)}.b-blue{background:var(--blue-bg);color:var(--blue)}.b-gray{background:#eceef2;color:var(--muted)}
+  .callout{border-radius:10px;padding:13px 17px;margin:12px 0;font-size:14px}
+  .c-blue{background:var(--blue-bg);border:1px solid #b9d6f6;color:#16467f}
+  .c-amber{background:var(--amber-bg);border:1px solid #f0d59a;color:#73490a}
+  .c-green{background:var(--green-bg);border:1px solid #b6e3cd;color:#0a5c41}
+  .c-red{background:var(--red-bg);border:1px solid #f3c2c2;color:#7a1f1f}
+  .callout strong{display:block;margin-bottom:3px}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 22px;box-shadow:var(--shadow);margin:22px 0}
+  nav.toc a{color:var(--blue);text-decoration:none;font-size:13.5px;margin:3px 16px 3px 0;display:inline-block}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:10px 0}
+  .step{flex:1;min-width:140px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:var(--shadow)}
+  .step .num{font-size:11px;font-weight:800;color:var(--brand)}
+  .step h4{margin:3px 0 5px;font-size:13.5px}.step p{font-size:11.5px;color:var(--muted);margin:0}
+  .yes{color:var(--green);font-weight:700}.half{color:var(--amber);font-weight:700}.no{color:var(--red);font-weight:700}
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
+
+  /* ===== mockup 应用外壳 ===== */
+  .mock{background:#eceef3;border:1px solid #dfe3ea;border-radius:14px;padding:16px;margin:10px 0 6px}
+  .mcap{font-size:12px;color:var(--muted);margin:0 0 8px;display:flex;align-items:center;gap:7px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .app{display:flex;background:#fff;border:1px solid #d6dae2;border-radius:11px;overflow:hidden;box-shadow:0 6px 22px rgba(20,30,50,.12);min-height:430px}
+  .side{width:152px;flex:none;background:#20242c;color:#c4c9d4;padding:12px 0;font-size:12.5px}
+  .side .brand{display:flex;align-items:center;gap:7px;padding:4px 14px 12px;font-weight:800;color:#fff;font-size:13px;border-bottom:1px solid #2f343d;margin-bottom:8px}
+  .side .brand .bd{width:9px;height:9px;border-radius:50%;background:var(--brand)}
+  .side .it{display:flex;align-items:center;gap:8px;padding:7px 14px;color:#aab0bd;cursor:default}
+  .side .it .ic{width:16px;text-align:center;opacity:.9}
+  .side .it.on{background:#2b303a;color:#fff;border-left:3px solid var(--brand);padding-left:11px;font-weight:600}
+  .side .it.dim{color:#6b7280}
+  .side .sgrp{font-size:10.5px;color:#5f6671;padding:10px 14px 4px;letter-spacing:.5px}
+  .body{flex:1;display:flex;flex-direction:column;min-width:0}
+  .top{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);background:#fbfcfe}
+  .top .ttl{font-weight:700;font-size:14px}
+  .top .acct{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+  .swt{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 11px;border-radius:20px}
+  .swt.run{background:var(--green-bg);color:var(--green)}
+  .brake{font-size:12px;font-weight:700;padding:5px 11px;border-radius:8px;background:#fff;border:1px solid #f3c2c2;color:var(--red)}
+  .content{padding:15px 16px;background:var(--bg);flex:1;overflow:auto}
+  .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:13px}
+  .metric{background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .metric .l{font-size:11.5px;color:var(--muted);margin-bottom:3px}
+  .metric .v{font-size:23px;font-weight:800;line-height:1.1}
+  .metric .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:12px}
+  .panel h5{margin:0 0 10px;font-size:13px;font-weight:700;display:flex;align-items:center;gap:7px}
+  .panel h5 .gr{margin-left:auto;font-size:11px;color:var(--muted);font-weight:400}
+  /* pipeline */
+  .pipe{display:flex;align-items:stretch;gap:6px}
+  .pp{flex:1;border:1px solid var(--line);border-radius:9px;padding:9px 10px;text-align:center;background:#fafbfc;position:relative}
+  .pp .pt{font-size:12px;font-weight:700}
+  .pp .pc{font-size:11px;color:var(--muted);margin-top:2px}
+  .pp.done{background:var(--green-bg);border-color:#b6e3cd}.pp.done .pt{color:var(--green)}
+  .pp.run{background:#fff4f5;border-color:#f5b8bd}.pp.run .pt{color:var(--brand)}
+  .pp.wait{opacity:.6}
+  .parr{display:flex;align-items:center;color:#c0c6d0;font-weight:700;font-size:13px}
+  /* note card */
+  .ncard{display:flex;gap:11px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:11px}
+  .nthumb{width:58px;height:58px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--purple-bg);color:var(--purple)}
+  .ncard .nt{font-size:13.5px;font-weight:700;line-height:1.4}
+  .ncard .nm{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  /* log */
+  .logbox{font-family:ui-monospace,Menlo,monospace;font-size:11.8px;line-height:1.75;color:#43505f;background:#fafbfc;border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+  .logbox .ln .t{color:#9aa1ad}
+  .logbox .ok{color:var(--green)}.logbox .wr{color:var(--amber)}.logbox .br{color:var(--brand)}
+  /* compliance */
+  .chk{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:4px 0}
+  .chk .ci{width:17px;height:17px;border-radius:50%;background:var(--green-bg);color:var(--green);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex:none}
+  .gen{background:#fff8e9;border:1px solid #f0dca0;border-radius:9px;padding:11px 13px;font-size:13px;line-height:1.7;color:#5a4a1a}
+  .houserow{display:flex;gap:8px;margin-top:8px}
+  .hthumb{width:54px;height:54px;border-radius:7px;background:var(--blue-bg);color:var(--blue);display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+  .two{display:grid;grid-template-columns:1fr 1.25fr;gap:12px}
+  .fld{margin-bottom:9px}.fld .fl{font-size:11.5px;color:var(--muted);margin-bottom:3px}
+  .inp{border:1px solid #d6dae2;border-radius:7px;padding:6px 9px;font-size:12.5px;background:#fff;color:var(--ink)}
+  .seg{display:inline-flex;border:1px solid #d6dae2;border-radius:7px;overflow:hidden}
+  .seg span{padding:5px 10px;font-size:12px;color:var(--muted)}
+  .seg span.on{background:var(--brand);color:#fff;font-weight:600}
+  .mini-btn{font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid #d6dae2;background:#fff;color:var(--ink)}
+  .mini-btn.pri{background:var(--brand);border-color:var(--brand);color:#fff}
+  .htbl{width:100%;border-collapse:collapse;font-size:12px}
+  .htbl th,.htbl td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left}
+  .htbl th{background:#f0f2f6;font-size:11px;color:var(--muted)}
+  .shot{border:1px solid #d6dae2;border-radius:8px;overflow:hidden;background:#fff;flex:1}
+  .shot-bar{display:flex;align-items:center;gap:5px;padding:5px 9px;background:#eceef3;font-size:10.5px;color:var(--muted)}
+  .shot-bar .u{flex:1;background:#fff;border-radius:5px;padding:2px 8px;color:#5b6478;border:1px solid #e0e3ea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .shot-body{padding:9px}
+  .shot-head{height:22px;background:#fff2f4;border-radius:5px;margin-bottom:7px;display:flex;align-items:center;padding:0 9px;font-size:10.5px;color:var(--brand);font-weight:700}
+  .shot-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .shot-cell{height:44px;border-radius:5px;background:#eef1f6}
+  .shot-cell.a{background:#e1f5ee}.shot-cell.b{background:#eeedfe}.shot-cell.c{background:#fdf3e1}.shot-cell.d{background:#eaf2fc}
+  .snaps{width:142px;flex:none}
+  .snap{display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;margin-bottom:6px;color:var(--muted);font-size:11.5px}
+  .snap.on{border-color:var(--brand);background:#fff4f5;color:#7a1f2a;font-weight:600}
+  .snap .sd{width:34px;height:25px;border-radius:4px;background:#e6e9ef;flex:none}
+  .snap.on .sd{background:#f5c4c9}
+  .snap.err{border-color:#f3c2c2;color:var(--red)}.snap.err .sd{background:#f7d6d6}
+  .ta{width:100%;border:1px solid #d6dae2;border-radius:8px;padding:9px 11px;font-size:13px;line-height:1.7;color:var(--ink);background:#fff;min-height:88px;font-family:inherit;resize:vertical}
+  .varbtn{display:inline-block;font-size:11px;background:#eef0f4;border:1px solid #e0e3ea;border-radius:6px;padding:3px 9px;color:#4a5160;margin:0 5px 5px 0}
+  .nlink{color:var(--blue);font-size:11.5px;text-decoration:none;white-space:nowrap}
+  .nlink:hover{text-decoration:underline}
+  .detail{background:#fafbfc;border:1px solid var(--line);border-radius:9px;padding:11px 13px;font-size:12.5px;line-height:1.6}
+  .detail .row{display:flex;gap:8px;padding:3px 0}
+  .detail .k{width:72px;color:var(--muted);flex:none}
+  @media(max-width:720px){.mgrid{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.side{display:none}}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <span class="tag">产品文档 · 第一期 · 评论闭环</span>
+  <h1>第一期:评论闭环(范围与界面)</h1>
+  <p>小红书自动化获客工具 ｜ 检索 → 匹配 → 生成 → 自动评论 → 记录,单账号端到端跑通</p>
+  <div class="meta"><span>📅 2026-06-25</span><span>📌 v0.1</span><span>🔗 上游:需求 v0.2 · 产品架构 v0.1</span><span>📄 文本真相见同名 .md</span></div>
+</div></header>
+
+<div class="wrap">
+  <div class="callout c-blue"><strong>这份文档是什么</strong>
+  第一期的<strong>范围圈定 + 高保真界面</strong>。我们把全链路里最有价值、风险可控的一段竖切——「检索→匹配→生成评论→自动评论→记录」——先在单账号上跑通。<strong>只到"评论"为止</strong>,私信/加微/多轮沟通是第二期。改动以同名 <code>.md</code> 为准。</div>
+
+  <nav class="toc">
+    <a href="#why">1 为什么先做评论闭环</a>
+    <a href="#scope">2 本期范围(做/不做)</a>
+    <a href="#flow">3 端到端流程</a>
+    <a href="#ui">4 高保真界面 ★</a>
+    <a href="#accept">5 验收标准</a>
+    <a href="#next">6 不做项与衔接</a>
+  </nav>
+
+  <!-- 1 -->
+  <section id="why"><h2 class="sec"><span class="n">1</span>为什么第一期先做"评论闭环"</h2>
+  <table>
+    <thead><tr><th style="width:26%">理由</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><strong>风险最低、需求已排期</strong></td><td>需求 4.4 把四类触达按风险排期:自动评论笔记(<code>FR-4.1</code>)、回他人评论区(<code>FR-4.2</code>)= 中风险"先做";主动私信(<code>FR-4.4</code>)= 最高风险"最后做"。第一期只取"先做"的两个。</td></tr>
+      <tr><td><strong>能独立产生价值</strong></td><td>在求租帖下评论自家房源、在评论区回"问房子"的人——本就是中介现在<strong>人工在做的核心动作</strong>,自动化后立即有产出。</td></tr>
+      <tr><td><strong>把地基串一遍</strong></td><td>接管浏览器→检索→匹配→内容生成→发评论→防封→落库,整条链全走通。第二期加私信/加微只是<strong>在这条链上接楼层</strong>,不返工。</td></tr>
+      <tr><td><strong>不碰最高危动作</strong></td><td>不做"主动私信陌生人"(风控最狠),第一期存活概率最高,适合拿测试小号先跑。</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- 2 -->
+  <section id="scope"><h2 class="sec"><span class="n">2</span>本期范围(做 / 不做)</h2>
+  <p style="font-size:13px;color:var(--muted)"><span class="yes">✅ 本期做</span> ｜ <span class="half">◐ 够用版</span> ｜ <span class="no">✗ 非本期(明确后置)</span></p>
+  <table>
+    <thead><tr><th style="width:15%">模块</th><th style="width:42%">本期做到什么程度</th><th>非本期(后置)</th><th style="width:13%">需求依据</th></tr></thead>
+    <tbody>
+      <tr><td><strong>接入与账号</strong></td><td><span class="yes">✅</span> 接管已登录小红书的 Chrome、确认登录态、绑定 1 个账号</td><td><span class="no">✗</span> 多账号矩阵、防关联调度</td><td>6 章</td></tr>
+      <tr><td><strong>检索</strong></td><td><span class="yes">✅</span> 关键词×城市检索笔记 + 评论区,去重入队</td><td>—</td><td><code>FR-1.1~1.4</code></td></tr>
+      <tr><td><strong>匹配引擎</strong></td><td><span class="yes">✅</span> L1 地区+时间(硬过滤)、L2 意向(求租/房源,决定评论方向);<span class="half">◐</span> L4 诉求语义轻量版(LLM 提诉求→驱动选房)</td><td><span class="half">◐</span> L3 预算/户型结构化筛(本期简化为加分项)</td><td><code>FR-2.x</code></td></tr>
+      <tr><td><strong>内容生成</strong></td><td><span class="yes">✅</span> LLM 按笔记上下文生成个性化、不雷同的评论 + 按诉求从房源库自动选房配图</td><td>—</td><td><code>FR-3.1~3.3</code></td></tr>
+      <tr><td><strong>合规过滤</strong></td><td><span class="yes">✅</span> 发送前红线检查:剔除明文微信/电话/二维码/外链,违规不发</td><td>—</td><td><code>FR-9.7</code></td></tr>
+      <tr><td><strong>话术库</strong></td><td><span class="half">◐</span> 用户自填评论话术风格/模板/暗语(够用版)</td><td><span class="no">✗</span> A/B、效果统计</td><td><code>FR-5.4</code></td></tr>
+      <tr><td><strong>房源素材库</strong></td><td><span class="half">◐</span> 结构化录入房源 + 标签↔诉求映射,手动录入够用版</td><td><span class="no">✗</span> 外部房源系统同步</td><td><code>FR-6.1~6.2</code></td></tr>
+      <tr><td><strong>触达执行</strong></td><td><span class="yes">✅</span> <strong>仅评论</strong>:自动评论笔记(<code>FR-4.1</code>)+ 回他人评论区(<code>FR-4.2</code>)</td><td><span class="no">✗</span> 自动回私信、主动私信</td><td>需求 4.4</td></tr>
+      <tr><td><strong>防封号与运行控制</strong></td><td><span class="yes">✅</span> 评论/采集每日上限 + 随机间隔、工作时间窗、紧急刹车、账号健康基础监控、养号降速</td><td><span class="half">◐</span> 复杂养号阶梯曲线</td><td><code>FR-9.1~9.6</code></td></tr>
+      <tr><td><strong>记录与潜客</strong></td><td><span class="yes">✅</span> 评论记录(笔记/内容/配图/状态)+ 评论区"问房者"潜客标记入库</td><td><span class="no">✗</span> 完整线索(微信/对话/意向)随私信期做</td><td><code>FR-7.1</code></td></tr>
+      <tr><td><strong>运行监控</strong></td><td><span class="yes">✅</span> 全链路实时流水 + 动作日志 + 本轮统计</td><td><span class="half">◐</span> 历史报表</td><td>12 章</td></tr>
+      <tr><td><strong>中央后台</strong></td><td><span class="no">✗</span> 第一期不做(专注客户端单账号跑通)</td><td><span class="no">✗</span> 看板/线索汇总/租户</td><td><code>FR-8.x</code></td></tr>
+    </tbody>
+  </table>
+  <div class="callout c-amber"><strong>第一期明确不做</strong>
+  私信(主动/自动回)、多轮自动沟通、加微识别入库、意向分级转人工、中央后台、外部对接(企微/CRM/Excel)、多账号/租户管理 UI、license。</div>
+  </section>
+
+  <!-- 3 -->
+  <section id="flow"><h2 class="sec"><span class="n">3</span>端到端流程(本期 5 步)</h2>
+  <div class="flow">
+    <div class="step"><div class="num">① 检索</div><h4>找笔记</h4><p>关键词×城市搜求租/房源笔记 + 评论区,去重入队</p></div>
+    <div class="step"><div class="num">② 匹配</div><h4>分层筛</h4><p>L1 地区+时间硬过滤 → L2 意向(决定评论方向) → L4 诉求(轻)</p></div>
+    <div class="step"><div class="num">③ 生成</div><h4>话术+配图</h4><p>LLM 个性化评论 + 按诉求选房配图 + 合规过滤</p></div>
+    <div class="step"><div class="num">④ 评论</div><h4>自动触达</h4><p>笔记下评论 + 回评论区问房者(限频/拟人/可刹车)</p></div>
+    <div class="step"><div class="num">⑤ 记录</div><h4>沉淀监控</h4><p>评论结果 + 潜客标记入库,实时流水可见</p></div>
+  </div>
+  <div class="callout c-red"><strong>全程受"防封号"约束</strong>
+  每一步都在限频、工作时间窗、随机节奏、账号健康监控、紧急刹车的保护下运行——这是全自动方案能否存活的命根子(需求 5 章)。</div>
+  </section>
+
+  <!-- 4 高保真 -->
+  <section id="ui"><h2 class="sec"><span class="n">4</span>高保真界面 ★</h2>
+  <p style="color:var(--muted);font-size:13.5px">桌面客户端 = 左侧模块导航 + 主区。本期重点画 4 个"运行闭环"界面。下面是<strong>高保真示意</strong>(数据为模拟)。</p>
+
+  <!-- 界面1 控制台 -->
+  <h3>4.1 控制台 —— 一眼看清状态,一键启停/刹车</h3>
+  <div class="mock">
+    <p class="mcap"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span> 客户端 · 控制台</p>
+    <div class="app">
+      <div class="side">
+        <div class="brand"><span class="bd"></span>小红书获客</div>
+        <div class="it on"><span class="ic">🏠</span>控制台</div>
+        <div class="it"><span class="ic">📈</span>运行监控</div>
+        <div class="sgrp">获客策略</div>
+        <div class="it"><span class="ic">🔍</span>检索</div>
+        <div class="it"><span class="ic">🎯</span>匹配规则</div>
+        <div class="it"><span class="ic">✍️</span>内容生成</div>
+        <div class="it"><span class="ic">💬</span>话术库</div>
+        <div class="it"><span class="ic">🏘️</span>房源库</div>
+        <div class="sgrp">执行与结果</div>
+        <div class="it"><span class="ic">📤</span>触达执行</div>
+        <div class="it"><span class="ic">📋</span>评论记录</div>
+        <div class="it"><span class="ic">🛡️</span>防封控制</div>
+        <div class="it dim"><span class="ic">⚙️</span>设置</div>
+      </div>
+      <div class="body">
+        <div class="top">
+          <span class="ttl">控制台</span>
+          <span class="swt run">● 运行中</span>
+          <span class="brake">⏹ 紧急刹车</span>
+          <span class="acct"><span class="dot" style="background:var(--green)"></span>租房小管家 · 已接管 Chrome</span>
+        </div>
+        <div class="content">
+          <div class="mgrid">
+            <div class="metric"><div class="l">今日评论</div><div class="v">18</div><div class="s">配额 18 / 40</div></div>
+            <div class="metric"><div class="l">命中匹配</div><div class="v">26</div><div class="s">检索 73 条筛出</div></div>
+            <div class="metric"><div class="l">新增潜客</div><div class="v">7</div><div class="s">评论区问房者</div></div>
+            <div class="metric"><div class="l">账号健康</div><div class="v" style="color:var(--green)">92</div><div class="s">无限流信号</div></div>
+          </div>
+          <div class="panel">
+            <h5>当前运行阶段 <span class="gr">本轮第 3 个城市 · 北京·朝阳</span></h5>
+            <div class="pipe">
+              <div class="pp done"><div class="pt">检索 ✓</div><div class="pc">34 条</div></div>
+              <div class="parr">›</div>
+              <div class="pp done"><div class="pt">匹配 ✓</div><div class="pc">11 命中</div></div>
+              <div class="parr">›</div>
+              <div class="pp run"><div class="pt">生成 ●</div><div class="pc">处理中</div></div>
+              <div class="parr">›</div>
+              <div class="pp wait"><div class="pt">评论</div><div class="pc">已发 6</div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h5>账号健康与限频 <span class="gr">工作时间窗 09:30–21:00 · 当前在窗内</span></h5>
+            <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)">
+              <span>评论配额 <strong style="color:var(--ink)">18/40</strong></span>
+              <span>采集配额 <strong style="color:var(--ink)">73/200</strong></span>
+              <span>发送成功率 <strong style="color:var(--green)">100%</strong></span>
+              <span>养号阶段 <span class="badge b-blue">放量中</span></span>
+              <span>限流信号 <span class="badge b-green">无</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted)"><strong>验收点:</strong>启停开关即时生效;紧急刹车一键停所有动作;配额到顶/限流信号出现时自动降速并在此提示。</p>
+
+  <!-- 界面2 运行监控 -->
+  <h3>4.2 运行监控(实时闭环)—— 看机器此刻在干什么</h3>
+  <div class="mock">
+    <p class="mcap"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span> 客户端 · 运行监控</p>
+    <div class="app">
+      <div class="side">
+        <div class="brand"><span class="bd"></span>小红书获客</div>
+        <div class="it"><span class="ic">🏠</span>控制台</div>
+        <div class="it on"><span class="ic">📈</span>运行监控</div>
+        <div class="sgrp">获客策略</div>
+        <div class="it"><span class="ic">🔍</span>检索</div>
+        <div class="it"><span class="ic">🎯</span>匹配规则</div>
+        <div class="it"><span class="ic">✍️</span>内容生成</div>
+        <div class="it"><span class="ic">💬</span>话术库</div>
+        <div class="it"><span class="ic">🏘️</span>房源库</div>
+        <div class="sgrp">执行与结果</div>
+        <div class="it"><span class="ic">📤</span>触达执行</div>
+        <div class="it"><span class="ic">📋</span>评论记录</div>
+        <div class="it"><span class="ic">🛡️</span>防封控制</div>
+        <div class="it dim"><span class="ic">⚙️</span>设置</div>
+      </div>
+      <div class="body">
+        <div class="top">
+          <span class="ttl">运行监控</span>
+          <span class="swt run">● 运行中</span>
+          <span class="brake">⏹ 紧急刹车</span>
+          <span class="acct">本轮已运行 12m</span>
+        </div>
+        <div class="content">
+          <div class="panel">
+            <h5>全链路流水 <span class="gr">关键词「朝阳 租房」× 北京</span></h5>
+            <div class="pipe">
+              <div class="pp done"><div class="pt">检索 ✓</div><div class="pc">34 条笔记</div></div>
+              <div class="parr">›</div>
+              <div class="pp done"><div class="pt">匹配 ✓</div><div class="pc">淘汰 23 / 留 11</div></div>
+              <div class="parr">›</div>
+              <div class="pp run"><div class="pt">生成 ●</div><div class="pc">第 7/11 条</div></div>
+              <div class="parr">›</div>
+              <div class="pp done"><div class="pt">评论 ✓</div><div class="pc">已发 6</div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h5>监控器 · 被接管的真实 Chrome <span class="gr">实时可见 · 可随时切过去手动接管 · 客户端内留快照</span></h5>
+            <div style="display:flex;gap:11px;align-items:flex-start">
+              <div class="shot">
+                <div class="shot-bar"><span class="dot" style="width:8px;height:8px;background:#ff5f57"></span><span class="dot" style="width:8px;height:8px;background:#febc2e"></span><span class="dot" style="width:8px;height:8px;background:#28c840"></span><span class="u">xiaohongshu.com/search_result?keyword=朝阳 租房</span></div>
+                <div class="shot-body">
+                  <div class="shot-head">🔍 朝阳 租房 · 综合排序 · 第 2 屏</div>
+                  <div class="shot-grid">
+                    <div class="shot-cell a"></div><div class="shot-cell b"></div><div class="shot-cell c"></div>
+                    <div class="shot-cell d"></div><div class="shot-cell c"></div><div class="shot-cell a"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="snaps">
+                <div class="snap on"><span class="sd"></span>实况 · now</div>
+                <div class="snap"><span class="sd"></span>评论前快照</div>
+                <div class="snap"><span class="sd"></span>评论后快照</div>
+                <div class="snap err"><span class="sd"></span>⚠ 出错存证</div>
+              </div>
+            </div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:8px"><strong>主监控器 = 那个真实 Chrome 窗口本身</strong>:一直可见、实时操作,你随时能切过去手动点几下接管(人机共用同一浏览器,BOSS 同款)。它做了焦点模拟,最小化/被遮挡也照跑、不抢你正在用的应用焦点。客户端这块快照是<strong>辅助</strong>——你不在电脑前时看一眼 + 关键节点/出错自动留痕。</div>
+          </div>
+          <div class="two">
+            <div class="panel">
+              <h5>当前处理的笔记</h5>
+              <div class="ncard">
+                <div class="nthumb">📷</div>
+                <div style="min-width:0">
+                  <div class="nt">朝阳合租 | 国贸地铁口 2200 拎包入住</div>
+                  <div class="nm">北漂日记本 · 北京·朝阳 · 5 小时前</div>
+                  <div class="tags">
+                    <span class="badge b-green">地区 ✓ 北京·朝阳</span>
+                    <span class="badge b-blue">意向 求租</span>
+                    <span class="badge b-amber">诉求 近地铁/2-3k</span>
+                  </div>
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-top:10px">→ 命中"求租"玩法:在该笔记下评论自家匹配房源</div>
+            </div>
+            <div class="panel">
+              <h5>实时日志 <span class="gr">CDP 动作流</span></h5>
+              <div class="logbox">
+                <div class="ln"><span class="t">12:41:02</span> 检索「朝阳 租房」第 2 屏,累计 <b>34</b> 条</div>
+                <div class="ln ok"><span class="t">12:41:18</span> ✓ 页面自身签名,取数正常(未逆向)</div>
+                <div class="ln"><span class="t">12:41:30</span> 匹配:淘汰 23(地区/时间不符),留 11</div>
+                <div class="ln"><span class="t">12:42:05</span> 笔记#7 → LLM 生成评论…</div>
+                <div class="ln ok"><span class="t">12:42:09</span> ✓ 合规检查通过(无明文联系方式)</div>
+                <div class="ln br"><span class="t">12:42:22</span> ● 拟人输入中(贝塞尔轨迹 + 随机停顿)</div>
+                <div class="ln ok"><span class="t">12:42:31</span> ✓ 已评论笔记#6,等待 48s 再下一条</div>
+                <div class="ln wr"><span class="t">12:42:33</span> ⚠ 节奏控制:本小时已评 6/上限 8</div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h5>本轮统计</h5>
+            <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)">
+              <span>检索 <strong style="color:var(--ink)">34</strong></span>
+              <span>命中 <strong style="color:var(--ink)">11</strong></span>
+              <span>已评论 <strong style="color:var(--green)">6</strong></span>
+              <span>跳过 <strong style="color:var(--ink)">2</strong></span>
+              <span>潜客 <strong style="color:var(--ink)">3</strong></span>
+              <span>限流信号 <span class="badge b-green">无</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted)"><strong>验收点:</strong>检索/匹配/生成/评论四步状态实时可见;每条评论前的合规检查与拟人节奏可在日志看到;限流信号高亮提醒。</p>
+
+  <!-- 界面3 内容生成工作台 -->
+  <h3>4.3 内容生成工作台 —— 评论怎么来、是否合规,一目了然</h3>
+  <div class="mock">
+    <p class="mcap"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span> 客户端 · 内容生成</p>
+    <div class="app">
+      <div class="side">
+        <div class="brand"><span class="bd"></span>小红书获客</div>
+        <div class="it"><span class="ic">🏠</span>控制台</div>
+        <div class="it"><span class="ic">📈</span>运行监控</div>
+        <div class="sgrp">获客策略</div>
+        <div class="it"><span class="ic">🔍</span>检索</div>
+        <div class="it"><span class="ic">🎯</span>匹配规则</div>
+        <div class="it on"><span class="ic">✍️</span>内容生成</div>
+        <div class="it"><span class="ic">💬</span>话术库</div>
+        <div class="it"><span class="ic">🏘️</span>房源库</div>
+        <div class="sgrp">执行与结果</div>
+        <div class="it"><span class="ic">📤</span>触达执行</div>
+        <div class="it"><span class="ic">📋</span>评论记录</div>
+        <div class="it"><span class="ic">🛡️</span>防封控制</div>
+        <div class="it dim"><span class="ic">⚙️</span>设置</div>
+      </div>
+      <div class="body">
+        <div class="top">
+          <span class="ttl">内容生成工作台</span>
+          <span class="acct">LLM:火山 Ark · 可切换</span>
+        </div>
+        <div class="content">
+          <div class="callout c-green" style="margin:0 0 12px"><strong>第一期:你给方向,AI 逐条生成</strong>你只填一个"评论主方向"(想强调什么、什么口吻、怎么引导),系统按这个方向 + 每条笔记的内容,为每条<strong>单独生成一句不雷同的评论</strong>——既省事,又自动规避"复制粘贴刷屏"。也保留"固定文案"模式给你完全手控。</div>
+          <div class="two">
+            <div class="panel">
+              <h5>评论策略</h5>
+              <div class="fld"><div class="fl">生成模式</div><div class="seg"><span class="on">AI 按方向逐条生成</span><span>固定文案</span></div></div>
+              <div class="fld"><div class="fl">评论主方向(你来定)</div>
+                <textarea class="ta">突出房源性价比 + 通勤方便,口吻亲切自然像邻居聊天;结尾自然引导对方看主页实拍 / 私聊细节。每条结合该笔记内容,不要雷同。</textarea>
+              </div>
+              <div class="fld" style="margin-top:9px"><div class="fl">配图</div><div class="seg"><span class="on">房源库自动选</span><span>手动指定</span><span>不带图</span></div></div>
+              <div style="font-size:11.5px;color:var(--muted);margin-top:6px">LLM:火山 Ark <span class="badge b-gray">可切换 provider</span> · 规则:不出现明文微信/电话/二维码/外链(<code>FR-3.3</code>)</div>
+            </div>
+            <div class="panel">
+              <h5>AI 生成预览 <span class="gr">按你的方向 · 为笔记 #7 生成</span></h5>
+              <div class="ncard" style="margin-bottom:9px">
+                <div class="nthumb">📷</div>
+                <div style="min-width:0">
+                  <div class="nt">朝阳合租 | 国贸地铁口 2200 拎包入住</div>
+                  <div class="nm">北漂日记本 · 北京·朝阳</div>
+                  <div class="tags">
+                    <span class="badge b-green">地区 ✓</span><span class="badge b-blue">求租</span><span class="badge b-amber">近地铁/2-3k</span>
+                  </div>
+                </div>
+              </div>
+              <div class="fl" style="font-size:11.5px;color:var(--muted);margin-bottom:3px">AI 据方向 + 本条笔记生成</div>
+              <div class="gen">看你想找国贸附近、通勤方便的房子呀~ 我手上正好有套朝南两居,押一付一、拎包入住,走到地铁口就几分钟,性价比挺高的🏠 主页有更多实拍,想了解可以私聊我看看细节~</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:5px">↑ 每条笔记都基于此方向单独生成,自动不雷同</div>
+              <div class="fl" style="font-size:11.5px;color:var(--muted);margin:10px 0 3px">配图(房源库按诉求自动选)</div>
+              <div class="houserow">
+                <div class="hthumb">🏠</div><div class="hthumb">🛋️</div>
+                <div style="font-size:12px;color:var(--muted);align-self:center">朝阳·国贸 · 朝南两居 · 2800/月 · 押一付一</div>
+              </div>
+              <div class="fl" style="font-size:11.5px;color:var(--muted);margin:12px 0 4px">合规红线检查(发送前必过)</div>
+              <div class="chk"><span class="ci">✓</span>无明文微信号</div>
+              <div class="chk"><span class="ci">✓</span>无电话/手机号</div>
+              <div class="chk"><span class="ci">✓</span>无二维码图片</div>
+              <div class="chk"><span class="ci">✓</span>无站外链接</div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <span class="mini-btn">↻ 换一条</span>
+                <span class="mini-btn pri">✓ 用这个方向 · 应用到全部匹配笔记</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted)"><strong>验收点:</strong>评论由 LLM 按笔记上下文生成、条条不雷同;自动附按诉求匹配的房源图;<strong>含明文联系方式的内容被合规器拦截、不发出</strong>。</p>
+
+  <!-- 界面4 评论记录 -->
+  <h3>4.4 评论记录与潜客 —— 沉淀本期成果</h3>
+  <div class="mock">
+    <p class="mcap"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span> 客户端 · 评论记录</p>
+    <div class="app">
+      <div class="side">
+        <div class="brand"><span class="bd"></span>小红书获客</div>
+        <div class="it"><span class="ic">🏠</span>控制台</div>
+        <div class="it"><span class="ic">📈</span>运行监控</div>
+        <div class="sgrp">获客策略</div>
+        <div class="it"><span class="ic">🔍</span>检索</div>
+        <div class="it"><span class="ic">🎯</span>匹配规则</div>
+        <div class="it"><span class="ic">✍️</span>内容生成</div>
+        <div class="it"><span class="ic">💬</span>话术库</div>
+        <div class="it"><span class="ic">🏘️</span>房源库</div>
+        <div class="sgrp">执行与结果</div>
+        <div class="it"><span class="ic">📤</span>触达执行</div>
+        <div class="it on"><span class="ic">📋</span>评论记录</div>
+        <div class="it"><span class="ic">🛡️</span>防封控制</div>
+        <div class="it dim"><span class="ic">⚙️</span>设置</div>
+      </div>
+      <div class="body">
+        <div class="top">
+          <span class="ttl">评论记录与潜客</span>
+          <span class="acct">今日 18 条评论 · 7 个潜客</span>
+        </div>
+        <div class="content">
+          <div class="panel">
+            <h5>评论记录 <span class="gr">每条详细留痕 · 已发 / 失败 / 被删 可查 · 可跳转原笔记</span></h5>
+            <table class="htbl">
+              <thead><tr><th>时间</th><th>原笔记(标题/作者)</th><th>评论内容(摘)</th><th>配房源</th><th>状态</th><th>跳转</th></tr></thead>
+              <tbody>
+                <tr><td>12:42</td><td>朝阳合租 | 国贸地铁口… · 北漂日记本</td><td>在找朝阳/国贸附近的房子可以看看…</td><td>国贸朝南两居</td><td><span class="badge b-green">已发</span></td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1f2a3" target="_blank">🔗 打开</a></td></tr>
+                <tr><td>12:38</td><td>望京求租 主卧 押一付一 · 望京租房君</td><td>望京这边我有套朝南主卧,采光…</td><td>望京主卧</td><td><span class="badge b-green">已发</span></td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1e7b1" target="_blank">🔗 打开</a></td></tr>
+                <tr><td>12:31</td><td>毕业生租房 朝阳公园旁… · 应届小张</td><td>刚毕业找房预算有限的话,这套…</td><td>朝阳公园单间</td><td><span class="badge b-amber">被删</span></td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1d055" target="_blank">🔗 打开</a></td></tr>
+                <tr><td>12:25</td><td>三里屯 整租一居求推荐 · 沪漂转京</td><td>三里屯整租的话这套挺合适,带…</td><td>三里屯一居</td><td><span class="badge b-green">已发</span></td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1c399" target="_blank">🔗 打开</a></td></tr>
+                <tr><td>12:19</td><td>双井附近 2500 内开间 · 京漂小敏</td><td>双井这边 2500 内的开间我有…</td><td>双井开间</td><td><span class="badge b-red">失败·重试</span></td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1b720" target="_blank">🔗 打开</a></td></tr>
+              </tbody>
+            </table>
+            <div class="detail" style="margin-top:11px">
+              <div style="font-weight:700;margin-bottom:8px;font-size:12.5px">▾ 末条详情(双井开间 · 失败重试)</div>
+              <div class="row"><span class="k">评论时间</span><span>2026-06-25 12:19:04</span></div>
+              <div class="row"><span class="k">原笔记</span><span>双井附近 2500 内开间求租 · 作者 京漂小敏 · <a class="nlink" href="https://www.xiaohongshu.com/explore/66a1b720" target="_blank">🔗 在小红书打开</a></span></div>
+              <div class="row"><span class="k">评论全文</span><span>双井这边 2500 内的开间我有几套,带独卫、拎包入住,离地铁也近~ 主页有实拍,需要可以戳我看看~</span></div>
+              <div class="row"><span class="k">配图</span><span>双井 · 开间 · 2400/月(2 张)</span></div>
+              <div class="row"><span class="k">状态</span><span><span class="badge b-red">失败·重试</span> · 失败原因:评论框未加载(选择器超时 8s)· 已排入重试队列(第 2 次)</span></div>
+              <div class="row"><span class="k">合规</span><span>已过红线检查(无明文联系方式)</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h5>潜在客户(评论区"问房者")<span class="gr">第二期接入私信跟进</span></h5>
+            <table class="htbl">
+              <thead><tr><th>昵称</th><th>来源笔记</th><th>问房原文(摘)</th><th>城市</th><th>跳转</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr><td>momo_租房</td><td>朝阳合租 国贸…</td><td>"还有房吗?预算 2500 左右"</td><td>北京·朝阳</td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1f2a3" target="_blank">🔗</a></td><td><span class="mini-btn">标记跟进</span></td></tr>
+                <tr><td>北京搬砖人</td><td>望京求租 主卧…</td><td>"主卧能短租吗?三个月"</td><td>北京·望京</td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1e7b1" target="_blank">🔗</a></td><td><span class="mini-btn">标记跟进</span></td></tr>
+                <tr><td>小鱼干</td><td>三里屯 整租一居…</td><td>"求私我,看看一居的图"</td><td>北京·朝阳</td><td><a class="nlink" href="https://www.xiaohongshu.com/explore/66a1c399" target="_blank">🔗</a></td><td><span class="mini-btn">标记跟进</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted)"><strong>验收点:</strong>每条评论的状态(已发/失败/被删)可查;评论区识别出的"问房者"作为潜客入库,留给第二期私信跟进——<strong>本期只识别+记录,不私信</strong>。</p>
+  </section>
+
+  <!-- 5 验收 -->
+  <section id="accept"><h2 class="sec"><span class="n">5</span>第一期验收标准(跑通的标志)</h2>
+  <div class="callout c-green"><strong>端到端</strong>
+  配置好策略与素材 → 控制台一键启动 → 系统在限频与拟人节奏下自动检索到匹配笔记 → 生成合规评论+配图 → 发出 → 记录可见 → 账号不被封。</div>
+  <table>
+    <thead><tr><th style="width:5%">#</th><th>逐条验收</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>能<strong>接管已登录的 Chrome</strong> 并确认账号在线(不需重新登录)。</td></tr>
+      <tr><td>2</td><td>检索能按"关键词×城市"拿到候选笔记 + 评论区,去重入队。</td></tr>
+      <tr><td>3</td><td>匹配能<strong>淘汰</strong>不符地区/时间的笔记,能<strong>区分</strong>求租/房源走不同评论方向。</td></tr>
+      <tr><td>4</td><td>每条评论由 <strong>LLM 个性化生成、不雷同</strong>,附按诉求匹配的房源图,且<strong>不含明文微信/电话/二维码/外链</strong>(合规器拦截)。</td></tr>
+      <tr><td>5</td><td>评论在<strong>每日上限 + 随机节奏</strong>下发出;<strong>紧急刹车</strong>能即时停止所有动作。</td></tr>
+      <tr><td>6</td><td>评论结果(成功/失败/被删)与评论区"问房者"潜客被<strong>记录入库</strong>。</td></tr>
+      <tr><td>7</td><td>出现限流/异常信号能<strong>自动降速或暂停</strong>并在界面提示(不静默失败)。</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--muted)">量化指标(连续运行 N 天不封、每日评论 X 条、命中率)待测试小号试跑后按运营基线设定(需求 11 章 / Q9)。</p>
+  </section>
+
+  <!-- 6 -->
+  <section id="next"><h2 class="sec"><span class="n">6</span>不做项与后续衔接</h2>
+  <div class="card">
+    <h3><span class="badge b-red">第一期明确不做</span></h3>
+    <p>私信(主动/自动回)、多轮自动沟通、加微识别入库、意向分级转人工、中央后台、外部对接、多账号/租户管理 UI、license。</p>
+    <h3><span class="badge b-blue">第二期</span></h3>
+    <p>在评论闭环上接「主动/自动私信 + 多轮自动沟通 + 加微识别入库 + 意向分级转人工 + 完整线索管理」。</p>
+    <h3><span class="badge b-gray">第三期</span></h3>
+    <p>中央后台(账号看板/线索汇总)+ 多账号矩阵 + 防关联调度。</p>
+    <div class="callout c-blue" style="margin-top:10px"><strong>不返工保证</strong>
+    数据模型从第一期起即带 <code>tenant_id</code> 与状态机预留;页面操作层与业务层解耦,小红书改版只需更新选择器(需求 7 章可维护性)。</div>
+  </div>
+  </section>
+
+  <footer>第一期 · 评论闭环 ｜ 小红书自动化获客工具 ｜ 2026-06-25 v0.1 ｜ 可视化版,文本真相见同名 .md</footer>
+</div>
+</body>
+</html>

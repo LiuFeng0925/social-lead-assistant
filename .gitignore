@@ -27,3 +27,4 @@ profile/
 # 日志
 *.log
 logs/
+.gstack/

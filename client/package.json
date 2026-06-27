@@ -1,0 +1,14 @@
+{
+  "name": "xhs-lead-client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "小红书自动获客工具 · 客户端(M1:接管浏览器 + 检索)",
+  "type": "commonjs",
+  "scripts": {
+    "m1": "node src/m1-search.js",
+    "launch": "bash scripts/launch-chrome.sh"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

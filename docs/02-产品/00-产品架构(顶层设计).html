@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书自动化获客工具 · 产品架构(顶层设计)</title>
+<style>
+  :root{
+    --bg:#f5f6f8;--card:#fff;--ink:#1d2330;--muted:#5b6478;--line:#e6e9ef;--brand:#ff2742;
+    --teal:#0f6e56;--teal-bg:#e1f5ee;--teal-bd:#9fe1cb;
+    --purple:#534ab7;--purple-bg:#eeedfe;--purple-bd:#cecbf6;
+    --gray:#5f5e5a;--gray-bg:#f1efe8;--gray-bd:#d3d1c7;
+    --green:#0a8a5f;--green-bg:#e7f6ef;--amber:#b97400;--amber-bg:#fdf3e1;--blue:#1f6fd6;--blue-bg:#eaf2fc;
+    --shadow:0 1px 3px rgba(20,30,50,.06),0 8px 24px rgba(20,30,50,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.7;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1020px;margin:0 auto;padding:0 20px 80px}
+  header{background:linear-gradient(135deg,#23272f 0%,#3a1f24 60%,#5e1620 100%);color:#fff;padding:42px 20px 36px;border-bottom:4px solid var(--brand)}
+  header .inner{max-width:1020px;margin:0 auto;padding:0 20px}
+  .tag{display:inline-block;background:var(--brand);color:#fff;font-size:12px;font-weight:600;padding:4px 12px;border-radius:30px}
+  header h1{font-size:27px;margin:14px 0 6px;font-weight:800}
+  header p{margin:0;color:#cfd3dc;font-size:14px}
+  .meta{margin-top:16px;font-size:13px;color:#9aa1ad}.meta span{margin-right:18px}
+  section{margin-bottom:30px}
+  h2.sec{font-size:21px;margin:30px 0 10px;font-weight:800;display:flex;align-items:center;gap:10px;border-bottom:2px solid var(--line);padding-bottom:8px}
+  h2.sec .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;background:var(--ink);color:#fff;border-radius:7px;font-size:14px;padding:0 6px}
+  h3{font-size:16px;margin:18px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;box-shadow:var(--shadow);margin-bottom:14px}
+  p{margin:0 0 10px}ul{margin:0 0 10px;padding-left:20px}li{margin-bottom:5px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:var(--shadow);margin:6px 0 14px}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f2f6;font-weight:700;font-size:12.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td strong{color:var(--ink)}
+  code{background:#eef0f4;border-radius:4px;padding:1px 6px;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap}
+  .p0{background:var(--green-bg);color:var(--green)}.p1{background:var(--blue-bg);color:var(--blue)}.p2{background:#eceef2;color:var(--muted)}
+  .callout{border-radius:10px;padding:13px 17px;margin:12px 0;font-size:14px}
+  .c-blue{background:var(--blue-bg);border:1px solid #b9d6f6;color:#16467f}
+  .c-amber{background:var(--amber-bg);border:1px solid #f0d59a;color:#73490a}
+  .callout strong{display:block;margin-bottom:3px}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 22px;box-shadow:var(--shadow);margin:22px 0}
+  nav.toc a{color:var(--blue);text-decoration:none;font-size:13.5px;margin:3px 16px 3px 0;display:inline-block}
+  /* 架构块图 */
+  .arch{margin:10px 0 4px}
+  .arch-ext{display:flex;gap:12px;margin-bottom:6px}
+  .ebox{flex:1;background:var(--gray-bg);border:1px solid var(--gray-bd);border-radius:9px;padding:11px 12px;text-align:center;font-size:13px;font-weight:600;color:#3a3a36}
+  .ebox span{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}
+  .arch-sep{text-align:center;color:var(--muted);font-size:12px;margin:7px 0}
+  .arch-sep b{color:var(--ink)}
+  .arch-box{border:1.5px dashed var(--gray-bd);border-radius:12px;padding:12px 14px 6px;margin-bottom:6px}
+  .arch-box>.lab{font-size:13px;font-weight:800;color:var(--ink);margin-bottom:10px}
+  .band{display:flex;align-items:stretch;gap:0;background:var(--teal-bg);border:1px solid var(--teal-bd);border-radius:9px;margin-bottom:9px;overflow:hidden}
+  .band .bl{flex:none;width:104px;background:rgba(15,110,86,.12);color:var(--teal);font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px 6px}
+  .band .bc{flex:1;padding:9px 13px;font-size:12.8px;color:#1a4a3d;display:flex;align-items:center}
+  .band.engine .bl{background:rgba(255,39,66,.1);color:var(--brand)}
+  .band.engine{border-color:#f5b8bd;background:#fff4f5}
+  .band.engine .bc{color:#7a1f2a;font-weight:600}
+  .arch-backend{display:flex;align-items:stretch;background:var(--purple-bg);border:1px solid var(--purple-bd);border-radius:10px;overflow:hidden}
+  .arch-backend .bl{flex:none;width:104px;background:rgba(83,74,183,.14);color:var(--purple);font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px 6px}
+  .arch-backend .bc{flex:1;padding:11px 13px;font-size:12.8px;color:#332b6e;display:flex;align-items:center}
+  .legend{font-size:12px;color:var(--muted);margin-top:8px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin:0 4px 0 12px;vertical-align:middle}
+  /* 模块全景 */
+  .maptbl td:first-child{white-space:nowrap;font-weight:600}
+  .layerhead{background:#23272f;color:#fff;font-weight:700;font-size:13px;padding:8px 12px;border-radius:8px 8px 0 0;margin-top:14px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  .step{flex:1;min-width:120px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px;box-shadow:var(--shadow)}
+  .step .num{font-size:11px;font-weight:800;color:var(--brand)}
+  .step h4{margin:3px 0 5px;font-size:13px}.step p{font-size:11.5px;color:var(--muted);margin:0}
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:40px;padding-top:20px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <span class="tag">产品文档 · 00 · 顶层设计</span>
+  <h1>产品架构(顶层设计)</h1>
+  <p>小红书自动化获客工具 ｜ 一图看清产品由哪些部分组成 + 全部功能模块地图</p>
+  <div class="meta"><span>📅 2026-06-24</span><span>📌 v0.1</span><span>🔗 上游:需求文档 v0.2</span><span>📁 产品文档集的中枢(hub)</span></div>
+</div></header>
+
+<div class="wrap">
+  <div class="callout c-blue"><strong>本文档的角色</strong>
+  这是产品文档集的<strong>中枢/目录</strong>:给出产品整体架构、四层职责、以及<strong>全部功能模块的全景地图</strong>。每个模块的"具体怎么用 + 高保真界面"放在各自独立的小文档里(见第 4 节链接)。建议进项目先读本文档,再按需深入各模块。</div>
+
+  <nav class="toc">
+    <a href="#compose">1 产品定位与组成</a>
+    <a href="#arch">2 产品架构图</a>
+    <a href="#layers">3 四层职责详解</a>
+    <a href="#map">4 功能模块全景地图 ★</a>
+    <a href="#flow">5 端到端数据流</a>
+    <a href="#stack">6 技术栈</a>
+    <a href="#role">7 角色与场景</a>
+  </nav>
+
+  <!-- 1 -->
+  <section id="compose"><h2 class="sec"><span class="n">1</span>产品定位与组成</h2>
+  <div class="card">
+    <p><strong>一句话</strong>:一个"每账号一个桌面客户端 + 一个中央汇总后台"的小红书全自动获客系统,客户端驱动用户真实浏览器,在小红书上自动完成"检索→匹配→评论/私信→引导加微→线索沉淀"。</p>
+    <p><strong>产品由三大块组成:</strong></p>
+    <ul>
+      <li><strong>外部依赖</strong> — 小红书网页版(操作对象)、用户真实 Chrome(用 CDP 驱动)、国产大模型(智能来源)。</li>
+      <li><strong>桌面客户端</strong>(本期重点) — 产品主体,内部按四层组织。</li>
+      <li><strong>中央后台</strong>(薄层) — 汇总所有账号的状态与线索,跨账号观测。</li>
+    </ul>
+  </div>
+  </section>
+
+  <!-- 2 架构图 -->
+  <section id="arch"><h2 class="sec"><span class="n">2</span>产品架构图</h2>
+  <div class="card" style="overflow-x:auto">
+    <svg width="100%" viewBox="0 0 960 612" role="img" xmlns="http://www.w3.org/2000/svg" style="min-width:780px">
+    <title>产品架构图</title>
+    <desc>外部系统(Chrome/小红书/国产大模型)在客户端边界之外;桌面客户端内含配置层、执行引擎主链路、智能与驱动、保障与数据四层,配置层喂入引擎、智能层支撑引擎、保障层守护全链路;客户端向云端中央后台上报。</desc>
+    <style>
+      .axt{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:700;font-size:13px}
+      .axc{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:400;font-size:11.5px}
+      .axl{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:800;font-size:12.5px}
+      .axs{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:400;font-size:11px;fill:#6b7280}
+      .axn{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:400;font-size:10px;fill:#9a6a72}
+      .axr{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:600;font-size:11px}
+      .axg{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-weight:700;font-size:12px;fill:#a32d2d}
+    </style>
+    <defs><marker id="aar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <!-- 图例 -->
+    <rect x="44" y="16" width="12" height="12" rx="3" fill="#d3d1c7" stroke="#b4b2a9"/><text class="axs" x="62" y="26">外部系统</text>
+    <rect x="150" y="16" width="12" height="12" rx="3" fill="#9fe1cb" stroke="#5dcaa5"/><text class="axs" x="168" y="26">客户端</text>
+    <rect x="240" y="16" width="12" height="12" rx="3" fill="#f5b8bd" stroke="#ee9aa1"/><text class="axs" x="258" y="26">执行引擎(核心)</text>
+    <rect x="392" y="16" width="12" height="12" rx="3" fill="#fac775" stroke="#ef9f27"/><text class="axs" x="410" y="26">保障(安全)</text>
+    <rect x="500" y="16" width="12" height="12" rx="3" fill="#cecbf6" stroke="#afa9ec"/><text class="axs" x="518" y="26">中央后台</text>
+    <line x1="620" y1="22" x2="646" y2="22" stroke="#6b7280" stroke-width="1.4" marker-end="url(#aar)"/><text class="axs" x="654" y="26">驱动 / 调用 / 上报</text>
+
+    <!-- 外部系统 -->
+    <g><rect x="140" y="46" width="190" height="48" rx="9" fill="#f1efe8" stroke="#d3d1c7"/><text class="axt" x="235" y="70" text-anchor="middle" fill="#44443f">用户真实 Chrome</text><text class="axs" x="235" y="86" text-anchor="middle">CDP 驱动 · 绕过签名</text></g>
+    <g><rect x="360" y="46" width="190" height="48" rx="9" fill="#f1efe8" stroke="#d3d1c7"/><text class="axt" x="455" y="70" text-anchor="middle" fill="#44443f">小红书网页版</text><text class="axs" x="455" y="86" text-anchor="middle">笔记 / 评论 / 私信</text></g>
+    <g><rect x="700" y="46" width="200" height="48" rx="9" fill="#f1efe8" stroke="#d3d1c7"/><text class="axt" x="800" y="70" text-anchor="middle" fill="#44443f">国产大模型</text><text class="axs" x="800" y="86" text-anchor="middle">火山 Ark / 阿里百炼</text></g>
+    <line x1="330" y1="70" x2="358" y2="70" stroke="#9aa1ad" stroke-width="1.4" marker-end="url(#aar)"/><text class="axs" x="344" y="64" text-anchor="middle">操作</text>
+
+    <!-- 跨边界关系 -->
+    <line x1="235" y1="150" x2="235" y2="98" stroke="#6b7280" stroke-width="1.4" marker-end="url(#aar)"/><text class="axr" x="243" y="126" fill="#6b7280">CDP 驱动</text>
+    <line x1="800" y1="150" x2="800" y2="98" stroke="#6b7280" stroke-width="1.4" marker-end="url(#aar)"/><text class="axr" x="808" y="126" fill="#6b7280">调用</text>
+
+    <!-- 客户端边界 -->
+    <rect x="60" y="150" width="840" height="364" rx="14" fill="#fbfdfc" stroke="#b4b2a9" stroke-width="1" stroke-dasharray="6 5"/>
+    <text class="axl" x="80" y="175" fill="#0f5c46">桌面客户端 · 每账号一个</text>
+
+    <!-- 配置层 -->
+    <rect x="84" y="190" width="792" height="42" rx="8" fill="#e1f5ee" stroke="#9fe1cb"/>
+    <text class="axl" x="100" y="216" fill="#0f5c46">配置层</text>
+    <text class="axc" x="190" y="216" fill="#15604a">检索 · 匹配规则 · 内容&amp;话术 · 房源库 · 限频/工作时间　(均可配置,不写死)</text>
+
+    <!-- 喂入 -->
+    <line x1="480" y1="234" x2="480" y2="256" stroke="#16a37b" stroke-width="1.5" marker-end="url(#aar)"/><text class="axr" x="490" y="250" fill="#0f6e56">喂入配置</text>
+
+    <!-- 执行引擎(主链路流水线 + 注解) -->
+    <rect x="84" y="258" width="792" height="114" rx="10" fill="#fff4f5" stroke="#f5b8bd"/>
+    <text class="axl" x="100" y="280" fill="#a32d2d">执行引擎 · 核心主链路(数据流向)</text>
+    <rect x="102" y="292" width="108" height="38" rx="7" fill="#fff" stroke="#ef9aa1"/><text class="axg" x="156" y="316" text-anchor="middle">检索</text><text class="axn" x="156" y="348" text-anchor="middle">关键词×城市</text>
+    <rect x="232" y="292" width="108" height="38" rx="7" fill="#fff" stroke="#ef9aa1"/><text class="axg" x="286" y="316" text-anchor="middle">匹配漏斗</text><text class="axn" x="286" y="348" text-anchor="middle">四层打分</text>
+    <rect x="362" y="292" width="108" height="38" rx="7" fill="#fff" stroke="#ef9aa1"/><text class="axg" x="416" y="316" text-anchor="middle">内容生成</text><text class="axn" x="416" y="348" text-anchor="middle">话术+配图</text>
+    <rect x="492" y="292" width="108" height="38" rx="7" fill="#fff" stroke="#ef9aa1"/><text class="axg" x="546" y="316" text-anchor="middle">触达</text><text class="axn" x="546" y="348" text-anchor="middle">评论·私信</text>
+    <rect x="622" y="292" width="108" height="38" rx="7" fill="#fff" stroke="#ef9aa1"/><text class="axg" x="676" y="316" text-anchor="middle">自动沟通</text><text class="axn" x="676" y="348" text-anchor="middle">多轮应答</text>
+    <rect x="752" y="292" width="108" height="38" rx="7" fill="#fff" stroke="#ef9aa1"/><text class="axg" x="806" y="316" text-anchor="middle">加微转化</text><text class="axn" x="806" y="348" text-anchor="middle">识别·转人工</text>
+    <line x1="210" y1="311" x2="232" y2="311" stroke="#d4878d" stroke-width="1.4" marker-end="url(#aar)"/>
+    <line x1="340" y1="311" x2="362" y2="311" stroke="#d4878d" stroke-width="1.4" marker-end="url(#aar)"/>
+    <line x1="470" y1="311" x2="492" y2="311" stroke="#d4878d" stroke-width="1.4" marker-end="url(#aar)"/>
+    <line x1="600" y1="311" x2="622" y2="311" stroke="#d4878d" stroke-width="1.4" marker-end="url(#aar)"/>
+    <line x1="730" y1="311" x2="752" y2="311" stroke="#d4878d" stroke-width="1.4" marker-end="url(#aar)"/>
+
+    <!-- 支撑 -->
+    <line x1="480" y1="398" x2="480" y2="374" stroke="#16a37b" stroke-width="1.5" marker-end="url(#aar)"/><text class="axr" x="490" y="390" fill="#0f6e56">支撑引擎</text>
+
+    <!-- 智能&驱动 -->
+    <rect x="84" y="400" width="792" height="42" rx="8" fill="#e1f5ee" stroke="#9fe1cb"/>
+    <text class="axl" x="100" y="426" fill="#0f5c46">智能&amp;驱动</text>
+    <text class="axc" x="190" y="426" fill="#15604a">LLM 匹配精筛 / 话术生成 / 意向分级 / 微信识别　·　CDP 真实浏览器 + 拟人反检测</text>
+
+    <!-- 守护(左侧竖向关系) -->
+    <line x1="74" y1="452" x2="74" y2="266" stroke="#b97400" stroke-width="1.5" marker-end="url(#aar)"/>
+    <text class="axr" transform="rotate(-90 64 360)" x="64" y="360" text-anchor="middle" fill="#854f0b">守护全链路</text>
+
+    <!-- 保障&数据(安全色单独标注) -->
+    <rect x="84" y="452" width="792" height="42" rx="8" fill="#fdf3e1" stroke="#f0d59a"/>
+    <text class="axl" x="100" y="478" fill="#854f0b">保障&amp;数据</text>
+    <text class="axc" x="190" y="478" fill="#6b4a12">防封号(限频·养号·工作时间·健康监控·紧急刹车·调度)　·　本地 SQLite(线索/状态)</text>
+
+    <!-- 上报后台 -->
+    <line x1="480" y1="514" x2="480" y2="538" stroke="#534ab7" stroke-width="1.5" marker-end="url(#aar)"/><text class="axr" x="490" y="530" fill="#534ab7">心跳 + 线索上报</text>
+    <rect x="60" y="538" width="840" height="54" rx="12" fill="#eeedfe" stroke="#cecbf6"/>
+    <text class="axl" x="80" y="560" fill="#332b6e">中央后台 · 云(Token 鉴权)</text>
+    <text class="axc" x="80" y="579" fill="#463c8a">账号状态看板 · 线索归集 · 跨账号运营总览 · 多租户(预留) · 外部对接 CRM/企微/导出(预留)</text>
+    </svg>
+  </div>
+  <div class="callout c-amber"><strong>关键洞察</strong>
+  <strong>执行引擎</strong>是产品的"心脏",<strong>配置层</strong>喂它、<strong>智能&amp;驱动</strong>支撑它、<strong>保障&amp;数据</strong>守护它并存住成果。后面每个功能模块,都能在这张图上找到自己的位置。</div>
+  </section>
+
+  <!-- 3 四层 -->
+  <section id="layers"><h2 class="sec"><span class="n">3</span>四层职责详解</h2>
+  <table>
+    <thead><tr><th style="width:14%">层</th><th style="width:30%">职责</th><th>包含什么 / 关键点</th></tr></thead>
+    <tbody>
+      <tr><td><strong>配置层</strong></td><td>把"做什么、怎么做"交给用户配,不写死</td><td>检索条件、匹配规则与阈值、话术风格与配图规则、房源库、话术库、限频与工作时间。<strong>原则:能配置的都不写死。</strong></td></tr>
+      <tr><td><strong>执行引擎</strong><br>(核心)</td><td>把配置变成实际获客动作的主链路</td><td>检索 → 匹配漏斗(地区时间/意向/预算户型/诉求) → 内容生成(话术+选房配图) → 触达(评论/主动私信/回评论区) → 自动多轮沟通 → 加微转化(诱导/识别入库/转人工)。</td></tr>
+      <tr><td><strong>智能&amp;驱动</strong></td><td>提供"理解力"与"操作小红书的手"</td><td>LLM:匹配精筛、话术生成、对话意向分级、微信号识别(可切换国产 provider)。浏览器:CDP 驱动真实 Chrome、isTrusted 拟人输入、反检测、页面选择器适配。</td></tr>
+      <tr><td><strong>保障&amp;数据</strong></td><td>让全自动"活得久"并留住成果</td><td>限频、养号阶梯、工作时间窗、账号健康监控、紧急刹车、任务调度;本地 SQLite 存笔记/线索/对话/状态/配置(断网不丢)。</td></tr>
+      <tr><td><strong>中央后台</strong></td><td>跨账号观测与线索归集(薄层)</td><td>Token 鉴权接入、账号状态看板、线索归集、运营总览;多租户与外部对接预留。<strong>只观测、不下指令。</strong></td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- 4 模块全景 -->
+  <section id="map"><h2 class="sec"><span class="n">4</span>功能模块全景地图 ★</h2>
+  <p class="msub" style="color:var(--muted);font-size:13.5px">产品<strong>具体都有什么</strong>——全部模块按四层 + 后台归类。每个模块对应一份独立小文档(文件名见末列)。</p>
+
+  <div class="layerhead">配置层</div>
+  <table class="maptbl" style="border-radius:0 0 10px 10px;margin-top:0">
+    <thead><tr><th style="width:16%">模块</th><th>一句话</th><th style="width:9%">优先级</th><th style="width:18%">文档</th></tr></thead>
+    <tbody>
+      <tr><td>检索配置</td><td>配目标城市(可多城/可开关)、关键词、笔记类型、时间窗、采集范围</td><td><span class="badge p0">P0</span></td><td><code>02-检索</code></td></tr>
+      <tr><td>匹配规则配置</td><td>四层漏斗的条件、阈值与启用开关</td><td><span class="badge p0">P0</span></td><td><code>03-匹配引擎</code></td></tr>
+      <tr><td>内容&话术配置</td><td>话术风格/模板/变量、是否带图与配图规则</td><td><span class="badge p0">P0</span></td><td><code>04-内容生成</code></td></tr>
+      <tr><td>房源素材库</td><td>结构化录入房源(城市/商圈/价格/户型/标签/多图)+ 标签映射</td><td><span class="badge p0">P0</span></td><td><code>05-房源素材库</code></td></tr>
+      <tr><td>话术库管理</td><td>用户自填/维护诱导话术与暗语(不内置写死)</td><td><span class="badge p0">P0</span></td><td><code>06-话术库</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="layerhead">执行引擎(核心主链路)</div>
+  <table class="maptbl" style="border-radius:0 0 10px 10px;margin-top:0">
+    <thead><tr><th style="width:16%">模块</th><th>一句话</th><th style="width:9%">优先级</th><th style="width:18%">文档</th></tr></thead>
+    <tbody>
+      <tr><td>检索执行</td><td>按"关键词×城市"检索笔记与评论区,去重入队</td><td><span class="badge p0">P0</span></td><td><code>02-检索</code></td></tr>
+      <tr><td>匹配引擎</td><td>四层漏斗打分命中:地区+时间→意向→预算户型→诉求语义</td><td><span class="badge p0">P0</span></td><td><code>03-匹配引擎</code></td></tr>
+      <tr><td>内容生成</td><td>LLM 生成个性化话术 + 按诉求从房源库选房配图</td><td><span class="badge p0">P0</span></td><td><code>04-内容生成</code></td></tr>
+      <tr><td>触达执行</td><td>自动评论笔记 / 主动私信 / 回他人评论区(按风险排期)</td><td><span class="badge p0">P0</span></td><td><code>07-触达执行</code></td></tr>
+      <tr><td>自动沟通</td><td>对方回复后多轮自动应答,维护对话状态</td><td><span class="badge p0">P0</span></td><td><code>08-自动沟通</code></td></tr>
+      <tr><td>加微转化</td><td>诱导对方给微信 + 识别入库 + 高意向转人工</td><td><span class="badge p0">P0</span></td><td><code>09-加微转化</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="layerhead">智能 & 驱动</div>
+  <table class="maptbl" style="border-radius:0 0 10px 10px;margin-top:0">
+    <thead><tr><th style="width:16%">模块</th><th>一句话</th><th style="width:9%">优先级</th><th style="width:18%">文档</th></tr></thead>
+    <tbody>
+      <tr><td>接入与账号</td><td>启动/连接已登录小红书的 Chrome、登录态、账号绑定</td><td><span class="badge p0">P0</span></td><td><code>01-接入与账号</code></td></tr>
+      <tr><td>LLM 能力</td><td>匹配精筛/话术/意向分级/微信识别,可切换国产 provider</td><td><span class="badge p0">P0</span></td><td>贯穿(各模块)</td></tr>
+      <tr><td>浏览器自动化</td><td>CDP 驱动、拟人输入、反检测、选择器适配</td><td><span class="badge p0">P0</span></td><td>贯穿(各模块)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="layerhead">保障 & 数据</div>
+  <table class="maptbl" style="border-radius:0 0 10px 10px;margin-top:0">
+    <thead><tr><th style="width:16%">模块</th><th>一句话</th><th style="width:9%">优先级</th><th style="width:18%">文档</th></tr></thead>
+    <tbody>
+      <tr><td>防封号与运行控制</td><td>限频/养号/工作时间/健康监控/紧急刹车/调度</td><td><span class="badge p0">P0</span></td><td><code>11-防封号与运行控制</code></td></tr>
+      <tr><td>线索管理</td><td>线索本地保留(微信/来源/对话/意向/状态)+ 上报</td><td><span class="badge p0">P0</span></td><td><code>10-线索管理</code></td></tr>
+      <tr><td>运行监控与日志</td><td>运行事件、动作流水、异常、配额可视</td><td><span class="badge p1">P1</span></td><td><code>12-运行监控与日志</code></td></tr>
+      <tr><td>配置中心</td><td>汇总所有可配置项的统一入口</td><td><span class="badge p1">P1</span></td><td><code>13-配置中心</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="layerhead">中央后台</div>
+  <table class="maptbl" style="border-radius:0 0 10px 10px;margin-top:0">
+    <thead><tr><th style="width:16%">模块</th><th>一句话</th><th style="width:9%">优先级</th><th style="width:18%">文档</th></tr></thead>
+    <tbody>
+      <tr><td>账号总览看板</td><td>跨账号运行情况/配额/健康一览</td><td><span class="badge p1">P1</span></td><td><code>20-中央后台</code></td></tr>
+      <tr><td>线索汇总</td><td>所有账号/租户的线索统一查看与管理</td><td><span class="badge p1">P1</span></td><td><code>20-中央后台</code></td></tr>
+      <tr><td>租户管理</td><td>多租户隔离与管理 UI</td><td><span class="badge p2">P2</span></td><td><code>20-中央后台</code></td></tr>
+      <tr><td>外部对接</td><td>线索推送企微/CRM、导出 Excel</td><td><span class="badge p2">P2</span></td><td>后期</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout c-blue"><strong>辅助文档</strong> <code>90-配置项总表</code>(所有配置项一览)· <code>91-状态与流转</code>(线索/账号状态机)· <code>92-异常与边界</code> · <code>93-术语表</code>。</div>
+  </section>
+
+  <!-- 5 数据流 -->
+  <section id="flow"><h2 class="sec"><span class="n">5</span>端到端数据流</h2>
+  <div class="flow">
+    <div class="step"><div class="num">1</div><h4>检索</h4><p>关键词×城市搜笔记/评论,去重入队</p></div>
+    <div class="step"><div class="num">2</div><h4>匹配</h4><p>四层漏斗打分,命中进入下一步</p></div>
+    <div class="step"><div class="num">3</div><h4>生成</h4><p>LLM 话术 + 房源库选图</p></div>
+    <div class="step"><div class="num">4</div><h4>触达</h4><p>评论/私信直发(限频+拟人)</p></div>
+    <div class="step"><div class="num">5</div><h4>沟通</h4><p>多轮自动应答 + 诱导加微</p></div>
+    <div class="step"><div class="num">6</div><h4>转化</h4><p>识别微信入库 / 高意向转人工</p></div>
+    <div class="step"><div class="num">7</div><h4>沉淀</h4><p>本地保留 + 上报后台</p></div>
+  </div>
+  </section>
+
+  <!-- 6 技术栈 -->
+  <section id="stack"><h2 class="sec"><span class="n">6</span>技术栈(概要)</h2>
+  <table>
+    <tbody>
+      <tr><th style="width:24%">客户端</th><td>Electron + 本地 Node 服务 + 本地 SQLite;CDP(Chrome DevTools Protocol)驱动真实 Chrome;复用 BOSS 寻源助手资产</td></tr>
+      <tr><th>智能</th><td>国产大模型(火山 Ark / 阿里百炼),可切换 provider</td></tr>
+      <tr><th>后台</th><td>云服务器 + Token 鉴权;多租户数据库(建议 PostgreSQL,带 tenant_id)</td></tr>
+      <tr><th>反爬策略</th><td>驱动真实浏览器,由页面自身生成 x-s 签名,绕过签名墙(不逆向 API)</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <!-- 7 角色 -->
+  <section id="role"><h2 class="sec"><span class="n">7</span>角色与场景</h2>
+  <table>
+    <thead><tr><th style="width:20%">角色</th><th style="width:26%">用什么</th><th>典型场景</th></tr></thead>
+    <tbody>
+      <tr><td><strong>中介运营</strong></td><td>桌面客户端(1 人 1 账号)</td><td>配置策略与素材 → 一键启动 → 机器自动获客 → 收到"转人工"提醒时接手 → 查看本账号线索</td></tr>
+      <tr><td><strong>管理者</strong></td><td>中央后台(网页)</td><td>看所有账号运行/限流/产出,汇总管理全部线索</td></tr>
+    </tbody>
+  </table>
+  </section>
+
+  <footer>产品文档 00 · 产品架构(顶层设计) ｜ 小红书自动化获客工具 ｜ 2026-06-24 v0.1</footer>
+</div>
+</body>
+</html>
