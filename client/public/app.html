@@ -194,7 +194,8 @@
           <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎯 任务设置</div>
           <div class="hint" style="margin-bottom:14px">检索条件 + 筛选 + 评论方向。控制台「▶ 开始」会按这里保存的设置跑;改完记得点保存。</div>
           <div class="row">
-            <div class="fld" style="flex:1"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
+            <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
+            <div class="fld"><label>重新检索间隔(分钟)</label><input id="rescan" type="number" min="1" style="width:90px" title="外呼把当前一批逛完后,隔多久重新检索一批新笔记"></div>
           </div>
           <div class="row">
             <div class="fld" style="flex:1"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
@@ -243,6 +244,11 @@
         <div style="font-size:14px;font-weight:700;margin-bottom:4px">💬 评论承接 · 规则</div>
         <div class="hint" style="margin-bottom:14px">别人评论/回复我 → 自动接住回复。任务运行中发现通知会插队优先回复。下面规则全部可配,改完点保存。</div>
         <label style="cursor:pointer;display:inline-block;margin-bottom:10px"><input type="checkbox" id="r_enabled"> 任务运行时承接评论(关掉=只外呼不承接)</label>
+        <div style="font-size:13px;font-weight:700;margin:8px 0 4px">📅 承接排班(和主任务分开;只在这个时段内查通知/回复)</div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <label style="cursor:pointer"><input type="checkbox" id="r_sch_enabled"> 启用承接排班(关掉=全程在线)</label>
+          <span style="display:inline-flex;gap:4px;align-items:center;color:var(--sub);font-size:13px">每天 <input type="time" id="r_sch_start"> <span>–</span> <input type="time" id="r_sch_end"></span>
+        </div>
         <div style="font-size:13px;font-weight:700;margin:8px 0 4px">承接范围</div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
           <label style="cursor:pointer"><input type="checkbox" id="r_sc_comment"> 评论我笔记</label>
@@ -285,6 +291,7 @@ async function loadTaskSettings() {
   const c = await getCfg();
   setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
+  setVal('rescan', c.rescan_minutes);
   if ($('llm_enabled')) $('llm_enabled').checked = !!c.llm_enabled;
   setVal('llm_provider', c.llm_provider || 'ark'); setVal('llm_model', c.llm_model); setVal('llm_api_key', c.llm_api_key);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
@@ -349,7 +356,8 @@ function saveTaskSettings() {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
     task_keyword: $('kw').value, task_direction: $('dir').value,
     llm_enabled: ($('llm_enabled') ? $('llm_enabled').checked : false), llm_provider: $('llm_provider').value, llm_model: $('llm_model').value, llm_api_key: $('llm_api_key').value,
-    task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value
+    task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value,
+    rescan_minutes: Math.max(1, Number($('rescan').value) || 15)
   };
   $('tasksavehint').textContent = '保存中…';
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('tasksavehint').textContent = d.ok ? '✓ 已保存,控制台开始即用' : ('✗ ' + d.msg); updateTaskSummary(); });
@@ -433,6 +441,9 @@ async function loadReplyRules() {
   ck('r_enabled', c.reply_enabled !== false); ck('r_sc_comment', c.reply_scope_comment !== false);
   ck('r_sc_reply', c.reply_scope_reply !== false); ck('r_sc_mention', c.reply_scope_mention !== false);
   ck('r_only_intent', !!c.reply_only_intent); ck('r_dry', c.reply_dry_run !== false);
+  ck('r_sch_enabled', c.reply_schedule_enabled !== false);
+  var _w0 = (c.reply_schedule && c.reply_schedule[0] && c.reply_schedule[0].windows && c.reply_schedule[0].windows[0]) || { start: '09:00', end: '23:30' };
+  sv('r_sch_start', _w0.start); sv('r_sch_end', _w0.end);
   sv('r_intent', (c.reply_intent_words || []).join('，')); sv('r_hot', (c.reply_hot_words || []).join('，'));
   sv('r_black', (c.reply_black_words || []).join('，')); sv('r_dir', c.reply_direction);
   sv('r_daily', c.reply_daily); sv('r_hourly', c.reply_hourly); sv('r_gapmin', c.reply_gap_min);
@@ -445,6 +456,8 @@ function saveReplyRules() {
     reply_enabled: $('r_enabled').checked, reply_scope_comment: $('r_sc_comment').checked,
     reply_scope_reply: $('r_sc_reply').checked, reply_scope_mention: $('r_sc_mention').checked,
     reply_only_intent: $('r_only_intent').checked, reply_dry_run: $('r_dry').checked,
+    reply_schedule_enabled: $('r_sch_enabled').checked,
+    reply_schedule: (function () { var s = $('r_sch_start').value || '09:00', e = $('r_sch_end').value || '23:30'; var a = []; for (var i = 0; i < 7; i++) a.push({ on: true, windows: [{ start: s, end: e }] }); return a; })(),
     reply_intent_words: words('r_intent'), reply_hot_words: words('r_hot'), reply_black_words: words('r_black'),
     reply_direction: $('r_dir').value,
     reply_daily: Number($('r_daily').value) || 30, reply_hourly: Number($('r_hourly').value) || 10,
