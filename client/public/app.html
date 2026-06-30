@@ -101,9 +101,9 @@
       </div>
       <div class="card">
         <div class="row">
-          <button class="btn" id="go" onclick="autoRun()">▶ 开始</button>
-          <button class="btn" id="stopbtn" onclick="stopRun()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
-          <label style="font-size:13px;color:var(--sub);margin-left:12px;cursor:pointer" title="勾选=真的把评论发到对方笔记(务必用全新小号);不勾=只演练,走完整流程但不真发"><input type="checkbox" id="autoreal"> 真发</label>
+          <button class="btn" id="go" onclick="engineStart()">▶ 开始</button>
+          <button class="btn" id="stopbtn" onclick="engineStop()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
+          <label style="font-size:13px;color:var(--sub);margin-left:12px;cursor:pointer" title="总真发开关:开=机器真的发评论/回复(务必全新小号);关=全演练"><input type="checkbox" id="autoreal" onchange="saveLive()"> 真发(总开关)</label>
           <span class="hint" id="tasksummary" style="margin-left:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
           <a href="#" onclick="showPage('tasksettings');return false" style="font-size:12px;color:var(--brand);white-space:nowrap;text-decoration:none">⚙ 任务设置</a>
         </div>
@@ -135,7 +135,7 @@
         </div>
         <div class="card" style="flex:1;min-width:0;margin-bottom:0;display:flex;flex-direction:column">
           <div style="font-size:12px;color:var(--muted);margin-bottom:6px">实时日志 · 引擎在干什么</div>
-          <div class="log" id="log" style="flex:1;max-height:none">点「开始」后,这里逐行显示引擎动作…</div>
+          <div class="log" id="log" style="height:380px;overflow:auto">连接机器中…(机器常驻:点「开始」按排班自动跑,主任务+评论承接都在这条日志里)</div>
         </div>
       </div>
 
@@ -544,25 +544,39 @@ function addAutoResult(r) {
     + '<div class="hint" style="white-space:pre-wrap;margin-top:4px">' + esc(r.comment) + '</div>';
   $('results').appendChild(div);
 }
-function autoRun() {
-  const real = $('autoreal') && $('autoreal').checked;
-  if (real && !confirm('⚠ 真发模式会真的把评论发到对方笔记!确认现在登录的是全新小号(不是被检测的旧号)吗?')) return;
-  $('go').disabled = true; $('stopbtn').disabled = false; $('log').textContent = ''; $('results').innerHTML = '';
-  ['m-total','m-seek','m-supply','m-target'].forEach(id => $(id).textContent = '–'); $('rcount').textContent = '';
-  setPhase('search');
-  es = new EventSource('/api/auto-run?dry=' + (real ? '0' : '1'));
-  es.addEventListener('log', e => addLog(JSON.parse(e.data)));
-  es.addEventListener('phase', e => setPhase(JSON.parse(e.data).phase));
-  es.addEventListener('stats', e => { const x = JSON.parse(e.data); $('m-total').textContent = x.total; $('m-seek').textContent = x.byIntent['求租']||0; $('m-supply').textContent = x.byIntent['房源']||0; $('m-target').textContent = x.targetCount; });
-  es.addEventListener('result', e => addAutoResult(JSON.parse(e.data)));
-  es.addEventListener('done', e => { const d = JSON.parse(e.data); setPhase('done'); addLog(d.error ? ('出错:'+d.error) : ('自动评论结束:处理 '+(d.done||0)+' 条,真发 '+(d.sent||0)+' 条'+(d.dry?'(演练)':''))); $('go').disabled = false; $('stopbtn').disabled = true; loadRecords(); es.close(); });
-  es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; $('stopbtn').disabled = true; es && es.close(); };
+// ── 常驻机器:总开关 + 实时日志流(关网页/刷新都不影响机器,只反映状态)──
+let _stream = null, _machineRunning = false;
+function connectStream() {
+  if (_stream) return;
+  $('log').textContent = '';
+  _stream = new EventSource('/api/engine/stream');
+  _stream.addEventListener('log', e => { const o = JSON.parse(e.data); addLog('[' + o.t + '] ' + o.m); });
+  _stream.addEventListener('status', e => applyMachineStatus(JSON.parse(e.data)));
+  _stream.addEventListener('stats', e => { const x = JSON.parse(e.data); $('m-total').textContent = x.total; $('m-seek').textContent = x.byIntent['求租']||0; $('m-supply').textContent = x.byIntent['房源']||0; $('m-target').textContent = x.targetCount; });
+  _stream.addEventListener('result', e => { addAutoResult(JSON.parse(e.data)); loadRecords(); });
+  _stream.onerror = () => { /* EventSource 浏览器会自动重连 */ };
 }
-function stopRun() {
-  $('stopbtn').disabled = true; $('go').disabled = false;
-  addLog('⏹ 正在停止…(当前这步完成后中断)');
-  fetch('/api/stop').catch(() => {});
-  if (es) es.close();
+function applyMachineStatus(s) {
+  _machineRunning = !!s.running;
+  $('go').disabled = _machineRunning; $('stopbtn').disabled = !_machineRunning;
+  $('go').textContent = _machineRunning ? '● 运行中' : '▶ 开始';
+  if ($('autoreal')) $('autoreal').checked = !!s.live;
+  const pm = { search: 'search', reply: 'match', comment: 'generate', starting: 'search' };
+  setPhase(_machineRunning ? (pm[s.phase] || 'search') : 'done');
+}
+function engineStart() {
+  if ($('autoreal') && $('autoreal').checked && !confirm('⚠ 真发已开!机器会真的发评论/回复(务必全新小号)。确认开始?')) return;
+  $('go').disabled = true;
+  fetch('/api/engine/start').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); }).catch(()=>{ $('go').disabled = false; });
+}
+function engineStop() {
+  $('stopbtn').disabled = true;
+  fetch('/api/engine/stop').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); });
+}
+function saveLive() {
+  const on = $('autoreal').checked;
+  if (on && !confirm('⚠ 开启「真发」总开关后,机器会真的把评论/回复发出去(务必用全新小号)。确认开启?')) { $('autoreal').checked = false; return; }
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ live_send: on }))).then(r => r.json());
 }
 function doSend(i, dry) {
   if (!dry && !confirm('确认真发这条评论到对方笔记?(用的是你登录的小号)')) return;
@@ -668,6 +682,7 @@ function saveConfig() {
 checkLogin();
 loadTaskSettings();
 loadSchedule();
+connectStream();
 fetch('/api/cursor-install').catch(function () {});
 </script>
 </body>
