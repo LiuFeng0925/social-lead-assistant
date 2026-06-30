@@ -6,6 +6,7 @@
 const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
 const { check, rejectsAgent } = require('./compliance');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
+const llm = require('./llm');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
@@ -196,14 +197,36 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
   }
 }
 
-// ── 生成评论(开发期模板;接 LLM 后替换为 API 调用)──
+// ── 生成评论 · 内置话术模板(读对方正文+诉求,多套句式按笔记轮换、不雷同;direction 是给 LLM 的指令,模板用不上)──
+function _hash(s) { let h = 0; s = String(s || ''); for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return h; }
+function _pick(arr, seed) { return arr[Math.abs(seed) % arr.length]; }
 function genComment(note, direction) {
   const title = note.title || '';
-  const tags = note.tags || [];
-  const hay = title + ' ' + tags.join(' ');
-  const region = ['朝阳大悦城', '团结湖', '望京', '国贸', '三里屯', '双井', '十里河', '高碑店', '四惠', '酒仙桥', '朝阳'].find((r) => hay.includes(r)) || '你说的那一片';
-  const hu = /三居/.test(hay) ? '三居' : /两居/.test(hay) ? '两居' : /(一居|单间|开间|主卧|次卧)/.test(hay) ? '一居' : '房子';
-  return `看你在找${region}的${hu}呀~我手上正好有挺合适的房源,通勤方便、可以拎包入住。要不要看看?主页有实拍,合适的话私聊我聊细节~`;
+  const desc = note.desc || '';
+  const hay = title + ' ' + desc + ' ' + (note.tags || []).join(' ');
+  const region = ['朝阳大悦城', '团结湖', '望京', '国贸', '三里屯', '双井', '十里河', '高碑店', '四惠', '酒仙桥', '青年路', '常营', '管庄', '朝阳'].find((r) => hay.includes(r)) || note.region || '你说的那一片';
+  const hu = /三居|3居|三室/.test(hay) ? '三居' : /两居|2居|两室|二居/.test(hay) ? '两居' : /(一居|1居|单间|开间|主卧|次卧|一室)/.test(hay) ? '一居' : '';
+  const bm = hay.match(/(\d[\d,]{2,5})\s*(元|块)/) || hay.match(/(\d(\.\d)?)\s*[kK千]/);
+  const budget = bm ? bm[0].replace(/[,]/g, '') : '';
+  const need = /地铁|通勤|上班|公司/.test(hay) ? '通勤' : /拎包|家电|家具|齐全|押一付一|随时入住|短租/.test(hay) ? '拎包入住' : /独卫|朝南|采光|阳台|精装|新装修/.test(hay) ? '居住体验' : '';
+  const huP = hu ? ('的' + hu) : '的房子';
+  const budP = budget ? ('预算' + budget + '左右的话,') : '';
+  const seed = _hash(note.id || title);
+  const opens = ['看你在找' + region + huP + '呀~', region + '这边' + huP + '我刚好有~', '同找' + region + '?我手上有几套' + huP + '~', '刷到你找' + region + huP + ',来对人啦~'];
+  const mids = [budP + '有挺合适的,', budP + '正好对得上,', need ? ('看你看重' + need + ',我这几套挺搭,') : (budP + '房子都挺新,')];
+  const ends = ['主页有实拍,合适私聊我聊细节~', '主页能看实拍图,觉得行私我~', '图和细节都在主页,合适咱私聊~', '想看图主页有,私聊我帮你挑~'];
+  return _pick(opens, seed) + _pick(mids, seed >> 3) + _pick(ends, seed >> 6);
+}
+// 评论生成统一入口:开了 LLM 且填了 key → 大模型按对方正文+你的方向生成;否则回退内置话术模板。失败也回退,不阻断。
+async function makeComment(note, direction, cfg) {
+  cfg = cfg || {};
+  if (cfg.llm_enabled && cfg.llm_api_key) {
+    try {
+      const c = await llm.genComment({ note, direction, provider: cfg.llm_provider, model: cfg.llm_model, apiKey: cfg.llm_api_key });
+      if (c && c.length >= 4 && check(c).ok) return c;
+    } catch (e) { /* 回退模板 */ }
+  }
+  return genComment(note, direction);
 }
 
 
@@ -228,32 +251,101 @@ async function clickByText({ client, target, label }) {
   if (p && Number.isFinite(p.x)) { await client.click({ target, x: p.x, y: p.y }); return true; }
   return false;
 }
+// 筛选面板里的选项芯片(排序/类型/时间/范围都是 div.tags),按精确文字找,返回坐标+是否已选中
+function FIND_TAG(label) {
+  const j = JSON.stringify(label);
+  return '(function(){var want=' + j + ';var nodes=document.querySelectorAll("div[class*=tags]");var best=null;'
+    + 'for(var i=0;i<nodes.length;i++){var e=nodes[i];if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null)continue;'
+    + 'var r=e.getBoundingClientRect();if(r.width<=0||r.height<=0)continue;'
+    + 'var active=((e.className||"").toString().indexOf("active")>=0);'
+    + 'if(!best||r.top<best.top)best={x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),active:active};}'
+    + 'return best?JSON.stringify(best):"";})()';
+}
+// 选中筛选项:对"可见"的那个芯片派发完整 指针+鼠标 事件序列(React 最认这个;比单纯 e.click() 可靠),坐标真鼠标会把面板碰收起所以不能用
+function JS_CLICK_TAG(label) {
+  const j = JSON.stringify(label);
+  return '(function(){var want=' + j + ';var n=document.querySelectorAll("div[class*=tags]");for(var i=0;i<n.length;i++){var e=n[i];if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null)continue;'
+    + 'var r=e.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;var tg=document.elementFromPoint(cx,cy)||e;'
+    + 'var P=window.PointerEvent||MouseEvent;var o={bubbles:true,cancelable:true,composed:true,view:window,clientX:cx,clientY:cy,button:0};'
+    + 'function fire(el,ty,C){try{el.dispatchEvent(new C(ty,o));}catch(_){try{el.dispatchEvent(new MouseEvent(ty,o));}catch(__){}}}'
+    + 'fire(tg,"pointerdown",P);fire(tg,"mousedown",MouseEvent);fire(tg,"pointerup",P);fire(tg,"mouseup",MouseEvent);fire(tg,"click",MouseEvent);'
+    + 'return "ok";}return "no";})()';
+}
+// 校验某项是否已选中(active)
+function TAG_ACTIVE(label) {
+  const j = JSON.stringify(label);
+  return '(function(){var want=' + j + ';var n=document.querySelectorAll("div[class*=tags]");for(var i=0;i<n.length;i++){var e=n[i];if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null)continue;return (e.className||"").toString().indexOf("active")>=0?"YES":"no";}return "gone";})()';
+}
+// 当前已选中的非默认项汇总(给日志,证明真生效;只看可见面板)
+const ACTIVE_SUMMARY = '(function(){var n=document.querySelectorAll("div[class*=tags]");var a=[];for(var i=0;i<n.length;i++){var e=n[i];if(e.offsetParent===null)continue;var t=(e.textContent||"").trim();if(t&&t!=="不限"&&t!=="综合"&&(e.className||"").toString().indexOf("active")>=0&&a.indexOf(t)<0)a.push(t);}return a.join("、");})()';
+// 慢动作可见点选:红点慢慢移过去(看得见)→ JS 点选一次(只点一次,小红书是"点一下切换",多点会切回去)
+async function pickTagOnce({ client, target, label, onLog }) {
+  const r = await client.evaluate({ target, expression: FIND_TAG(label) });
+  let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
+  if (!p) { onLog('筛选·没找到「' + label + '」'); return; }
+  if (p.active) { onLog('筛选·「' + label + '」已是选中'); return; }
+  await client.moveCursorVisual({ target, toX: p.x, toY: p.y }).catch(() => {}); // 红点慢慢挪过去(只动红点,真鼠标移动会把面板碰收起)
+  await sleep(rand(450, 800));
+  await client.evaluate({ target, expression: JS_CLICK_TAG(label) }).catch(() => {});
+  onLog('筛选·点了「' + label + '」');
+  await sleep(rand(700, 1100));
+}
+async function findFilterBtn({ client, target }) {
+  const r = await client.evaluate({ target, expression: FIND_BY_TEXT('筛选') });
+  let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
+  return (p && Number.isFinite(p.x)) ? p : null;
+}
+async function panelOpen({ client, target }) {
+  // 只数"可见"的筛选芯片——关掉的面板可能以隐藏副本留在 DOM 里,不能算开着
+  const r = await client.evaluate({ target, expression: '(function(){var n=document.querySelectorAll("div[class*=tags]");var c=0;for(var i=0;i<n.length;i++)if(n[i].offsetParent!==null)c++;return c;})()' });
+  return !!(r && Number(r.value) > 0);
+}
+// 按文字找可见元素,派发完整 指针+鼠标 事件序列(用来点「筛选」入口,比真鼠标坐标点击稳)
+function JS_CLICK_TEXT(text) {
+  const j = JSON.stringify(text);
+  return '(function(){var want=' + j + ';var n=document.querySelectorAll("span,div,button,a");var best=null;'
+    + 'for(var i=0;i<n.length;i++){var e=n[i];if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null)continue;var r=e.getBoundingClientRect();if(r.width<=0||r.height<=0)continue;if(!best||(e.textContent||"").length<=(best.textContent||"").length)best=e;}'
+    + 'if(!best)return "no";var r=best.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;var tg=document.elementFromPoint(cx,cy)||best;'
+    + 'var P=window.PointerEvent||MouseEvent;var o={bubbles:true,cancelable:true,composed:true,view:window,clientX:cx,clientY:cy,button:0};'
+    + 'function fire(el,ty,C){try{el.dispatchEvent(new C(ty,o));}catch(_){try{el.dispatchEvent(new MouseEvent(ty,o));}catch(__){}}}'
+    + 'fire(tg,"pointerdown",P);fire(tg,"mousedown",MouseEvent);fire(tg,"pointerup",P);fire(tg,"mouseup",MouseEvent);fire(tg,"click",MouseEvent);return "ok";})()';
+}
+// 健壮地点开筛选面板:已开就跳过;否则红点移过去(可见)+ JS 合成点击,检查是否真开,最多重试几次
+async function openFilterPanel({ client, target, onLog }) {
+  for (let k = 0; k < 4; k++) {
+    if (await panelOpen({ client, target })) return true;
+    const fb = await findFilterBtn({ client, target });
+    if (fb) { await client.moveCursorVisual({ target, toX: fb.x, toY: fb.y }).catch(() => {}); await sleep(rand(400, 700)); }
+    await client.evaluate({ target, expression: JS_CLICK_TEXT('筛选') }).catch(() => {});
+    await sleep(rand(1100, 1700));
+  }
+  return await panelOpen({ client, target });
+}
 async function applyFilters({ client, target, filters = {}, onLog = () => {} }) {
   const want = (v, def) => (v && v !== def ? v : null);
-  const sort = want(filters.sort, '综合');
-  const noteType = want(filters.noteType, '不限');
-  const noteTime = want(filters.noteTime, '不限');
-  const noteRange = want(filters.noteRange, '不限');
-  if (!sort && !noteType && !noteTime && !noteRange) { onLog('筛选:全部默认,无需设置'); return; }
-  if (sort) {
-    await clickByText({ client, target, label: '综合' }); // 排序若是下拉,先展开
-    await sleep(rand(400, 900));
-    const ok = await clickByText({ client, target, label: sort });
-    onLog(ok ? ('筛选·排序:已选「' + sort + '」') : ('筛选·排序:没找到「' + sort + '」,跳过'));
-    await sleep(rand(500, 1000));
+  const picks = [['排序', want(filters.sort, '综合')], ['类型', want(filters.noteType, '不限')], ['时间', want(filters.noteTime, '不限')], ['范围', want(filters.noteRange, '不限')]].filter((x) => x[1]);
+  if (!picks.length) { onLog('筛选:全部默认,无需设置'); return; }
+  // 1) 点开「筛选」面板(排序/类型/时间/范围都在这里面)
+  if (!(await openFilterPanel({ client, target, onLog }))) { onLog('筛选:面板没打开,跳过(可能页面没就绪)'); return; }
+  onLog('筛选:已点开筛选面板');
+  // 2) 逐项点选(每项只点一次)
+  const wantLabels = picks.map((x) => x[1]);
+  for (const [dim, label] of picks) { await pickTagOnce({ client, target, label, onLog }); }
+  // 2.5) 读一次真实生效状态;只对"确实没生效"的补点一次(避免重复点把已选的切回去)
+  await sleep(rand(400, 700));
+  let summary = ''; try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {}
+  const missing = wantLabels.filter((l) => summary.indexOf(l) < 0);
+  for (const label of missing) {
+    onLog('筛选·「' + label + '」没生效,补点一次');
+    await client.evaluate({ target, expression: JS_CLICK_TAG(label) }).catch(() => {});
+    await sleep(rand(800, 1200));
   }
-  const panel = [['类型', noteType], ['发布时间', noteTime], ['范围', noteRange]].filter((x) => x[1]);
-  if (panel.length) {
-    const opened = await clickByText({ client, target, label: '筛选' });
-    onLog(opened ? '筛选:已点开筛选面板' : '筛选:没找到「筛选」入口,跳过类型/时间/范围');
-    await sleep(rand(1300, 2300));
-    for (const [dim, label] of panel) {
-      const ok = await clickByText({ client, target, label });
-      onLog(ok ? ('筛选·' + dim + ':已选「' + label + '」') : ('筛选·' + dim + ':没找到「' + label + '」,跳过'));
-      await sleep(rand(500, 1000));
-    }
-    await clickByText({ client, target, label: '筛选' }).catch(() => {}); // 收起面板
-  }
-  await sleep(rand(1200, 2000)); // 等列表按筛选刷新
+  if (missing.length) { try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {} }
+  // 逐项如实汇报(以真实生效状态为准)
+  for (const label of wantLabels) { onLog(summary.indexOf(label) >= 0 ? ('筛选·「' + label + '」✓ 已生效') : ('筛选·「' + label + '」✗ 没选上')); }
+  onLog(summary ? ('筛选已生效:' + summary + '(结果列表已按此过滤)') : '筛选:没有选项生效(可能页面改版)');
+  // 3) 收起面板:真实鼠标移到结果区(下拉对真鼠标敏感,一移开就收起);结果保持过滤,只是面板显示会回默认
+  await client.humanMove({ target, toX: rand(320, 700), toY: rand(420, 640) }).catch(() => {});
+  await sleep(rand(1500, 2400));
 }
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, classify, check, rejectsAgent, applyFilters };
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, makeComment, classify, check, rejectsAgent, applyFilters };

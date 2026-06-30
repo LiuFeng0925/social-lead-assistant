@@ -109,11 +109,18 @@ function status() {
     today: WD[dowIndex()],
     scheduleEnabled: cfg.schedule_enabled !== false,
     workReason: inWorkWindow(cfg) ? '' : workReason(cfg),
-    slot: (function () { const w = currentWindow(cfg); if (!w) return null; return { start: w.start, end: w.end, quota: (w.quota != null ? w.quota : null), sent: db.commentCountSince(atTimeToday(w.start)) }; })(),
+    slot: (function () { const w = currentWindow(cfg); if (!w) return null; return { start: w.start, end: w.end, notes: (w.notes != null ? w.notes : null), quota: (w.quota != null ? w.quota : null), sent: db.commentCountSince(atTimeToday(w.start)) }; })(),
     commentToday: st.today,
     commentLastHour: st.lastHour,
     commentDailyLimit: commentDailyLimit(cfg)
   };
 }
 
-module.exports = { canComment, status, inWorkWindow, currentWindow, commentDailyLimit, accountDays };
+// 当前时段的采集量(逛多少篇);不在时段则用全局 task_max 兜底
+function currentScanLimit(cfg) {
+  cfg = cfg || db.getConfig();
+  const w = currentWindow(cfg);
+  if (w && w.notes != null && Number(w.notes) > 0) return Number(w.notes);
+  return Number(cfg.task_max) || 40;
+}
+module.exports = { canComment, status, inWorkWindow, currentWindow, currentScanLimit, commentDailyLimit, accountDays };

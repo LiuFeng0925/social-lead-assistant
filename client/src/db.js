@@ -103,23 +103,25 @@ const DEFAULT_CONFIG = {
   task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
   task_max: 40,
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
+  // ── 评论生成 LLM(可切换 provider:ark 火山方舟 / dashscope 阿里百炼)。默认关=用内置话术模板;填 key 并启用后,评论改由大模型按对方正文+方向生成 ──
+  llm_enabled: false, llm_provider: 'ark', llm_model: '', llm_api_key: '',
   // ── 打开笔记后的拟人浏览(在「任务设置」可配)──
   browse_images_min: 2, browse_images_max: 5,            // 图文看几张图
   browse_body_dwell_min: 1500, browse_body_dwell_max: 5000, // 正文停留(ms)
   browse_comment_scrolls_min: 2, browse_comment_scrolls_max: 5, // 往下滑读评论几下
   browse_comment_dwell_min: 1000, browse_comment_dwell_max: 3000, // 每下停留读评论(ms)
-  // ── 排班(在「排班管理」页改)── 7 天,index 0=周一..6=周日;每天 {on, windows:[{start,end}]}
+  // ── 排班(在「排班管理」页改)── 7 天,index 0=周一..6=周日;每天 {on, windows:[{start,end,notes 采集量,quota 评论量}]}
   slot_pacing: 'even', // 时段内节奏:even 匀速摊开 | burst 开头集中发完就歇
   auto_send_dry_run: true, // 自动评论默认只演练(走完整流程但不真发);改 false 才真发
   schedule_enabled: true,
   schedule: [
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
-    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] }
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] }
   ],
   fail_rate_threshold: 0.3   // 健康:评论失败率阈值
 };
@@ -128,7 +130,17 @@ function getConfig() {
   const rows = open().prepare('select k,v from config').all();
   const saved = {};
   rows.forEach((r) => { try { saved[r.k] = JSON.parse(r.v); } catch (e) { saved[r.k] = r.v; } });
-  return { ...DEFAULT_CONFIG, ...saved };
+  const cfg = { ...DEFAULT_CONFIG, ...saved };
+  // 兼容旧排班:每个时段补上 notes(采集量)/quota(评论量),旧库用 task_max 当采集种子
+  if (Array.isArray(cfg.schedule)) {
+    cfg.schedule.forEach((day) => {
+      if (day && Array.isArray(day.windows)) day.windows.forEach((w) => {
+        if (w && w.notes == null) w.notes = Number(cfg.task_max) || 40;
+        if (w && w.quota == null) w.quota = 8;
+      });
+    });
+  }
+  return cfg;
 }
 function setConfig(partial) {
   const st = open().prepare('insert into config(k,v) values(?,?) on conflict(k) do update set v=excluded.v');

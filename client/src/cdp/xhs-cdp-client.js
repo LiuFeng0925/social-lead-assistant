@@ -78,7 +78,7 @@ class XhsCdpClient {
   // 贝塞尔曲线鼠标移动:从上次位置平滑移到目标(不瞬移),搬自 BOSS humanMouseMove
   // 往目标页面注入固定红点光标:监听 trusted 鼠标事件自动跟随(引擎 CDP 派发的是真事件);position:fixed → 滚动时停在视口
   async installCursor({ target }) {
-    const SCRIPT = '(function(){function ins(){if(window.__xhsCur){window.__xhsCur.style.opacity="1";return;}if(!document.body){return setTimeout(ins,60);}var d=document.createElement("div");d.id="__xhsCur";d.style.cssText="position:fixed;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;background:rgba(255,39,66,.30);border:3px solid #ff2742;box-shadow:0 0 0 3px rgba(255,255,255,.95),0 0 16px 6px rgba(255,39,66,.55);pointer-events:none;z-index:2147483647;transition:left .05s linear,top .05s linear";var c=document.createElement("div");c.style.cssText="position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#ff2742";d.appendChild(c);(document.body||document.documentElement).appendChild(d);window.__xhsCur=d;var mv=function(x,y){d.style.left=x+"px";d.style.top=y+"px";};document.addEventListener("mousemove",function(e){mv(e.clientX,e.clientY);},true);document.addEventListener("mousedown",function(e){mv(e.clientX,e.clientY);try{d.animate([{boxShadow:"0 0 0 3px rgba(255,255,255,.95),0 0 0 0 rgba(255,39,66,.6)"},{boxShadow:"0 0 0 3px rgba(255,255,255,.95),0 0 0 26px rgba(255,39,66,0)"}],{duration:520});}catch(_){}},true);}ins();return "ok";})()';
+    const SCRIPT = '(function(){function ins(){if(window.__xhsCur){window.__xhsCur.style.opacity="1";return;}if(!document.body){return setTimeout(ins,60);}var d=document.createElement("div");d.id="__xhsCur";d.style.cssText="position:fixed;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;background:rgba(255,39,66,.30);border:3px solid #ff2742;box-shadow:0 0 0 3px rgba(255,255,255,.95),0 0 16px 6px rgba(255,39,66,.55);pointer-events:none;z-index:2147483647;transition:left .05s linear,top .05s linear";var c=document.createElement("div");c.style.cssText="position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#ff2742";d.appendChild(c);(document.body||document.documentElement).appendChild(d);window.__xhsCur=d;var mv=function(x,y){d.style.left=x+"px";d.style.top=y+"px";};window.__xhsMove=mv;document.addEventListener("mousemove",function(e){mv(e.clientX,e.clientY);},true);document.addEventListener("mousedown",function(e){mv(e.clientX,e.clientY);try{d.animate([{boxShadow:"0 0 0 3px rgba(255,255,255,.95),0 0 0 0 rgba(255,39,66,.6)"},{boxShadow:"0 0 0 3px rgba(255,255,255,.95),0 0 0 26px rgba(255,39,66,0)"}],{duration:520});}catch(_){}},true);}ins();return "ok";})()';
     try { await this.evaluate({ target, expression: SCRIPT }); } catch (e) {}
   }
 
@@ -105,6 +105,27 @@ class XhsCdpClient {
       await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseMoved', x: Math.round(px), y: Math.round(py), button: 'none' } }).catch(() => {});
       if (this.onPointer) { try { this.onPointer({ type: 'move', x: Math.round(px), y: Math.round(py) }); } catch (e) {} }
       await new Promise((r) => setTimeout(r, 8 + Math.random() * 16));
+    }
+    this._lastX = toX; this._lastY = toY;
+  }
+
+  // 只移动红点(走 window.__xhsMove,不派发真实鼠标事件)——给悬浮敏感的元素(如筛选下拉)用:红点可见但不会触发面板收起
+  async moveCursorVisual({ target, toX, toY }) {
+    const fromX = Number.isFinite(this._lastX) ? this._lastX : (toX - 80);
+    const fromY = Number.isFinite(this._lastY) ? this._lastY : (toY - 60);
+    const dist = Math.hypot(toX - fromX, toY - fromY);
+    const steps = Math.max(6, Math.min(22, Math.floor(dist / 28)));
+    const cp1x = fromX + (toX - fromX) * (0.2 + Math.random() * 0.3);
+    const cp1y = fromY + (toY - fromY) * (0.1 + Math.random() * 0.2) + (Math.random() - 0.5) * 36;
+    const cp2x = fromX + (toX - fromX) * (0.5 + Math.random() * 0.3);
+    const cp2y = fromY + (toY - fromY) * (0.7 + Math.random() * 0.2) + (Math.random() - 0.5) * 28;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps, it = 1 - t;
+      const px = Math.round(it * it * it * fromX + 3 * it * it * t * cp1x + 3 * it * t * t * cp2x + t * t * t * toX);
+      const py = Math.round(it * it * it * fromY + 3 * it * it * t * cp1y + 3 * it * t * t * cp2y + t * t * t * toY);
+      await this.evaluate({ target, expression: 'window.__xhsMove&&window.__xhsMove(' + px + ',' + py + ')' }).catch(() => {});
+      if (this.onPointer) { try { this.onPointer({ type: 'move', x: px, y: py }); } catch (e) {} }
+      await new Promise((r) => setTimeout(r, 10 + Math.random() * 18));
     }
     this._lastX = toX; this._lastY = toY;
   }

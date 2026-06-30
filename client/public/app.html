@@ -99,10 +99,9 @@
       </div>
       <div class="card">
         <div class="row">
-          <button class="btn" id="go" onclick="start()">▶ 开始</button>
+          <button class="btn" id="go" onclick="autoRun()">▶ 开始</button>
           <button class="btn" id="stopbtn" onclick="stopRun()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
-          <button class="btn ghost" id="autobtn" onclick="autoRun()" style="margin-left:8px">🤖 自动评论</button>
-          <label style="font-size:12px;color:var(--sub);margin-left:6px;cursor:pointer" title="勾选=真的发评论;不勾=只演练走流程不发"><input type="checkbox" id="autoreal"> 真发</label>
+          <label style="font-size:13px;color:var(--sub);margin-left:12px;cursor:pointer" title="勾选=真的把评论发到对方笔记(务必用全新小号);不勾=只演练,走完整流程但不真发"><input type="checkbox" id="autoreal"> 真发</label>
           <span class="hint" id="tasksummary" style="margin-left:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
           <a href="#" onclick="showPage('tasksettings');return false" style="font-size:12px;color:var(--brand);white-space:nowrap;text-decoration:none">⚙ 任务设置</a>
         </div>
@@ -176,11 +175,20 @@
           <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎯 任务设置</div>
           <div class="hint" style="margin-bottom:14px">检索条件 + 筛选 + 评论方向。控制台「▶ 开始」会按这里保存的设置跑;改完记得点保存。</div>
           <div class="row">
-            <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
-            <div class="fld"><label>抓取上限</label><input id="max" type="number" value="40" style="width:90px"></div>
+            <div class="fld" style="flex:1"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
           </div>
           <div class="row">
             <div class="fld" style="flex:1"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
+          </div>
+          <div style="font-size:13px;font-weight:700;margin:14px 0 4px">💬 评论生成</div>
+          <div class="hint" style="margin-bottom:8px">不开 AI = 用内置话术模板(读对方正文,多套话术轮换不雷同,但<b>方向/正文喂不进去</b>)。开 AI(国产大模型)后,才会按对方正文 + 你上面的「方向」生成贴合的回复。Key 只存在本机。</div>
+          <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="llm_enabled"> 用 AI 生成评论(需填下面的 Key)</label>
+          <div class="row">
+            <div class="fld"><label>服务商</label><select id="llm_provider"><option value="ark">火山方舟(豆包)</option><option value="dashscope">阿里百炼(通义)</option></select></div>
+            <div class="fld" style="flex:1"><label>模型 ID</label><input id="llm_model" placeholder="如 doubao-pro-32k / qwen-plus" style="width:100%"></div>
+          </div>
+          <div class="row">
+            <div class="fld" style="flex:1"><label>API Key(只存本机)</label><input id="llm_api_key" type="password" placeholder="粘贴 API Key" style="width:100%"></div>
           </div>
           <div class="row">
             <div class="fld"><label>排序</label><select id="f_sort"><option>综合</option><option>最新</option><option>最多点赞</option><option>最多评论</option><option>最多收藏</option></select></div>
@@ -188,8 +196,8 @@
             <div class="fld"><label>笔记类型</label><select id="f_type"><option>不限</option><option>图文</option><option>视频</option></select></div>
             <div class="fld"><label>搜索范围</label><select id="f_range"><option>不限</option><option>已看过</option><option>未看过</option><option>已关注</option></select></div>
           </div>
-          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 每段评论上限</div>
-            <div class="hint" style="margin-bottom:8px">按周几设置工作时段(可多段),每段填该时段最多评论几条。只在时段内自动跑;养号阶梯 / 限频仍是安全天花板,每小时上限和最小间隔也照常叠加。</div>
+          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 每个时段「采集多少篇 / 评多少条」</div>
+            <div class="hint" style="margin-bottom:8px">按周几设置工作时段(可多段)。每段直接填:这个时段<b>采集多少篇</b>(搜索页往下刷、筛求租)+ <b>评多少条</b>(打开浏览+评论上限)。只在时段内自动跑;养号阶梯 / 限频是安全天花板,每小时上限和最小间隔照常叠加。</div>
             <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="sch_enabled"> 启用排班(关掉 = 不限时段,只受防封限频约束)</label>
             <div class="fld" style="margin-bottom:10px"><label>时段内节奏</label><select id="slot_pacing"><option value="even">匀速摊开(整段均匀发)</option><option value="burst">开头集中(到点先发完再歇)</option></select></div>
             <div id="schedule-form"></div>
@@ -227,6 +235,8 @@ async function loadTaskSettings() {
   const c = await getCfg();
   setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
+  if ($('llm_enabled')) $('llm_enabled').checked = !!c.llm_enabled;
+  setVal('llm_provider', c.llm_provider || 'ark'); setVal('llm_model', c.llm_model); setVal('llm_api_key', c.llm_api_key);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
   if ($('slot_pacing')) $('slot_pacing').value = c.slot_pacing || 'even';
   if ($('schedule-form')) { const _sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule(); renderSchedule(_sch); markConflicts(); }
@@ -271,11 +281,12 @@ function gatherSchedule() {
     const windows = [];
     row.querySelectorAll('.sch-win').forEach(function (w) {
       const s = w.querySelector('.sch-s').value, e = w.querySelector('.sch-e').value;
-      const qel = w.querySelector('.sch-q');
+      const qel = w.querySelector('.sch-q'); const nel = w.querySelector('.sch-n');
       const q = Number(qel ? qel.value : 8) || 8;
-      if (s && e) windows.push({ start: s, end: e, quota: q });
+      const n = Number(nel ? nel.value : 40) || 40;
+      if (s && e) windows.push({ start: s, end: e, notes: n, quota: q });
     });
-    sch.push({ on: on, windows: windows.length ? windows : [{ start: '09:30', end: '23:00', quota: 8 }] });
+    sch.push({ on: on, windows: windows.length ? windows : [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] });
   });
   return sch;
 }
@@ -286,7 +297,8 @@ function saveTaskSettings() {
   $('tasksavehint').style.color = '';
   const data = {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
-    task_keyword: $('kw').value, task_direction: $('dir').value, task_max: Number($('max').value) || 40,
+    task_keyword: $('kw').value, task_direction: $('dir').value,
+    llm_enabled: ($('llm_enabled') ? $('llm_enabled').checked : false), llm_provider: $('llm_provider').value, llm_model: $('llm_model').value, llm_api_key: $('llm_api_key').value,
     task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value
   };
   $('tasksavehint').textContent = '保存中…';
@@ -307,7 +319,7 @@ async function loadSchedule() {
 }
 function winHtml(w) {
   w = w || {};
-  return '<span class="sch-win" style="display:inline-flex;align-items:center;gap:3px"><input type="time" class="sch-s" onchange="markConflicts()" value="' + (w.start || '09:30') + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + (w.end || '23:00') + '"> <input type="number" class="sch-q" min="0" value="' + (w.quota != null ? w.quota : 8) + '" style="width:54px" title="本时段评论上限"><span style="color:var(--sub);font-size:12px">条</span> <a href="#" onclick="rmWin(this);return false" style="color:var(--bad);text-decoration:none">✕</a></span>';
+  return '<span class="sch-win" style="display:inline-flex;align-items:center;gap:3px"><input type="time" class="sch-s" onchange="markConflicts()" value="' + (w.start || '09:30') + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + (w.end || '23:00') + '"> <span style="color:var(--sub);font-size:12px;margin-left:4px">采集</span><input type="number" class="sch-n" min="0" value="' + (w.notes != null ? w.notes : 40) + '" style="width:50px" title="本时段在搜索页采集多少篇笔记来筛求租帖"><span style="color:var(--sub);font-size:12px">篇</span> <span style="color:var(--sub);font-size:12px">评</span><input type="number" class="sch-q" min="0" value="' + (w.quota != null ? w.quota : 8) + '" style="width:46px" title="本时段最多打开浏览+评论多少条"><span style="color:var(--sub);font-size:12px">条</span> <a href="#" onclick="rmWin(this);return false" style="color:var(--bad);text-decoration:none">✕</a></span>';
 }
 function renderSchedule(sch) {
   const box = $('schedule-form'); box.innerHTML = '';

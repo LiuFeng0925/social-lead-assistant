@@ -52,7 +52,7 @@ function sse(res) {
 async function handleRun(req, res, q) {
   const cfg = db.getConfig();
   const keyword = q.get('keyword') || cfg.task_keyword || '朝阳 租房';
-  const max = Number(q.get('max') || cfg.task_max || 40);
+  const max = Number(q.get('max')) || throttle.currentScanLimit(cfg);
   const filters = { sort: q.get('sort') || cfg.task_sort || '综合', noteTime: q.get('note_time') || cfg.task_note_time || '不限', noteType: q.get('note_type') || cfg.task_note_type || '不限', noteRange: q.get('note_range') || cfg.task_note_range || '不限' };
   const direction = q.get('direction') || cfg.task_direction || '我是房源方,结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式';
   const send = sse(res);
@@ -90,7 +90,7 @@ async function handleRun(req, res, q) {
         throw e;
       }
       const merged = { ...t, tags: d.tags || [], desc: d.desc || '' };
-      const comment = engine.genComment(merged, direction);
+      const comment = await engine.makeComment(merged, direction, cfg);
       const comp = engine.check(comment);
       const agentReject = engine.rejectsAgent((d.title || '') + (d.desc || ''));
       const r = {
@@ -338,7 +338,7 @@ async function handleAutoRun(req, res, q) {
     let loggedIn = true; try { loggedIn = (await readLoginStatus(client, target)).loggedIn; } catch (e) {}
     if (!loggedIn && !dry) { send('log', '⚠ 浏览器未登录小红书,真发模式已停止(先扫码登录)'); send('done', { error: 'not_logged_in' }); res.end(); runState.running = false; return; }
     const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
-    const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: cfg.task_max || 40, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
+    const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
     if (runState.cancelled) { send('log', '⏹ 已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
     send('phase', { phase: 'match' });
     const { tagged, targets, byIntent } = engine.matchNotes(notes);
@@ -361,7 +361,7 @@ async function handleAutoRun(req, res, q) {
         // 一次访问:打开 → 正常浏览(看图/读评论/正文停留)→ 浏览完遇匹配就评论 → 关闭
         await engine.readDetail({ client, target, note: t, browse, onLog: (m) => send('log', '  ' + m), onBeforeClose: async ({ detail }) => {
           const merged = Object.assign({}, t, { tags: (detail && detail.tags) || [], desc: (detail && detail.desc) || '' });
-          const comment = engine.genComment(merged, cfg.task_direction || '');
+          const comment = await engine.makeComment(merged, cfg.task_direction || '', cfg);
           if (!engine.check(comment).ok) { send('log', '  跳过(合规不过)'); return; }
           send('log', (dry ? '  [演练] ' : '  ') + '评论:' + comment);
           const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => send('log', '    ' + m) });
