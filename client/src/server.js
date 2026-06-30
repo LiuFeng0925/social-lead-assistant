@@ -402,6 +402,100 @@ async function drainInbox({ client, target, cfg, dry, send }) {
   return replied;
 }
 
+// ════════ 常驻机器:总开关 + 循环 + 日志广播(关网页不停,只有点停止才停)════════
+const logBus = { buffer: [], clients: new Set() };
+function _ts() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
+function emitLog(msg) {
+  const line = { t: _ts(), m: String(msg) };
+  logBus.buffer.push(line); if (logBus.buffer.length > 800) logBus.buffer.shift();
+  for (const res of logBus.clients) { try { res.write('event: log\ndata: ' + JSON.stringify(line) + '\n\n'); } catch (e) {} }
+}
+function emitEvent(type, data) { for (const res of logBus.clients) { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'); } catch (e) {} } }
+function busSend(type, data) { if (type === 'log') emitLog(data); else emitEvent(type, data); }
+
+const machine = { running: false, phase: 'idle', client: null, target: null, targets: [], lastScan: 0, lastInboxCheck: 0, sent: 0, replied: 0, done: 0 };
+function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done }; }
+function startMachine() { if (machine.running) return false; machine.running = true; machine.phase = 'starting'; machine.targets = []; machine.lastScan = 0; machine.lastInboxCheck = 0; emitEvent('status', machineStatus()); machineLoop(); return true; }
+function stopMachine() { if (!machine.running) return; machine.running = false; emitLog('⏹ 收到停止,机器即将停下'); emitEvent('status', machineStatus()); }
+async function _sleepI(ms) { const step = 1500; let w = 0; while (w < ms && machine.running) { await sleep(Math.min(step, ms - w)); w += step; } }
+
+async function machineLoop() {
+  emitLog('▶ 机器已启动' + (db.getConfig().live_send === true ? '(🔴 真发)' : '(🟡 演练)'));
+  while (machine.running) {
+    try { await machineCycle(); } catch (e) { emitLog('⚠ 循环出错(自动继续):' + e.message); await sleep(8000); }
+  }
+  emitLog('■ 机器已停止'); machine.phase = 'idle'; emitEvent('status', machineStatus());
+}
+async function _ensureConn() {
+  if (machine.client && machine.target) return;
+  emitLog('连接浏览器…');
+  const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+  machine.client = client; machine.target = target;
+  try { await client.installCursor({ target }); } catch (e) {}
+}
+async function machineCycle() {
+  const cfg = db.getConfig();
+  const dry = cfg.live_send !== true;
+  await _ensureConn();
+  const client = machine.client, target = machine.target;
+  // ① 承接(承接排班 + 红点)——全程优先
+  if (cfg.reply_enabled !== false && throttle.inReplyWindow(cfg)) {
+    let due = false; try { due = await engine.hasUnread({ client, target }); } catch (e) {}
+    if (!due && machine.lastInboxCheck && (Date.now() - machine.lastInboxCheck) > (Number(cfg.reply_check_minutes) || 5) * 60000) due = true;
+    if (due) {
+      machine.phase = 'reply'; emitEvent('status', machineStatus());
+      try { machine.replied += (await drainInbox({ client, target, cfg, dry, send: busSend })) || 0; } catch (e) { emitLog('承接出错:' + e.message); }
+      machine.lastInboxCheck = Date.now(); emitEvent('status', machineStatus());
+    }
+  }
+  if (!machine.running) return;
+  // ② 外呼(主排班 + 配额)
+  if (!throttle.inWorkWindow(cfg)) { emitLog('外呼:不在排班时段,待命中(承接仍在线)…'); machine.phase = 'idle'; emitEvent('status', machineStatus()); await _sleepI(rand(45000, 90000)); return; }
+  const gate = throttle.canComment({ ignoreGap: true });
+  if (!gate.ok) {
+    emitLog('外呼:' + gate.reason + (/上限|配额/.test(gate.reason) ? ',本时段歇,等下一节奏' : ''));
+    machine.phase = 'idle'; emitEvent('status', machineStatus());
+    await _sleepI(/上限|配额|休息日|时段/.test(gate.reason) ? rand(60000, 120000) : rand(20000, 40000)); return;
+  }
+  if (!machine.targets.length || (Date.now() - machine.lastScan) > (Number(cfg.rescan_minutes) || 15) * 60000) {
+    machine.phase = 'search'; emitEvent('status', machineStatus());
+    try { await _rescanTargets(cfg); } catch (e) { emitLog('检索出错:' + e.message); await _sleepI(rand(20000, 40000)); return; }
+  }
+  const t = machine.targets.shift();
+  if (!t) { emitLog('外呼:暂无新目标,等下一轮检索'); machine.phase = 'idle'; emitEvent('status', machineStatus()); await _sleepI(rand(30000, 60000)); return; }
+  machine.phase = 'comment'; emitEvent('status', machineStatus());
+  await _processOutbound(cfg, t, dry);
+  await _sleepI(rand(1500, 4000));
+}
+async function _rescanTargets(cfg) {
+  const client = machine.client, target = machine.target;
+  const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
+  const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => emitLog(m), shouldStop: () => !machine.running, filters });
+  const { tagged, targets, byIntent } = engine.matchNotes(notes);
+  tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
+  machine.targets = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } });
+  machine.lastScan = Date.now();
+  emitEvent('stats', { total: notes.length, byIntent, targetCount: machine.targets.length });
+  emitLog('检索 ' + notes.length + ' 篇,求租 ' + targets.length + ',去重后待评 ' + machine.targets.length + ' 条');
+}
+async function _processOutbound(cfg, t, dry) {
+  const client = machine.client, target = machine.target;
+  const browse = { imagesMin: cfg.browse_images_min, imagesMax: cfg.browse_images_max, bodyMin: cfg.browse_body_dwell_min, bodyMax: cfg.browse_body_dwell_max, cScrollMin: cfg.browse_comment_scrolls_min, cScrollMax: cfg.browse_comment_scrolls_max, cDwellMin: cfg.browse_comment_dwell_min, cDwellMax: cfg.browse_comment_dwell_max };
+  try {
+    await engine.readDetail({ client, target, note: t, browse, onLog: (m) => emitLog('  ' + m), onBeforeClose: async ({ detail }) => {
+      const merged = Object.assign({}, t, { tags: (detail && detail.tags) || [], desc: (detail && detail.desc) || '' });
+      const comment = await engine.makeComment(merged, cfg.task_direction || '', cfg);
+      if (!engine.check(comment).ok) { emitLog('  跳过(合规不过)'); return; }
+      emitLog((dry ? '  [演练] ' : '  ') + '评论 → 《' + (t.title || '无标题') + '》:' + comment);
+      const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => emitLog('    ' + m) });
+      emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, region: t.region, ok: r.ok, dry: dry });
+      emitLog('  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
+      machine.done++;
+      if (r.ok && !dry) { machine.sent++; emitEvent('status', machineStatus()); }
+    } });
+  } catch (e) { emitLog('  跳过:' + e.message); }
+}
+
 async function handleAutoRun(req, res, q) {
   const send = sse(res);
   runState = { running: true, cancelled: false };
@@ -491,6 +585,17 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/inbox-scan') { await handleInboxScan(req, res); return; }
   if (u.pathname === '/api/inbox-list') { await handleInboxList(req, res); return; }
   if (u.pathname === '/api/inbox-run') { await handleInboxRun(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/engine/start') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine(), status: machineStatus() })); return; }
+  if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
+  if (u.pathname === '/api/engine/status') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
+  if (u.pathname === '/api/engine/stream') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    logBus.clients.add(res);
+    for (const line of logBus.buffer) { res.write('event: log\ndata: ' + JSON.stringify(line) + '\n\n'); }
+    res.write('event: status\ndata: ' + JSON.stringify(machineStatus()) + '\n\n');
+    req.on('close', () => { logBus.clients.delete(res); });
+    return;
+  }
   if (u.pathname === '/api/login-status') { await handleLoginStatus(req, res); return; }
   if (u.pathname === '/api/trigger-login') { await handleTriggerLogin(req, res); return; }
   if (u.pathname === '/api/stop') { await handleStop(req, res); return; }

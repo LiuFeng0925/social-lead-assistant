@@ -29,6 +29,17 @@ function inWorkWindow(cfg, d) {
   return winHit([{ start: cfg.work_start || '09:30', end: cfg.work_end || '23:00' }], cur);
 }
 
+// 承接是否在它的单独排班时段内
+function inReplyWindow(cfg, d) {
+  d = d || new Date();
+  if (cfg.reply_schedule_enabled === false) return true; // 关掉承接排班=全程在线
+  if (!Array.isArray(cfg.reply_schedule) || cfg.reply_schedule.length !== 7) return true;
+  var day = cfg.reply_schedule[dowIndex(d)];
+  if (!day || day.on === false) return false;
+  var wins = (day.windows && day.windows.length) ? day.windows : [{ start: '09:00', end: '23:30' }];
+  return winHit(wins, d.getHours() * 60 + d.getMinutes());
+}
+
 // 不在工作时段时,给一句人话原因
 function workReason(cfg, d) {
   d = d || new Date();
@@ -123,4 +134,4 @@ function currentScanLimit(cfg) {
   if (w && w.notes != null && Number(w.notes) > 0) return Number(w.notes);
   return Number(cfg.task_max) || 40;
 }
-module.exports = { canComment, status, inWorkWindow, currentWindow, currentScanLimit, commentDailyLimit, accountDays };
+module.exports = { canComment, status, inWorkWindow, inReplyWindow, currentWindow, currentScanLimit, commentDailyLimit, accountDays };

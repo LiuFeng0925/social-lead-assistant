@@ -154,6 +154,17 @@ const DEFAULT_CONFIG = {
   reply_black_words: ['中介勿扰', '广告', '刷单', '代理', '加盟', '同行'],
   reply_only_intent: false,            // true=只回命中意向词的；false=都回
   reply_recent_days: 7,                // 只回近 N 天的评论(抓取时滚到更老就停，不用全读)
+  // 承接单独排班(7天，index 0=周一..6=周日；每天 {on, windows:[{start,end}]}）
+  reply_schedule_enabled: true,
+  reply_schedule: [
+    { on: true, windows: [{ start: '09:00', end: '23:30' }] }, { on: true, windows: [{ start: '09:00', end: '23:30' }] },
+    { on: true, windows: [{ start: '09:00', end: '23:30' }] }, { on: true, windows: [{ start: '09:00', end: '23:30' }] },
+    { on: true, windows: [{ start: '09:00', end: '23:30' }] }, { on: true, windows: [{ start: '09:00', end: '23:30' }] },
+    { on: true, windows: [{ start: '09:00', end: '23:30' }] }
+  ],
+  // 常驻机器
+  live_send: false,                    // 总真发开关：false=全演练；true=主任务+承接都真发(开启时二次确认)
+  rescan_minutes: 15,                  // 外呼把当前一批逛完后，隔多久重新检索一批新笔记
   reply_direction: '友好回应对方诉求，引导看主页/私聊详聊，绝不留联系方式',
   reply_daily: 30, reply_hourly: 10, reply_gap_min: 1, reply_gap_max: 4, // 回复限频(分钟)
   reply_batch_max: 5,                  // 一轮最多回几条(防外呼饿死)
