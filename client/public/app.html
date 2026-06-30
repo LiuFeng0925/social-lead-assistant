@@ -75,6 +75,7 @@
     <div class="nav on" data-p="console" onclick="showPage('console')">🏠 控制台</div>
     <div class="nav" data-p="comments" onclick="showPage('comments')">📋 评论记录</div>
     <div class="nav" data-p="notes" onclick="showPage('notes')">🔍 采集记录</div>
+    <div class="nav" data-p="inbox" onclick="showPage('inbox')">📥 线索·承接</div>
     <div class="grp">配置(待做)</div>
     
     <div class="nav dim">💬 话术库</div>
@@ -82,6 +83,7 @@
     <div style="font-size:11px;color:#9a9aa0;padding:12px 12px 4px;font-weight:700;letter-spacing:.04em">设置</div>
         <div class="nav" data-p="tasksettings" onclick="showPage('tasksettings')">🎯 任务设置</div>
         <div class="nav" data-p="throttle" onclick="showPage('throttle')">🛡️ 防封控制</div>
+        <div class="nav" data-p="replyrules" onclick="showPage('replyrules')">💬 评论承接</div>
     
   </div>
 
@@ -169,6 +171,23 @@
       </div>
     </div>
 
+    <!-- ===== 线索·承接(收件箱)===== -->
+    <div class="page" id="page-inbox">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <div style="font-size:14px;font-weight:600">📥 线索·承接 · 谁评论/回复了我</div>
+          <button class="btn ghost" style="margin-left:auto" id="inboxbtn" onclick="refreshInbox()">🔄 刷新收件</button>
+          <button class="btn" id="inboxrunbtn" onclick="runInbox()">💬 开始承接(逐条回复)</button>
+          <label style="font-size:13px;color:var(--sub);cursor:pointer" title="勾=真回评论(务必小号);不勾=演练,只定位+生成草稿不发"><input type="checkbox" id="inboxreal"> 真发</label>
+          <a href="#" onclick="showPage('replyrules');return false" style="font-size:12px;color:var(--brand);text-decoration:none">⚙ 承接规则</a>
+        </div>
+        <div class="hint" style="margin-bottom:10px">「刷新收件」只抓取展示;「开始承接」会逐条按规则判意向、生成回复(演练只定位+草稿,不真发)。承接也已接进控制台「开始」——任务运行中发现通知会自动插队回复。</div>
+        <div id="inbox-stats" class="hint" style="margin-bottom:8px;font-size:13px"></div>
+        <div id="inbox-log" class="hint" style="margin-bottom:10px;font-size:12px;max-height:120px;overflow:auto;white-space:pre-wrap;display:none;background:#f6f8fa;padding:8px;border-radius:6px"></div>
+        <div id="inbox-list"><div class="hint">(还没有收件,点上面「刷新收件」抓一次)</div></div>
+      </div>
+    </div>
+
     <!-- ===== 防封控制(全部可配置) ===== -->
     <div class="page" id="page-tasksettings">
         <div class="card">
@@ -215,6 +234,36 @@
         <button class="btn" onclick="saveConfig()" style="margin-top:10px">保存配置</button>
         <span class="hint" id="savehint" style="margin-left:10px"></span>
         <div class="hint" style="margin-top:12px">⚠ 养号阶梯开启时,"评论每日上限"由账号天数自动决定(1-3天3条 / 4-7天8条 / 8-14天15条 / 15天后30条)。</div>
+      </div>
+    </div>
+
+    <!-- ===== 评论承接 规则 ===== -->
+    <div class="page" id="page-replyrules">
+      <div class="card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">💬 评论承接 · 规则</div>
+        <div class="hint" style="margin-bottom:14px">别人评论/回复我 → 自动接住回复。任务运行中发现通知会插队优先回复。下面规则全部可配,改完点保存。</div>
+        <label style="cursor:pointer;display:inline-block;margin-bottom:10px"><input type="checkbox" id="r_enabled"> 任务运行时承接评论(关掉=只外呼不承接)</label>
+        <div style="font-size:13px;font-weight:700;margin:8px 0 4px">承接范围</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+          <label style="cursor:pointer"><input type="checkbox" id="r_sc_comment"> 评论我笔记</label>
+          <label style="cursor:pointer"><input type="checkbox" id="r_sc_reply"> 回复我评论</label>
+          <label style="cursor:pointer"><input type="checkbox" id="r_sc_mention"> @我</label>
+          <label style="cursor:pointer"><input type="checkbox" id="r_only_intent"> 只回命中意向词的</label>
+        </div>
+        <div class="row"><div class="fld" style="flex:1"><label>意向关键词(逗号分隔,命中=有意向)</label><input id="r_intent" style="width:100%"></div></div>
+        <div class="row"><div class="fld" style="flex:1"><label>高意向词(想加微/要联系方式)</label><input id="r_hot" style="width:100%"></div></div>
+        <div class="row"><div class="fld" style="flex:1"><label>黑名单/黑词(命中跳过)</label><input id="r_black" style="width:100%"></div></div>
+        <div class="row"><div class="fld" style="flex:1"><label>回复方向(喂给生成;红线:不留明文联系方式)</label><input id="r_dir" style="width:100%"></div></div>
+        <div style="font-size:13px;font-weight:700;margin:8px 0 4px">回复限频</div>
+        <div class="row">
+          <div class="fld"><label>每日上限</label><input id="r_daily" type="number" style="width:80px"></div>
+          <div class="fld"><label>每小时</label><input id="r_hourly" type="number" style="width:80px"></div>
+          <div class="fld"><label>间隔分钟(最小~最大)</label><span style="display:inline-flex;gap:4px;align-items:center"><input id="r_gapmin" type="number" style="width:60px"><span>~</span><input id="r_gapmax" type="number" style="width:60px"></span></div>
+          <div class="fld"><label>一轮最多回</label><input id="r_batch" type="number" style="width:70px" title="一次承接最多回几条,防外呼饿死"></div>
+          <div class="fld"><label>兜底每N分钟看通知</label><input id="r_check" type="number" style="width:70px"></div>
+        </div>
+        <label style="cursor:pointer;display:inline-block;margin:8px 0"><input type="checkbox" id="r_dry"> 默认演练(任务承接时只定位+生成草稿,不真发;收件箱页可单独勾真发测)</label>
+        <div style="margin-top:10px"><button class="btn" onclick="saveReplyRules()">保存承接规则</button><span class="hint" id="r_hint" style="margin-left:10px"></span></div>
       </div>
     </div>
   </div>
@@ -369,10 +418,79 @@ function showPage(p) {
   document.querySelectorAll('.page').forEach(e => e.classList.remove('on'));
   $('page-' + p).classList.add('on');
   document.querySelectorAll('.side .nav').forEach(e => e.classList.toggle('on', e.dataset.p === p));
-  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', throttle: '防封控制', tasksettings: '任务设置' }[p] || '';
+  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', inbox: '线索·承接', throttle: '防封控制', tasksettings: '任务设置', replyrules: '评论承接' }[p] || '';
   if (p === 'comments' || p === 'notes') loadRecords();
   if (p === 'throttle') loadThrottle();
   if (p === 'tasksettings') loadTaskSettings();
+  if (p === 'inbox') loadInbox();
+  if (p === 'replyrules') loadReplyRules();
+}
+async function loadReplyRules() {
+  const c = await getCfg();
+  const ck = (id, v) => { if ($(id)) $(id).checked = !!v; };
+  const sv = (id, v) => { if ($(id) && v != null) $(id).value = v; };
+  ck('r_enabled', c.reply_enabled !== false); ck('r_sc_comment', c.reply_scope_comment !== false);
+  ck('r_sc_reply', c.reply_scope_reply !== false); ck('r_sc_mention', c.reply_scope_mention !== false);
+  ck('r_only_intent', !!c.reply_only_intent); ck('r_dry', c.reply_dry_run !== false);
+  sv('r_intent', (c.reply_intent_words || []).join('，')); sv('r_hot', (c.reply_hot_words || []).join('，'));
+  sv('r_black', (c.reply_black_words || []).join('，')); sv('r_dir', c.reply_direction);
+  sv('r_daily', c.reply_daily); sv('r_hourly', c.reply_hourly); sv('r_gapmin', c.reply_gap_min);
+  sv('r_gapmax', c.reply_gap_max); sv('r_batch', c.reply_batch_max); sv('r_check', c.reply_check_minutes);
+}
+function saveReplyRules() {
+  const words = (id) => ($(id) && $(id).value ? $(id).value.split(/[，,、\s]+/).map(s => s.trim()).filter(Boolean) : []);
+  const data = {
+    reply_enabled: $('r_enabled').checked, reply_scope_comment: $('r_sc_comment').checked,
+    reply_scope_reply: $('r_sc_reply').checked, reply_scope_mention: $('r_sc_mention').checked,
+    reply_only_intent: $('r_only_intent').checked, reply_dry_run: $('r_dry').checked,
+    reply_intent_words: words('r_intent'), reply_hot_words: words('r_hot'), reply_black_words: words('r_black'),
+    reply_direction: $('r_dir').value,
+    reply_daily: Number($('r_daily').value) || 30, reply_hourly: Number($('r_hourly').value) || 10,
+    reply_gap_min: Number($('r_gapmin').value) || 1, reply_gap_max: Number($('r_gapmax').value) || 4,
+    reply_batch_max: Number($('r_batch').value) || 5, reply_check_minutes: Number($('r_check').value) || 5
+  };
+  $('r_hint').textContent = '保存中…';
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('r_hint').textContent = d.ok ? '✓ 已保存' : ('✗ ' + d.msg); });
+}
+const INTENT_LABEL = { reply: '回复我评论', comment: '评论我笔记', mention: '@我' };
+const INTENT_TAG = { hot: '<span class="badge b-bad">高意向</span>', seek: '<span class="badge b-ok">有意向</span>', other: '' };
+function renderInbox(d) {
+  const s = d.stats || {};
+  $('inbox-stats').innerHTML = '收件 <b>' + (s.total||0) + '</b> · 待处理 <b>' + (s.pending||0) + '</b> · 已回复 ' + (s.replied||0) + ' · 跳过 ' + (s.skipped||0) + ' · 失败 ' + (s.failed||0);
+  const list = d.items || [];
+  if (!list.length) { $('inbox-list').innerHTML = '<div class="hint">(还没有收件,点上面「刷新收件」抓一次)</div>'; return; }
+  $('inbox-list').innerHTML = list.map(function(it){
+    const badge = '<span class="badge b-seek">' + (INTENT_LABEL[it.type] || it.type || '') + '</span>';
+    const itag = INTENT_TAG[it.intent] || '';
+    const st = it.status === 'replied' ? '<span class="badge b-ok">已回复</span>' : it.status === 'failed' ? '<span class="badge b-bad">失败</span>' : it.status === 'skipped' ? '<span class="badge">跳过</span>' : '<span class="badge b-warn">待处理</span>';
+    const link = it.user_link ? ('https://www.xiaohongshu.com' + it.user_link) : '';
+    const reply = it.reply_text ? ('<div class="hint" style="margin-top:4px;color:var(--brand)">' + (it.status==='replied'?'已回:':'拟回(草稿):') + esc(it.reply_text) + '</div>') : '';
+    return '<div class="note"><h4>' + esc(it.nick||'(匿名)') + ' ' + badge + ' ' + itag + ' ' + st + '</h4>'
+      + '<div class="hint" style="white-space:pre-wrap;margin:4px 0">' + esc(it.content||'') + '</div>'
+      + reply
+      + '<div class="meta">' + esc(it.action_date||'') + (link ? ' · <a href="' + esc(link) + '" target="_blank">主页</a>' : '') + '</div></div>';
+  }).join('');
+}
+function runInbox() {
+  const real = $('inboxreal') && $('inboxreal').checked;
+  if (real && !confirm('⚠ 真发会真的回复对方评论!确认现在登录的是全新小号吗?')) return;
+  const b = $('inboxrunbtn'); b.disabled = true; const old = b.textContent; b.textContent = '承接中…';
+  const lg = $('inbox-log'); lg.style.display = 'block'; lg.textContent = '';
+  const es2 = new EventSource('/api/inbox-run?dry=' + (real ? '0' : '1'));
+  es2.addEventListener('log', e => { lg.textContent += JSON.parse(e.data) + '\n'; lg.scrollTop = lg.scrollHeight; });
+  es2.addEventListener('done', e => { const d = JSON.parse(e.data); lg.textContent += (d.error ? ('出错:'+d.error) : ('承接结束:本轮回复 '+(d.replied||0)+' 条'+(d.dry?'(演练)':''))) + '\n'; b.disabled = false; b.textContent = old; loadInbox(); es2.close(); });
+  es2.onerror = () => { b.disabled = false; b.textContent = old; es2 && es2.close(); loadInbox(); };
+}
+function loadInbox() {
+  fetch('/api/inbox-list').then(r => r.json()).then(d => { if (d.ok) renderInbox(d); }).catch(()=>{});
+}
+function refreshInbox() {
+  const b = $('inboxbtn'); b.disabled = true; const old = b.textContent; b.textContent = '抓取中…(进通知页,约 15 秒)';
+  fetch('/api/inbox-scan').then(r => r.json()).then(d => {
+    b.disabled = false; b.textContent = old;
+    if (d.ok) { renderInbox(d); addLog && addLog('收件:本次抓 ' + d.scanned + ' 条,新增 ' + d.added + ' 条'); }
+    else { $('inbox-stats').textContent = '✗ ' + (d.msg || '抓取失败'); }
+  }).catch(e => { b.disabled = false; b.textContent = old; $('inbox-stats').textContent = '✗ ' + e.message; });
 }
 function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function setPhase(p) {

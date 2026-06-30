@@ -231,6 +231,44 @@ async function handleStop(req, res) {
   res.end(JSON.stringify({ ok: true }));
 }
 
+// 承接 step1:刷新收件 = 进通知页抓「评论和@」→ 去重入库 → 返回列表+统计
+async function handleInboxScan(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try {
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    try { await client.installCursor({ target }); } catch (e) {}
+    const items = await engine.scanInbox({ client, target, max: 40 });
+    let added = 0;
+    for (const it of items) {
+      try { if (db.insertInbox({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, action_date: it.date, status: 'new' })) added++; } catch (e) {}
+    }
+    res.end(JSON.stringify({ ok: true, scanned: items.length, added, items: db.listInbox(100), stats: db.inboxStats() }));
+  } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+async function handleInboxList(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try { res.end(JSON.stringify({ ok: true, items: db.listInbox(100), stats: db.inboxStats() })); }
+  catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+// 独立跑一轮承接(测试 / 手动「开始承接」);dry 默认看 reply_dry_run
+async function handleInboxRun(req, res, q) {
+  const send = sse(res);
+  runState = { running: true, cancelled: false };
+  const cfg = db.getConfig();
+  const dryParam = q.get('dry');
+  const dry = dryParam != null ? (dryParam !== '0') : (cfg.reply_dry_run !== false);
+  try {
+    send('log', dry ? '🟡 承接 · 演练(只定位+生成草稿,不真发)' : '🔴 承接 · 真发(会真回评论!)');
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    try { await client.installCursor({ target }); } catch (e) {}
+    if (!dry) { let li = true; try { li = (await readLoginStatus(client, target)).loggedIn; } catch (e) {} if (!li) { send('log', '⚠ 未登录,真发停止'); send('done', { error: 'not_logged_in' }); res.end(); runState.running = false; return; } }
+    const replied = await drainInbox({ client, target, cfg, dry, send });
+    send('done', { replied: replied, dry: dry });
+  } catch (e) { send('log', '✗ 出错:' + e.message); send('done', { error: e.message }); }
+  runState.running = false;
+  res.end();
+}
+
 async function handleThrottle(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try { res.end(JSON.stringify({ ok: true, ...throttle.status() })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
@@ -323,6 +361,46 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
 }
 
 // 自动评论循环:采集→匹配→去重→逐条(限频闸门→生成→合规→打开评论关闭→拟人间隔)。默认演练。
+// 承接一轮:进通知页抓「评论和@」→ 逐条判意向+回复(限频/批量上限)→ 回搜索页。dry=演练只定位+草稿。
+async function drainInbox({ client, target, cfg, dry, send }) {
+  send('log', '📥 发现通知,暂停外呼,先去回复…');
+  const items = await engine.scanInbox({ client, target, max: 40, onLog: (m) => send('log', '  ' + m) });
+  let replied = 0;
+  const batchMax = Number(cfg.reply_batch_max) || 5;
+  const dailyCap = Number(cfg.reply_daily) || 30;
+  for (const it of items) {
+    if (runState.cancelled) break;
+    const intent = engine.inboxIntent(it.content, cfg);
+    const key = (it.nick || '') + '|' + (it.content || '') + '|' + (it.date || '');
+    try { db.insertInbox({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, action_date: it.date, intent, status: 'new', dedup_key: key }); } catch (e) {}
+    const row = db.listInbox(300).find((r) => r.dedup_key === key);
+    if (row && row.status !== 'new') continue; // 已处理(已回/跳过/失败)
+    if (!engine.shouldReply(it, cfg)) { db.updateInboxByKey(key, { status: 'skipped', intent }); continue; }
+    if (db.repliedToday() >= dailyCap) { send('log', '  今日回复达上限 ' + dailyCap + ',停止承接'); break; }
+    if (replied >= batchMax) { send('log', '  本轮已回 ' + batchMax + ' 条,先回外呼'); break; }
+    const text = await engine.makeReply(it, cfg);
+    send('log', (dry ? '  [演练] ' : '  ') + '回复 ' + (it.nick || '') + ':' + text);
+    if (!dry) { let li = true; try { li = (await readLoginStatus(client, target)).loggedIn; } catch (e) {} if (!li) { send('log', '  未登录,停止真发承接'); break; } }
+    const r = await engine.replyInboxItem({ client, target, item: it, text, dry });
+    send('log', '  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
+    if (r.ok && !dry) {
+      db.updateInboxByKey(key, { status: 'replied', reply_text: text, intent, replied_at: new Date().toISOString() });
+      replied++;
+      if (intent !== 'other') { try { db.insertLead({ note_id: '', nickname: it.nick, question: it.content, city: '' }); } catch (e) {} }
+    } else if (dry) {
+      db.updateInboxByKey(key, { reply_text: text, intent }); // 演练:存草稿,状态留 new
+    } else {
+      db.updateInboxByKey(key, { status: 'failed', fail_reason: r.msg, intent });
+    }
+    await sleep(dry ? rand(1500, 3000) : rand((cfg.reply_gap_min || 1) * 60000, (cfg.reply_gap_max || 4) * 60000));
+  }
+  send('log', '📥 承接完成(本轮回复 ' + replied + ' 条),回到外呼');
+  await client.navigate({ target, url: engine.buildSearchUrl(cfg.task_keyword || '朝阳 租房') });
+  for (let k = 0; k < 12; k++) { await sleep(1000); try { const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; } catch (e) {} }
+  await sleep(rand(2000, 3500));
+  return replied;
+}
+
 async function handleAutoRun(req, res, q) {
   const send = sse(res);
   runState = { running: true, cancelled: false };
@@ -347,8 +425,17 @@ async function handleAutoRun(req, res, q) {
     send('stats', { total: notes.length, byIntent, targetCount: fresh.length });
     send('log', '求租目标 ' + targets.length + ',去重后待评 ' + fresh.length + ' 条');
     send('phase', { phase: 'generate' });
-    let sent = 0, done = 0;
+    let sent = 0, done = 0, lastInboxCheck = 0;
     for (const t of fresh) {
+      if (runState.cancelled) { send('log', '⏹ 已停止'); break; }
+      // 承接第一优先级:每篇前先「看」通知红点(纯读 DOM,不动鼠标),有未读就插队回复再回外呼
+      if (cfg.reply_enabled !== false) {
+        let due = false;
+        try { due = await engine.hasUnread({ client, target }); } catch (e) {}
+        if (!due && lastInboxCheck && (Date.now() - lastInboxCheck) > (Number(cfg.reply_check_minutes) || 5) * 60000) due = true;
+        if (due) { try { await drainInbox({ client, target, cfg, dry, send }); } catch (e) { send('log', '承接出错(忽略):' + e.message); } }
+        lastInboxCheck = Date.now();
+      }
       if (runState.cancelled) { send('log', '⏹ 已停止'); break; }
       const gate = throttle.canComment({ ignoreGap: true }); // 不卡固定间隔,浏览本身就是自然间隔
       if (!gate.ok) {
@@ -400,6 +487,9 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/screencast') { await handleScreencast(req, res); return; }
   if (u.pathname === '/api/click') { await handleClick(req, res, u.searchParams); return; }
   if (u.pathname === '/api/records') { await handleRecords(req, res); return; }
+  if (u.pathname === '/api/inbox-scan') { await handleInboxScan(req, res); return; }
+  if (u.pathname === '/api/inbox-list') { await handleInboxList(req, res); return; }
+  if (u.pathname === '/api/inbox-run') { await handleInboxRun(req, res, u.searchParams); return; }
   if (u.pathname === '/api/login-status') { await handleLoginStatus(req, res); return; }
   if (u.pathname === '/api/trigger-login') { await handleTriggerLogin(req, res); return; }
   if (u.pathname === '/api/stop') { await handleStop(req, res); return; }

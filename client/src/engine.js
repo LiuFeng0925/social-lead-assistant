@@ -348,4 +348,143 @@ async function applyFilters({ client, target, filters = {}, onLog = () => {} }) 
   await client.humanMove({ target, toX: rand(320, 700), toY: rand(420, 640) }).catch(() => {});
   await sleep(rand(1500, 2400));
 }
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, makeComment, classify, check, rejectsAgent, applyFilters };
+
+// ── 承接:抓「评论和@」通知 ── 在浏览器里跑(用 .toString 嵌入,免转义),解析每条:昵称/类型/内容/日期/主页/可回复
+function _inboxScanFn() {
+  var ACT = [['回复了你的评论', 'reply'], ['评论了你的笔记', 'comment'], ['评论了你的评论', 'reply'], ['提到了你', 'mention']];
+  var links = document.querySelectorAll('a[href*="/user/profile"]');
+  var out = [], seen = {};
+  for (var i = 0; i < links.length; i++) {
+    var L = links[i]; var nick = (L.textContent || '').trim();
+    if (!nick || nick === '我') continue;
+    var box = L; for (var k = 0; k < 7 && box; k++) { box = box.parentElement; if (box && /回复了你|评论了你|提到了你/.test(box.innerText || '')) break; }
+    if (!box) continue;
+    var txt = (box.innerText || '').replace(/ /g, ' ');
+    var type = '', actStr = ''; for (var a = 0; a < ACT.length; a++) { if (txt.indexOf(ACT[a][0]) >= 0) { type = ACT[a][1]; actStr = ACT[a][0]; break; } }
+    if (!type) continue;
+    var href = L.getAttribute('href') || '';
+    var dm = txt.match(/(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|今天|昨天|\d+\s*(分钟|小时|天)前)/); var date = dm ? dm[0] : '';
+    var lines = txt.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+    var content = ''; for (var j = 0; j < lines.length; j++) { var ln = lines[j]; if (ln === nick || ln.indexOf(actStr) >= 0 || ln === '回复' || ln === '作者' || /^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2})$/.test(ln)) continue; content = ln; break; }
+    var key = nick + '|' + content + '|' + date; if (seen[key]) continue; seen[key] = 1;
+    out.push({ nick: nick, type: type, content: content, date: date, link: href.split('?')[0], canReply: /\n回复$/.test(txt) });
+  }
+  return JSON.stringify(out);
+}
+const SCAN_INBOX = '(' + _inboxScanFn.toString() + ')()';
+
+async function scanInbox({ client, target, onLog = () => {}, max = 40 }) {
+  let cur = ''; try { cur = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
+  if (cur.indexOf('notification') < 0) {
+    onLog('进通知页,看「评论和@」…');
+    await client.navigate({ target, url: 'https://www.xiaohongshu.com/notification' });
+  }
+  for (let k = 0; k < 14; k++) { await sleep(1000); try { const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; } catch (e) {} }
+  await sleep(rand(2500, 3800));
+  try { await client.installCursor({ target }); } catch (e) {}
+  let items = [];
+  for (let round = 0; round < 4 && items.length < max; round++) {
+    try { const r = await client.evaluate({ target, expression: SCAN_INBOX }); items = JSON.parse(r.value || '[]'); } catch (e) {}
+    if (items.length >= max) break;
+    await client.wheelScroll({ target, x: rand(400, 700), y: rand(360, 600), totalDeltaY: rand(500, 900) }).catch(() => {});
+    await sleep(rand(900, 1500));
+  }
+  onLog('收件:解析到 ' + items.length + ' 条');
+  return items.slice(0, max);
+}
+// ── 承接:意向判定（关键词可配）──
+function inboxIntent(content, cfg) {
+  content = content || ''; cfg = cfg || {};
+  if ((cfg.reply_hot_words || []).some(function (w) { return content.indexOf(w) >= 0; })) return 'hot';   // 高意向：想加微/要联系方式
+  if ((cfg.reply_intent_words || []).some(function (w) { return content.indexOf(w) >= 0; })) return 'seek'; // 有意向：求租相关
+  return 'other';
+}
+function inboxBlocked(content, cfg) { content = content || ''; return ((cfg && cfg.reply_black_words) || []).some(function (w) { return content.indexOf(w) >= 0; }); }
+// 这条该不该回（范围 + 黑词 + 意向过滤 + 内容有效）
+function shouldReply(item, cfg) {
+  cfg = cfg || {};
+  if (item.type === 'comment' && cfg.reply_scope_comment === false) return false;
+  if (item.type === 'reply' && cfg.reply_scope_reply === false) return false;
+  if (item.type === 'mention' && cfg.reply_scope_mention === false) return false;
+  if (!item.content || item.content === '原评论已删除') return false;
+  if (inboxBlocked(item.content, cfg)) return false;
+  if (cfg.reply_only_intent && inboxIntent(item.content, cfg) === 'other') return false;
+  return true;
+}
+// 回复话术（按意向多套轮换；红线：绝不留明文联系方式）
+function replyTemplate(item, intent) {
+  const seed = _hash((item.nick || '') + (item.content || ''));
+  const hot = ['可以呀~我主页有实拍房源和详情，点我头像进主页看看，合适直接私聊我细聊哈~', '没问题~主页有图有细节，先看看合不合适，私聊我帮你安排~', '方便的~你点我主页能看到房源实拍，合适咱私聊聊细节~'];
+  const seek = ['在的~你大概什么预算、想租哪一片？主页有几套实拍，先看看合不合适，私聊我帮你挑~', '看到啦~说下你的预算和区域，主页有实拍房源，对得上咱私聊细聊~', '有的~你是要整租还是合租呀？主页有图，合适私聊我给你推~'];
+  const other = ['看到你的留言啦~有租房需要可以看我主页或私聊我哈~', '收到~需要找房的话我主页有实拍，私聊我也行~', '嗯嗯~有需要随时看我主页或私聊我~'];
+  const arr = intent === 'hot' ? hot : intent === 'seek' ? seek : other;
+  return _pick(arr, seed);
+}
+async function makeReply(item, cfg) {
+  cfg = cfg || {};
+  const intent = inboxIntent(item.content, cfg);
+  if (cfg.llm_enabled && cfg.llm_api_key) {
+    try {
+      const dir = (cfg.reply_direction || '友好回应对方诉求，引导看主页/私聊详聊，绝不留联系方式') + (intent === 'hot' ? '；对方想要联系方式，礼貌引导去主页/私聊，不要直接给微信电话' : '');
+      const c = await llm.genComment({ note: { title: '(对方对我的评论)', desc: item.content, tags: [] }, direction: dir, provider: cfg.llm_provider, model: cfg.llm_model, apiKey: cfg.llm_api_key });
+      if (c && c.length >= 3 && check(c).ok) return c;
+    } catch (e) {}
+  }
+  return replyTemplate(item, intent);
+}
+
+// ── 承接：通知红点检测（纯读 DOM，不动鼠标）──
+async function hasUnread({ client, target }) {
+  const EXPR = '(function(){var a=document.querySelector(\'a[href="/notification"]\');if(!a)return "noicon";var bc=a.querySelector(\'[class*=badge]\');if(!bc)return "nobadge";var txt=(bc.textContent||"").trim();var extra=bc.children.length>1;return (extra||/[0-9]/.test(txt))?"unread":"read";})()';
+  try { const r = await client.evaluate({ target, expression: EXPR }); return r && r.value === 'unread'; } catch (e) { return false; }
+}
+
+// ── 承接：在通知页定位某条 →（doClick 时）合成点「回复」打开内联输入框；否则只定位 ──
+function _replyOpenFn(nick, head, doClick) {
+  var links = document.querySelectorAll('a[href*="/user/profile"]');
+  for (var i = 0; i < links.length; i++) {
+    var L = links[i]; if ((L.textContent || '').trim() !== nick) continue;
+    var box = L; for (var k = 0; k < 7 && box; k++) { box = box.parentElement; if (box && /回复了你|评论了你|提到了你/.test(box.innerText || '')) break; }
+    if (!box) continue;
+    if (head && (box.innerText || '').indexOf(head) < 0) continue;
+    var rep = null, sp = box.querySelectorAll('span,div,button');
+    for (var j = 0; j < sp.length; j++) { var e = sp[j]; if (e.childElementCount === 0 && (e.textContent || '').trim() === '回复') { rep = e; break; } }
+    if (!rep) return 'norep';
+    if (!doClick) return 'found';
+    var r = rep.getBoundingClientRect(); var cx = r.left + r.width / 2, cy = r.top + r.height / 2; var tg = document.elementFromPoint(cx, cy) || rep;
+    var P = window.PointerEvent || MouseEvent; var o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: cx, clientY: cy, button: 0 };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (ty) { try { tg.dispatchEvent(new (ty.indexOf('pointer') === 0 ? P : MouseEvent)(ty, o)); } catch (_) {} });
+    return 'clicked';
+  }
+  return 'notfound';
+}
+// 回复一条：定位→(演练: 只定位「回复」按钮就算可回复)/(真发: 点回复+输入+发送+验证)。登录检测由调用方做。
+async function replyInboxItem({ client, target, item, text, dry = true, onLog = () => {} }) {
+  let cur = ''; try { cur = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
+  if (cur.indexOf('notification') < 0) return { ok: false, msg: '不在通知页' };
+  const head = (item.content || '').slice(0, 8);
+  const expr = '(' + _replyOpenFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(head) + ',' + (dry ? 'false' : 'true') + ')';
+  let openRes = ''; try { openRes = String((await client.evaluate({ target, expression: expr })).value || ''); } catch (e) {}
+  if (openRes === 'notfound') return { ok: false, msg: '没找到这条(可能已滚走)' };
+  if (openRes === 'norep') return { ok: false, msg: '这条不能回复(可能原评论已删)' };
+  if (dry) return { ok: true, msg: '演练:可回复(已定位「回复」按钮)' };
+  await sleep(rand(900, 1500));
+  let inp = null;
+  try { inp = JSON.parse((await client.evaluate({ target, expression: '(function(){var t=document.querySelector("textarea[class*=comment-input],textarea[class*=input]");if(!t||t.offsetParent===null)return "";var r=t.getBoundingClientRect();return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),ph:t.getAttribute("placeholder")||""});})()' })).value || ''); } catch (e) {}
+  if (!inp) return { ok: false, msg: '回复框没出现' };
+  if (dry) return { ok: true, msg: '演练:已打开回复框「' + (inp.ph || '') + '」(未输入未发送)' };
+  await client.click({ target, x: inp.x, y: inp.y });
+  await sleep(rand(500, 900));
+  await client.typeText({ target, text: text });
+  await sleep(rand(900, 1500));
+  let send = null;
+  try { send = JSON.parse((await client.evaluate({ target, expression: '(function(){var n=document.querySelectorAll("button,span,div");for(var i=0;i<n.length;i++){var e=n[i];if(e.childElementCount>0)continue;if((e.textContent||"").trim()!=="发送")continue;if(e.offsetParent===null)continue;var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});}return"";})()' })).value || ''); } catch (e) {}
+  if (!send) return { ok: false, msg: '没找到发送按钮' };
+  await client.click({ target, x: send.x, y: send.y });
+  await sleep(1800);
+  let okSent = false;
+  try { const v = await client.evaluate({ target, expression: '(function(){var t=document.querySelector("textarea[class*=comment-input]");var empty=t?((t.value||"").trim().length===0):true;return (empty||document.body.innerText.indexOf("回复成功")>=0)?"ok":"no";})()' }); okSent = v && v.value === 'ok'; } catch (e) {}
+  return okSent ? { ok: true, msg: '已回复✓' } : { ok: false, msg: '点了发送但没确认成功' };
+}
+
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, makeComment, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem };

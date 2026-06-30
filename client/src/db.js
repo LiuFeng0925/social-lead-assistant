@@ -33,6 +33,14 @@ function open() {
       status text default 'new', created_at text,
       unique(note_id, nickname)
     );
+    create table if not exists inbox (
+      id integer primary key autoincrement, tenant_id integer default 1,
+      type text, nick text, user_link text, content text,
+      note_title text, note_url text, action_date text, intent text,
+      status text default 'new', reply_text text, fail_reason text,
+      received_at text, replied_at text,
+      dedup_key text unique
+    );
     create table if not exists config (k text primary key, v text);
   `);
   return db;
@@ -79,6 +87,39 @@ function listComments(limit = 100) { return open().prepare(`select * from commen
 function listNotes(limit = 200) { return open().prepare(`select * from notes order by last_seen_at desc limit ?`).all(limit); }
 function listLeads(limit = 100) { return open().prepare(`select * from leads order by id desc limit ?`).all(limit); }
 
+// ── 承接收件箱 ──
+// 插入一条收到的评论;dedup_key 已存在则忽略(不重复入库)。返回 true=新增。
+function insertInbox(it) {
+  const r = open().prepare(`insert or ignore into inbox
+    (type, nick, user_link, content, note_title, note_url, action_date, intent, status, received_at, dedup_key)
+    values (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    it.type || '', it.nick || '', it.user_link || '', it.content || '',
+    it.note_title || '', it.note_url || '', it.action_date || '', it.intent || '',
+    it.status || 'new', now(), it.dedup_key || (String(it.nick) + '|' + String(it.content) + '|' + String(it.action_date)));
+  return r.changes > 0;
+}
+function listInbox(limit = 100) { return open().prepare(`select * from inbox order by id desc limit ?`).all(limit); }
+function updateInboxByKey(key, fields) {
+  const f = fields || {};
+  open().prepare(`update inbox set status=coalesce(?,status), reply_text=coalesce(?,reply_text), fail_reason=coalesce(?,fail_reason), intent=coalesce(?,intent), replied_at=coalesce(?,replied_at) where dedup_key=?`)
+    .run(f.status != null ? f.status : null, f.reply_text != null ? f.reply_text : null, f.fail_reason != null ? f.fail_reason : null, f.intent != null ? f.intent : null, f.replied_at != null ? f.replied_at : null, key);
+}
+function repliedToday() {
+  const day = now().slice(0, 10);
+  const r = open().prepare(`select count(*) c from inbox where status='replied' and substr(coalesce(replied_at,received_at),1,10)=?`).get(day);
+  return r.c || 0;
+}
+function inboxStats() {
+  const row = open().prepare(`select
+    count(*) total,
+    sum(case when status='new' then 1 else 0 end) pending,
+    sum(case when status='replied' then 1 else 0 end) replied,
+    sum(case when status='skipped' then 1 else 0 end) skipped,
+    sum(case when status='failed' then 1 else 0 end) failed
+    from inbox`).get();
+  return { total: row.total || 0, pending: row.pending || 0, replied: row.replied || 0, skipped: row.skipped || 0, failed: row.failed || 0 };
+}
+
 function stats() {
   const c = open().prepare(`select count(*) c from comments where status='sent'`).get();
   const n = open().prepare(`select count(*) c from notes`).get();
@@ -105,6 +146,18 @@ const DEFAULT_CONFIG = {
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
   // ── 评论生成 LLM(可切换 provider:ark 火山方舟 / dashscope 阿里百炼)。默认关=用内置话术模板;填 key 并启用后,评论改由大模型按对方正文+方向生成 ──
   llm_enabled: false, llm_provider: 'ark', llm_model: '', llm_api_key: '',
+  // ── 评论承接(在「评论承接」页改)── 别人评论/回复我 → 自动接住回复
+  reply_enabled: true,                 // 任务里是否承接(开始任务时一并跑)
+  reply_scope_comment: true, reply_scope_reply: true, reply_scope_mention: true, // 接哪些动作
+  reply_intent_words: ['求租', '租房', '多少钱', '价格', '有房', '还在', '怎么联系', '看看', '地址', '地铁', '合租', '整租', '押一', '预算', '想租'],
+  reply_hot_words: ['加微', '微信', '联系方式', '怎么加', 'vx', 'v信', '电话', '加你', '私聊'],
+  reply_black_words: ['中介勿扰', '广告', '刷单', '代理', '加盟', '同行'],
+  reply_only_intent: false,            // true=只回命中意向词的；false=都回
+  reply_direction: '友好回应对方诉求，引导看主页/私聊详聊，绝不留联系方式',
+  reply_daily: 30, reply_hourly: 10, reply_gap_min: 1, reply_gap_max: 4, // 回复限频(分钟)
+  reply_batch_max: 5,                  // 一轮最多回几条(防外呼饿死)
+  reply_check_minutes: 5,              // 兜底每 N 分钟看一次通知红点
+  reply_dry_run: true,                 // 默认演练(只定位+生成，不真发)
   // ── 打开笔记后的拟人浏览(在「任务设置」可配)──
   browse_images_min: 2, browse_images_max: 5,            // 图文看几张图
   browse_body_dwell_min: 1500, browse_body_dwell_max: 5000, // 正文停留(ms)
@@ -164,4 +217,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday };
