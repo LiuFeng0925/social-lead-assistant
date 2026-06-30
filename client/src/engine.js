@@ -387,11 +387,21 @@ function _daysAgo(dateStr) {
   return 99999; // 看不懂的日期当很旧
 }
 // recentDays>0：只要近 N 天的；通知是新→旧排列，滚到已经超出窗口就停，不用把老的全读一遍
+const FIND_NOTIF_ICON = '(function(){var as=document.querySelectorAll(\'a[href="/notification"]\');for(var i=0;i<as.length;i++){var a=as[i];if(a.offsetParent===null)continue;var r=a.getBoundingClientRect();if(r.width>0&&r.height>0)return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});}return "";})()';
 async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDays = 0 }) {
   let cur = ''; try { cur = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
   if (cur.indexOf('notification') < 0) {
-    onLog('进通知页,看「评论和@」…');
-    await client.navigate({ target, url: 'https://www.xiaohongshu.com/notification' });
+    // 拟人:鼠标滑到底部「通知」图标 → 点击进入(不直接跳 URL)
+    let nav = null; try { nav = JSON.parse((await client.evaluate({ target, expression: FIND_NOTIF_ICON })).value || ''); } catch (e) {}
+    if (nav && Number.isFinite(nav.x)) {
+      onLog('鼠标移到「通知」并点击…');
+      await client.humanMove({ target, toX: nav.x, toY: nav.y }).catch(() => {});
+      await sleep(rand(350, 800));
+      await client.click({ target, x: nav.x, y: nav.y }).catch(() => {});
+    } else {
+      onLog('进通知页,看「评论和@」…');
+      await client.navigate({ target, url: 'https://www.xiaohongshu.com/notification' });
+    }
   }
   for (let k = 0; k < 14; k++) { await sleep(1000); try { const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; } catch (e) {} }
   await sleep(rand(2500, 3800));
@@ -402,6 +412,9 @@ async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDay
     if (items.length >= max) break;
     // 已经滚到"超出近 N 天"的老评论了，停止往下翻
     if (recentDays > 0 && items.length && _daysAgo(items[items.length - 1].date) > recentDays) break;
+    // 拟人:滚动前鼠标先滑到内容区(和浏览页面同款)
+    await client.humanMove({ target, toX: rand(260, 680), toY: rand(340, 640) }).catch(() => {});
+    await sleep(rand(250, 600));
     await client.wheelScroll({ target, x: rand(400, 700), y: rand(360, 600), totalDeltaY: rand(500, 900) }).catch(() => {});
     await sleep(rand(900, 1500));
   }
@@ -456,8 +469,8 @@ async function hasUnread({ client, target }) {
   try { const r = await client.evaluate({ target, expression: EXPR }); return r && r.value === 'unread'; } catch (e) { return false; }
 }
 
-// ── 承接：在通知页定位某条 →（doClick 时）合成点「回复」打开内联输入框；否则只定位 ──
-function _replyOpenFn(nick, head, doClick) {
+// ── 承接：在通知页定位某条的「回复」按钮，返回坐标（不点，点击交给真鼠标 humanMove+click）──
+function _replyFindFn(nick, head) {
   var links = document.querySelectorAll('a[href*="/user/profile"]');
   for (var i = 0; i < links.length; i++) {
     var L = links[i]; if ((L.textContent || '').trim() !== nick) continue;
@@ -467,29 +480,33 @@ function _replyOpenFn(nick, head, doClick) {
     var rep = null, sp = box.querySelectorAll('span,div,button');
     for (var j = 0; j < sp.length; j++) { var e = sp[j]; if (e.childElementCount === 0 && (e.textContent || '').trim() === '回复') { rep = e; break; } }
     if (!rep) return 'norep';
-    if (!doClick) return 'found';
-    var r = rep.getBoundingClientRect(); var cx = r.left + r.width / 2, cy = r.top + r.height / 2; var tg = document.elementFromPoint(cx, cy) || rep;
-    var P = window.PointerEvent || MouseEvent; var o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: cx, clientY: cy, button: 0 };
-    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (ty) { try { tg.dispatchEvent(new (ty.indexOf('pointer') === 0 ? P : MouseEvent)(ty, o)); } catch (_) {} });
-    return 'clicked';
+    var r = rep.getBoundingClientRect();
+    return JSON.stringify({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
   }
   return 'notfound';
 }
-// 回复一条：定位→(演练: 只定位「回复」按钮就算可回复)/(真发: 点回复+输入+发送+验证)。登录检测由调用方做。
+// 回复一条：鼠标滑到「回复」→(演练: 只滑过去不点)/(真发: 点回复→点输入框→打字→点发送→验证)。全程真鼠标(拟人可见)。登录检测由调用方做。
 async function replyInboxItem({ client, target, item, text, dry = true, onLog = () => {} }) {
   let cur = ''; try { cur = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
   if (cur.indexOf('notification') < 0) return { ok: false, msg: '不在通知页' };
   const head = (item.content || '').slice(0, 8);
-  const expr = '(' + _replyOpenFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(head) + ',' + (dry ? 'false' : 'true') + ')';
-  let openRes = ''; try { openRes = String((await client.evaluate({ target, expression: expr })).value || ''); } catch (e) {}
-  if (openRes === 'notfound') return { ok: false, msg: '没找到这条(可能已滚走)' };
-  if (openRes === 'norep') return { ok: false, msg: '这条不能回复(可能原评论已删)' };
-  if (dry) return { ok: true, msg: '演练:可回复(已定位「回复」按钮)' };
+  const expr = '(' + _replyFindFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(head) + ')';
+  let res = ''; try { res = String((await client.evaluate({ target, expression: expr })).value || ''); } catch (e) {}
+  if (res === 'notfound') return { ok: false, msg: '没找到这条(可能已滚走)' };
+  if (res === 'norep') return { ok: false, msg: '这条不能回复(可能原评论已删)' };
+  let rep = null; try { rep = JSON.parse(res); } catch (e) {}
+  if (!rep || !Number.isFinite(rep.x)) return { ok: false, msg: '定位回复按钮失败' };
+  // 拟人:鼠标滑到「回复」按钮(看得见)
+  await client.humanMove({ target, toX: rep.x, toY: rep.y }).catch(() => {});
+  await sleep(rand(400, 800));
+  if (dry) return { ok: true, msg: '演练:鼠标已移到「回复」(未点开)' };
+  // 真发:鼠标点「回复」→ 内联输入框
+  await client.click({ target, x: rep.x, y: rep.y }).catch(() => {});
   await sleep(rand(900, 1500));
   let inp = null;
   try { inp = JSON.parse((await client.evaluate({ target, expression: '(function(){var t=document.querySelector("textarea[class*=comment-input],textarea[class*=input]");if(!t||t.offsetParent===null)return "";var r=t.getBoundingClientRect();return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),ph:t.getAttribute("placeholder")||""});})()' })).value || ''); } catch (e) {}
   if (!inp) return { ok: false, msg: '回复框没出现' };
-  if (dry) return { ok: true, msg: '演练:已打开回复框「' + (inp.ph || '') + '」(未输入未发送)' };
+  // 鼠标点输入框聚焦 → 逐字打字
   await client.click({ target, x: inp.x, y: inp.y });
   await sleep(rand(500, 900));
   await client.typeText({ target, text: text });

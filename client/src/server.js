@@ -369,14 +369,24 @@ async function drainInbox({ client, target, cfg, dry, send }) {
   let replied = 0;
   const batchMax = Number(cfg.reply_batch_max) || 5;
   const dailyCap = Number(cfg.reply_daily) || 30;
+  if (!items.length) { send('log', '  近 ' + (Number(cfg.reply_recent_days) || 0) + ' 天内没有新评论可回(更早的按"只回近N天"略过)'); }
   for (const it of items) {
     if (runState.cancelled) break;
     const intent = engine.inboxIntent(it.content, cfg);
     const key = (it.nick || '') + '|' + (it.content || '') + '|' + (it.date || '');
     try { db.insertInbox({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, action_date: it.date, intent, status: 'new', dedup_key: key }); } catch (e) {}
     const row = db.listInbox(300).find((r) => r.dedup_key === key);
-    if (row && row.status !== 'new') continue; // 已处理(已回/跳过/失败)
-    if (!engine.shouldReply(it, cfg)) { db.updateInboxByKey(key, { status: 'skipped', intent }); continue; }
+    if (row && row.status !== 'new') { send('log', '  跳过 ' + it.nick + '(之前已处理过)'); continue; }
+    if (!engine.shouldReply(it, cfg)) {
+      let why = '不符承接规则';
+      if (!it.content || it.content === '原评论已删除') why = '原评论已删/无内容';
+      else if ((cfg.reply_black_words || []).some((w) => it.content.indexOf(w) >= 0)) why = '命中黑词';
+      else if (cfg.reply_only_intent && intent === 'other') why = '没意向词(已开"只回有意向")';
+      else why = '该类型未在承接范围勾选';
+      db.updateInboxByKey(key, { status: 'skipped', intent });
+      send('log', '  跳过 ' + it.nick + '(' + why + ')');
+      continue;
+    }
     if (db.repliedToday() >= dailyCap) { send('log', '  今日回复达上限 ' + dailyCap + ',停止承接'); break; }
     if (replied >= batchMax) { send('log', '  本轮已回 ' + batchMax + ' 条,先回外呼'); break; }
     const text = await engine.makeReply(it, cfg);
