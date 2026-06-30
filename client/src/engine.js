@@ -373,7 +373,21 @@ function _inboxScanFn() {
 }
 const SCAN_INBOX = '(' + _inboxScanFn.toString() + ')()';
 
-async function scanInbox({ client, target, onLog = () => {}, max = 40 }) {
+// 把通知日期串(2024-09-04 / 02-02 / 今天 / 昨天 / 3天前 / 2小时前)换算成"几天前"
+function _daysAgo(dateStr) {
+  if (!dateStr) return 99999;
+  if (/今天|分钟前|小时前/.test(dateStr)) return 0;
+  if (/昨天/.test(dateStr)) return 1;
+  const dm = dateStr.match(/(\d+)\s*天前/); if (dm) return Number(dm[1]);
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  let m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m) { return Math.max(0, Math.floor((now - new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) / 86400000)); }
+  m = dateStr.match(/^(\d{2})-(\d{2})$/); // MM-DD：当年；若落在未来则算去年
+  if (m) { let d = new Date(now.getFullYear(), Number(m[1]) - 1, Number(m[2])); if (d > now) d = new Date(now.getFullYear() - 1, Number(m[1]) - 1, Number(m[2])); return Math.max(0, Math.floor((now - d) / 86400000)); }
+  return 99999; // 看不懂的日期当很旧
+}
+// recentDays>0：只要近 N 天的；通知是新→旧排列，滚到已经超出窗口就停，不用把老的全读一遍
+async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDays = 0 }) {
   let cur = ''; try { cur = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
   if (cur.indexOf('notification') < 0) {
     onLog('进通知页,看「评论和@」…');
@@ -383,13 +397,16 @@ async function scanInbox({ client, target, onLog = () => {}, max = 40 }) {
   await sleep(rand(2500, 3800));
   try { await client.installCursor({ target }); } catch (e) {}
   let items = [];
-  for (let round = 0; round < 4 && items.length < max; round++) {
+  for (let round = 0; round < 6 && items.length < max; round++) {
     try { const r = await client.evaluate({ target, expression: SCAN_INBOX }); items = JSON.parse(r.value || '[]'); } catch (e) {}
     if (items.length >= max) break;
+    // 已经滚到"超出近 N 天"的老评论了，停止往下翻
+    if (recentDays > 0 && items.length && _daysAgo(items[items.length - 1].date) > recentDays) break;
     await client.wheelScroll({ target, x: rand(400, 700), y: rand(360, 600), totalDeltaY: rand(500, 900) }).catch(() => {});
     await sleep(rand(900, 1500));
   }
-  onLog('收件:解析到 ' + items.length + ' 条');
+  if (recentDays > 0) items = items.filter(function (it) { return _daysAgo(it.date) <= recentDays; });
+  onLog('收件:解析到 ' + items.length + ' 条' + (recentDays > 0 ? '(近 ' + recentDays + ' 天)' : ''));
   return items.slice(0, max);
 }
 // ── 承接:意向判定（关键词可配）──

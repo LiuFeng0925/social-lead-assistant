@@ -253,6 +253,7 @@
         <div class="row"><div class="fld" style="flex:1"><label>意向关键词(逗号分隔,命中=有意向)</label><input id="r_intent" style="width:100%"></div></div>
         <div class="row"><div class="fld" style="flex:1"><label>高意向词(想加微/要联系方式)</label><input id="r_hot" style="width:100%"></div></div>
         <div class="row"><div class="fld" style="flex:1"><label>黑名单/黑词(命中跳过)</label><input id="r_black" style="width:100%"></div></div>
+        <div class="row"><div class="fld"><label>只回复近几天的评论</label><span style="display:inline-flex;gap:4px;align-items:center"><input id="r_recent" type="number" min="0" style="width:70px" title="只接近 N 天的评论;抓取时滚到更老就停,不用全读。填 0=不限(全部)"><span style="color:var(--sub);font-size:13px">天(0=不限)</span></span></div></div>
         <div class="row"><div class="fld" style="flex:1"><label>回复方向(喂给生成;红线:不留明文联系方式)</label><input id="r_dir" style="width:100%"></div></div>
         <div style="font-size:13px;font-weight:700;margin:8px 0 4px">回复限频</div>
         <div class="row">
@@ -436,6 +437,7 @@ async function loadReplyRules() {
   sv('r_black', (c.reply_black_words || []).join('，')); sv('r_dir', c.reply_direction);
   sv('r_daily', c.reply_daily); sv('r_hourly', c.reply_hourly); sv('r_gapmin', c.reply_gap_min);
   sv('r_gapmax', c.reply_gap_max); sv('r_batch', c.reply_batch_max); sv('r_check', c.reply_check_minutes);
+  sv('r_recent', c.reply_recent_days);
 }
 function saveReplyRules() {
   const words = (id) => ($(id) && $(id).value ? $(id).value.split(/[，,、\s]+/).map(s => s.trim()).filter(Boolean) : []);
@@ -447,7 +449,8 @@ function saveReplyRules() {
     reply_direction: $('r_dir').value,
     reply_daily: Number($('r_daily').value) || 30, reply_hourly: Number($('r_hourly').value) || 10,
     reply_gap_min: Number($('r_gapmin').value) || 1, reply_gap_max: Number($('r_gapmax').value) || 4,
-    reply_batch_max: Number($('r_batch').value) || 5, reply_check_minutes: Number($('r_check').value) || 5
+    reply_batch_max: Number($('r_batch').value) || 5, reply_check_minutes: Number($('r_check').value) || 5,
+    reply_recent_days: Math.max(0, Number($('r_recent').value) || 0)
   };
   $('r_hint').textContent = '保存中…';
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('r_hint').textContent = d.ok ? '✓ 已保存' : ('✗ ' + d.msg); });

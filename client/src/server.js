@@ -235,9 +235,10 @@ async function handleStop(req, res) {
 async function handleInboxScan(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
+    const cfg = db.getConfig();
     const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
     try { await client.installCursor({ target }); } catch (e) {}
-    const items = await engine.scanInbox({ client, target, max: 40 });
+    const items = await engine.scanInbox({ client, target, max: 40, recentDays: Number(cfg.reply_recent_days) || 0 });
     let added = 0;
     for (const it of items) {
       try { if (db.insertInbox({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, action_date: it.date, status: 'new' })) added++; } catch (e) {}
@@ -364,7 +365,7 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
 // 承接一轮:进通知页抓「评论和@」→ 逐条判意向+回复(限频/批量上限)→ 回搜索页。dry=演练只定位+草稿。
 async function drainInbox({ client, target, cfg, dry, send }) {
   send('log', '📥 发现通知,暂停外呼,先去回复…');
-  const items = await engine.scanInbox({ client, target, max: 40, onLog: (m) => send('log', '  ' + m) });
+  const items = await engine.scanInbox({ client, target, max: 40, recentDays: Number(cfg.reply_recent_days) || 0, onLog: (m) => send('log', '  ' + m) });
   let replied = 0;
   const batchMax = Number(cfg.reply_batch_max) || 5;
   const dailyCap = Number(cfg.reply_daily) || 30;
