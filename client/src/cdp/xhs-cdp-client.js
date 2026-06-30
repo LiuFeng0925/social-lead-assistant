@@ -76,6 +76,19 @@ class XhsCdpClient {
   }
 
   // 贝塞尔曲线鼠标移动:从上次位置平滑移到目标(不瞬移),搬自 BOSS humanMouseMove
+  // 往目标页面注入固定红点光标:监听 trusted 鼠标事件自动跟随(引擎 CDP 派发的是真事件);position:fixed → 滚动时停在视口
+  async installCursor({ target }) {
+    const SCRIPT = '(function(){function ins(){if(window.__xhsCur){window.__xhsCur.style.opacity="1";return;}if(!document.body){return setTimeout(ins,60);}var d=document.createElement("div");d.id="__xhsCur";d.style.cssText="position:fixed;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;background:rgba(255,39,66,.30);border:3px solid #ff2742;box-shadow:0 0 0 3px rgba(255,255,255,.95),0 0 16px 6px rgba(255,39,66,.55);pointer-events:none;z-index:2147483647;transition:left .05s linear,top .05s linear";var c=document.createElement("div");c.style.cssText="position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#ff2742";d.appendChild(c);(document.body||document.documentElement).appendChild(d);window.__xhsCur=d;var mv=function(x,y){d.style.left=x+"px";d.style.top=y+"px";};document.addEventListener("mousemove",function(e){mv(e.clientX,e.clientY);},true);document.addEventListener("mousedown",function(e){mv(e.clientX,e.clientY);try{d.animate([{boxShadow:"0 0 0 3px rgba(255,255,255,.95),0 0 0 0 rgba(255,39,66,.6)"},{boxShadow:"0 0 0 3px rgba(255,255,255,.95),0 0 0 26px rgba(255,39,66,0)"}],{duration:520});}catch(_){}},true);}ins();return "ok";})()';
+    try { await this.evaluate({ target, expression: SCRIPT }); } catch (e) {}
+  }
+
+  // 按一个键(切图用 ArrowRight 等;选择器无关,稳)
+  async pressKey({ target, key, code, vk }) {
+    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', key: key, code: code, windowsVirtualKeyCode: vk || 0, nativeVirtualKeyCode: vk || 0 } }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 30 + Math.random() * 60));
+    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: key, code: code, windowsVirtualKeyCode: vk || 0, nativeVirtualKeyCode: vk || 0 } }).catch(() => {});
+  }
+
   async humanMove({ target, toX, toY }) {
     const fromX = Number.isFinite(this._lastX) ? this._lastX : (toX - 80);
     const fromY = Number.isFinite(this._lastY) ? this._lastY : (toY - 60);
@@ -120,6 +133,8 @@ class XhsCdpClient {
       remaining -= tickY;
       const tickX = Math.round(Math.random() * 4 - 2); // 横向漂移
       await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseWheel', x, y, deltaX: tickX, deltaY: tickY, button: 'none' } }).catch(() => {});
+      if (this.onPointer) { try { this.onPointer({ type: 'scroll', x: x + tickX, y: y }); } catch (e) {} }
+      this._lastX = x + tickX; this._lastY = y;
       await new Promise((r) => setTimeout(r, 3 + Math.floor(Math.random() * 13)));
     }
   }

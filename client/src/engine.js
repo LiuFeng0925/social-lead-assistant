@@ -98,7 +98,16 @@ function buildSearchUrl(keyword) {
   return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_search_result_notes`;
 }
 
-async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {} }) {
+// 当前视口内可见的笔记卡片中,随机挑一张返回其中心坐标(供"浏览时移过去看一眼")
+const PICK_VISIBLE_CARD = `(function(){
+  var links = document.querySelectorAll('a[class*=cover]');
+  var vis = [];
+  for (var i=0;i<links.length;i++){ var r=links[i].getBoundingClientRect(); if (r.width>120 && r.height>120 && r.top>=40 && r.top<window.innerHeight-120){ vis.push({x:Math.round(r.x+r.width/2), y:Math.round(r.y+r.height/2)}); } }
+  if (!vis.length) return JSON.stringify(null);
+  return JSON.stringify(vis[Math.floor(Math.random()*vis.length)]);
+})()`;
+
+async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {}, shouldStop = () => false, filters = {} }) {
   const url = buildSearchUrl(keyword);
   onLog(`导航到搜索页:${keyword}`);
   await client.navigate({ target, url });
@@ -108,9 +117,13 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
     try { const r = await client.evaluate({ target, expression: EXPR_PROBE }); const [rs, cnt] = String(r?.value || '').split('|'); if (rs === 'complete' && Number(cnt) > 0) { ready = true; break; } } catch (e) {}
   }
   if (!ready) onLog('⚠ 未稳定就绪(需登录?),仍尝试');
+  try { await client.installCursor({ target }); } catch (e) {} // 先注入红点,保证后面点筛选时看得到鼠标
+
+  try { await applyFilters({ client, target, filters, onLog }); } catch (e) { onLog('筛选应用失败(忽略):' + e.message); }
   const all = new Map();
   let stale = 0;
   for (let round = 0; round < maxRounds && stale < 4 && all.size < maxNotes; round++) {
+    if (shouldStop()) { onLog('⏹ 收到停止,中断检索'); break; }
     let res = { notes: [] };
     try { const r = await client.evaluate({ target, expression: EXPR_EXTRACT }); res = JSON.parse(r.value); } catch (e) {}
     const before = all.size;
@@ -118,6 +131,14 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
     const added = all.size - before;
     onLog(`第 ${round + 1} 轮:本屏 ${res.count || 0},新增 ${added},累计 ${all.size}`);
     if (added === 0) stale++; else stale = 0;
+    // 拟人:移到当前可见的一条笔记上看一眼(有目的的鼠标移动,红点随之移动),再翻页
+    if (Math.random() < 0.75) {
+      try {
+        const cr = await client.evaluate({ target, expression: PICK_VISIBLE_CARD });
+        const cp = JSON.parse((cr && cr.value) || 'null');
+        if (cp && Number.isFinite(cp.x)) { await client.humanMove({ target, toX: cp.x, toY: cp.y }); await sleep(rand(500, 1300)); }
+      } catch (e) {}
+    }
     await client.wheelScroll({ target, x: rand(400, 800), y: rand(300, 520), totalDeltaY: rand(700, 1100) }).catch(() => {}); // trusted 滚轮(拟人)
     await sleep(rand(700, 1700) + (Math.random() < 0.14 ? rand(800, 1600) : 0)); // 拟人停顿:随机 + 14% 概率长停
   }
@@ -125,15 +146,51 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
 }
 
 // ── 进详情读正文 ──
-async function readDetail({ client, target, note, onLog = () => {} }) {
+async function readDetail({ client, target, note, onLog = () => {}, browse = {}, onBeforeClose = null }) {
   if (!note || !note.id) throw new Error('read_detail_note_required');
+  const b = Object.assign({ imagesMin: 2, imagesMax: 5, bodyMin: 1500, bodyMax: 5000, cScrollMin: 2, cScrollMax: 5, cDwellMin: 1800, cDwellMax: 4500 }, browse || {});
   await openNoteFromList({ client, target, note, onLog });
   try {
     for (let k = 0; k < 12; k++) { await sleep(800); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
-    await sleep(rand(1100, 2200));
-    await client.wheelScroll({ target, x: rand(520, 820), y: rand(360, 620), totalDeltaY: rand(220, 520) }).catch(() => {});
-    await sleep(rand(700, 1500));
-    try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); return JSON.parse(r.value); } catch (e) { return { ok: false, error: e.message }; }
+    await sleep(rand(900, 1800));
+    let detail; try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); detail = JSON.parse(r.value); } catch (e) { detail = { ok: false, error: e.message }; }
+    // ③ 图文按实际张数看图:点右箭头切图,直到轮播 transform 不再变化(已是最后一张)就停,绝不超过实际图片数
+    try {
+      if (b.imagesMax > 0 && (detail && detail.type !== 'video')) {
+        const want = rand(b.imagesMin, b.imagesMax + 1); // 最多想看几张(含第 1 张),实际看几张取决于笔记真实图片数
+        const EXPR_SW = `(function(){var a=document.querySelector('[class*=arrow-controller][class*=right]');var ar=null;if(a){var r=a.getBoundingClientRect();if(r.width>0&&r.top<window.innerHeight)ar={x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};}var w=document.querySelector('[class*=swiper-wrapper]');var tf=w?getComputedStyle(w).transform:'';return JSON.stringify({arrow:ar,tf:tf});})()`;
+        await client.humanMove({ target, toX: rand(470, 600), toY: rand(280, 440) }).catch(() => {});
+        await sleep(rand(700, 1500)); // 看第 1 张
+        let seen = 1;
+        for (let k = 1; k < want; k++) {
+          let st1; try { st1 = JSON.parse((await client.evaluate({ target, expression: EXPR_SW })).value); } catch (e) { break; }
+          if (!st1 || !st1.arrow) break; // 无轮播/无右箭头(单图或视频)
+          await client.click({ target, x: st1.arrow.x, y: st1.arrow.y });
+          await sleep(rand(700, 1400));
+          let st2; try { st2 = JSON.parse((await client.evaluate({ target, expression: EXPR_SW })).value); } catch (e) { st2 = st1; }
+          if (!st2 || st2.tf === st1.tf) break; // transform 没变 = 已是最后一张,停
+          seen++;
+          onLog('  看第 ' + seen + ' 张图');
+          await sleep(rand(400, 900));
+        }
+      }
+    } catch (e) {}
+    // ③ 正文随机停留(像在读)
+    await sleep(rand(b.bodyMin, b.bodyMax));
+    // ② 往下滑读评论:随机几下,每下停留几秒读,鼠标偶尔游走
+    try {
+      const cs = rand(b.cScrollMin, b.cScrollMax + 1);
+      for (let k = 0; k < cs; k++) {
+        await client.humanMove({ target, toX: rand(180, 560), toY: rand(340, 680) }).catch(() => {}); // 滚前鼠标先滑到评论区(有目的)
+        await sleep(rand(300, 700));
+        await client.wheelScroll({ target, x: rand(380, 640), y: rand(360, 620), totalDeltaY: rand(300, 700) }).catch(() => {});
+        onLog(`  往下读评论 ${k + 1}/${cs}`);
+        await sleep(rand(b.cDwellMin, b.cDwellMax)); // 滑动后停留读(已加长)
+        if (Math.random() < 0.6) { await client.humanMove({ target, toX: rand(160, 520), toY: rand(320, 720) }).catch(() => {}); await sleep(rand(500, 1200)); } // 偶尔鼠标再滑,像在看某条评论
+      }
+    } catch (e) {}
+    if (onBeforeClose) { try { await onBeforeClose({ client, target, note, detail }); } catch (e) {} } // 浏览完、关闭前:自动评论在这里评
+    return detail;
   } finally {
     await closeCurrentNote({ client, target, note, onLog });
   }
@@ -149,4 +206,54 @@ function genComment(note, direction) {
   return `看你在找${region}的${hu}呀~我手上正好有挺合适的房源,通勤方便、可以拎包入住。要不要看看?主页有实拍,合适的话私聊我聊细节~`;
 }
 
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, classify, check, rejectsAgent };
+
+// —— 搜索筛选(拟人点击:按可见文字匹配筛选选项,不写死脆弱选择器,抗改版) ——
+function FIND_BY_TEXT(label) {
+  const j = JSON.stringify(label);
+  return '(function(){'
+    + 'function vis(r){return r.width>0&&r.height>0&&r.top>=0&&r.top<window.innerHeight*0.75&&r.left>=0;}'
+    + 'var want=' + j + ';'
+    + 'var nodes=document.querySelectorAll("span,div,button,a,li,p");'
+    + 'var best=null;'
+    + 'for(var i=0;i<nodes.length;i++){var e=nodes[i];if(e.childElementCount>0)continue;'
+    + 'var t=(e.textContent||"").trim();if(t!==want)continue;'
+    + 'var r=e.getBoundingClientRect();if(!vis(r))continue;'
+    + 'if(!best||r.top<best.top)best={x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),top:Math.round(r.top)};}'
+    + 'return best?JSON.stringify(best):"";'
+    + '})()';
+}
+async function clickByText({ client, target, label }) {
+  const r = await client.evaluate({ target, expression: FIND_BY_TEXT(label) });
+  let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
+  if (p && Number.isFinite(p.x)) { await client.click({ target, x: p.x, y: p.y }); return true; }
+  return false;
+}
+async function applyFilters({ client, target, filters = {}, onLog = () => {} }) {
+  const want = (v, def) => (v && v !== def ? v : null);
+  const sort = want(filters.sort, '综合');
+  const noteType = want(filters.noteType, '不限');
+  const noteTime = want(filters.noteTime, '不限');
+  const noteRange = want(filters.noteRange, '不限');
+  if (!sort && !noteType && !noteTime && !noteRange) { onLog('筛选:全部默认,无需设置'); return; }
+  if (sort) {
+    await clickByText({ client, target, label: '综合' }); // 排序若是下拉,先展开
+    await sleep(rand(400, 900));
+    const ok = await clickByText({ client, target, label: sort });
+    onLog(ok ? ('筛选·排序:已选「' + sort + '」') : ('筛选·排序:没找到「' + sort + '」,跳过'));
+    await sleep(rand(500, 1000));
+  }
+  const panel = [['类型', noteType], ['发布时间', noteTime], ['范围', noteRange]].filter((x) => x[1]);
+  if (panel.length) {
+    const opened = await clickByText({ client, target, label: '筛选' });
+    onLog(opened ? '筛选:已点开筛选面板' : '筛选:没找到「筛选」入口,跳过类型/时间/范围');
+    await sleep(rand(1300, 2300));
+    for (const [dim, label] of panel) {
+      const ok = await clickByText({ client, target, label });
+      onLog(ok ? ('筛选·' + dim + ':已选「' + label + '」') : ('筛选·' + dim + ':没找到「' + label + '」,跳过'));
+      await sleep(rand(500, 1000));
+    }
+    await clickByText({ client, target, label: '筛选' }).catch(() => {}); // 收起面板
+  }
+  await sleep(rand(1200, 2000)); // 等列表按筛选刷新
+}
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, classify, check, rejectsAgent, applyFilters };

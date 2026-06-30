@@ -11,7 +11,7 @@
   body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
   .app{display:flex;min-height:100vh}
   /* 左侧菜单 */
-  .side{width:174px;flex:none;background:#20242c;color:#c4c9d4;padding:12px 0}
+  .side{width:174px;flex:none;background:#20242c;color:#c4c9d4;padding:12px 0;position:sticky;top:0;height:100vh;align-self:flex-start;overflow-y:auto}
   .side .brand{display:flex;align-items:center;gap:7px;padding:4px 16px 13px;font-weight:700;color:#fff;font-size:14px;border-bottom:1px solid #2f343d;margin-bottom:8px}
   .side .brand .d{width:9px;height:9px;border-radius:50%;background:var(--brand)}
   .side .nav{display:block;padding:9px 16px;color:#aab0bd;cursor:pointer;font-size:13px;border-left:3px solid transparent}
@@ -54,12 +54,14 @@
   @media(max-width:920px){.cols{flex-direction:column}}
   /* Electron 一体窗口:主区让出右侧给内嵌浏览器;去掉投屏(右侧就是真浏览器) */
   html.electron .app{max-width:50vw;overflow-x:hidden}
+  html.electron.fullwidth .app{max-width:100vw}
   html.electron .cols > .card:first-child{display:none}
   html.electron .row{gap:8px}
   html.electron .fld input,html.electron .fld textarea{font-size:12px}
   #cursor{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(255,39,66,.9);border:3px solid #fff;box-shadow:0 0 0 2px #ff2742,0 0 14px 5px rgba(255,39,66,.75);opacity:0;pointer-events:none;transition:left .1s,top .1s;z-index:5}
   #cursor.ping{animation:ping .6s ease-out}
   @keyframes ping{0%{box-shadow:0 0 0 2px #ff2742,0 0 0 0 rgba(255,39,66,.7)}100%{box-shadow:0 0 0 2px #ff2742,0 0 0 28px rgba(255,39,66,0)}}
+  .trail{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:rgba(255,39,66,.5);pointer-events:none;opacity:0;transition:opacity .7s ease-out;z-index:4}
   .screen-empty{position:absolute;color:#6b7280;font-size:12px}
   table.rec{width:100%;font-size:12px;border-collapse:collapse}
   table.rec td{padding:5px 6px;border-bottom:1px solid var(--line)}
@@ -74,11 +76,13 @@
     <div class="nav" data-p="comments" onclick="showPage('comments')">📋 评论记录</div>
     <div class="nav" data-p="notes" onclick="showPage('notes')">🔍 采集记录</div>
     <div class="grp">配置(待做)</div>
-    <div class="nav dim">🎯 匹配规则</div>
+    
     <div class="nav dim">💬 话术库</div>
     <div class="nav dim">🏘️ 房源库</div>
-    <div class="nav" data-p="throttle" onclick="showPage('throttle')">🛡️ 防封控制</div>
-    <div class="nav dim">⚙️ 设置</div>
+    <div style="font-size:11px;color:#9a9aa0;padding:12px 12px 4px;font-weight:700;letter-spacing:.04em">设置</div>
+        <div class="nav" data-p="tasksettings" onclick="showPage('tasksettings')">🎯 任务设置</div>
+        <div class="nav" data-p="throttle" onclick="showPage('throttle')">🛡️ 防封控制</div>
+    
   </div>
 
   <div class="main">
@@ -95,10 +99,12 @@
       </div>
       <div class="card">
         <div class="row">
-          <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
-          <div class="fld" style="flex:3"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
-          <div class="fld"><label>抓取上限</label><input id="max" type="number" value="40" style="width:90px"></div>
           <button class="btn" id="go" onclick="start()">▶ 开始</button>
+          <button class="btn" id="stopbtn" onclick="stopRun()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
+          <button class="btn ghost" id="autobtn" onclick="autoRun()" style="margin-left:8px">🤖 自动评论</button>
+          <label style="font-size:12px;color:var(--sub);margin-left:6px;cursor:pointer" title="勾选=真的发评论;不勾=只演练走流程不发"><input type="checkbox" id="autoreal"> 真发</label>
+          <span class="hint" id="tasksummary" style="margin-left:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <a href="#" onclick="showPage('tasksettings');return false" style="font-size:12px;color:var(--brand);white-space:nowrap;text-decoration:none">⚙ 任务设置</a>
         </div>
         <div class="pipe">
           <div class="pp" id="p-search">① 检索</div>
@@ -123,7 +129,7 @@
           <div class="screen" id="screen">
             <img id="cast" alt="实时画面" style="display:none">
             <div id="cursor"></div>
-            <div class="screen-empty" id="castempty">连接中…(画面可点击操作;红点 = 机器点击位置)</div>
+            <div class="screen-empty" id="castempty">连接中…(画面可点击操作;红点(带尾巴)= 机器鼠标轨迹)</div>
           </div>
         </div>
         <div class="card" style="flex:1;min-width:0;margin-bottom:0;display:flex;flex-direction:column">
@@ -165,7 +171,35 @@
     </div>
 
     <!-- ===== 防封控制(全部可配置) ===== -->
-    <div class="page" id="page-throttle">
+    <div class="page" id="page-tasksettings">
+        <div class="card">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎯 任务设置</div>
+          <div class="hint" style="margin-bottom:14px">检索条件 + 筛选 + 评论方向。控制台「▶ 开始」会按这里保存的设置跑;改完记得点保存。</div>
+          <div class="row">
+            <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
+            <div class="fld"><label>抓取上限</label><input id="max" type="number" value="40" style="width:90px"></div>
+          </div>
+          <div class="row">
+            <div class="fld" style="flex:1"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
+          </div>
+          <div class="row">
+            <div class="fld"><label>排序</label><select id="f_sort"><option>综合</option><option>最新</option><option>最多点赞</option><option>最多评论</option><option>最多收藏</option></select></div>
+            <div class="fld"><label>发布时间</label><select id="f_time"><option>不限</option><option>一天内</option><option>一周内</option><option>半年内</option></select></div>
+            <div class="fld"><label>笔记类型</label><select id="f_type"><option>不限</option><option>图文</option><option>视频</option></select></div>
+            <div class="fld"><label>搜索范围</label><select id="f_range"><option>不限</option><option>已看过</option><option>未看过</option><option>已关注</option></select></div>
+          </div>
+          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 每段评论上限</div>
+            <div class="hint" style="margin-bottom:8px">按周几设置工作时段(可多段),每段填该时段最多评论几条。只在时段内自动跑;养号阶梯 / 限频仍是安全天花板,每小时上限和最小间隔也照常叠加。</div>
+            <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="sch_enabled"> 启用排班(关掉 = 不限时段,只受防封限频约束)</label>
+            <div class="fld" style="margin-bottom:10px"><label>时段内节奏</label><select id="slot_pacing"><option value="even">匀速摊开(整段均匀发)</option><option value="burst">开头集中(到点先发完再歇)</option></select></div>
+            <div id="schedule-form"></div>
+          <div style="margin-top:10px">
+            <button class="btn" onclick="saveTaskSettings()">保存任务设置 + 排班</button>
+            <span class="hint" id="tasksavehint" style="margin-left:10px"></span>
+          </div>
+        </div>
+      </div>
+      <div class="page" id="page-throttle">
       <div class="card">
         <div style="font-size:14px;font-weight:600;margin-bottom:10px">🛡️ 防封控制 · 限频 / 工作时间 / 养号(全部可配,改完即生效)</div>
         <div id="throttle-status" class="hint" style="margin-bottom:14px;font-size:13px"></div>
@@ -183,13 +217,150 @@ const $ = (id) => document.getElementById(id);
 if (navigator.userAgent.indexOf('Electron') >= 0) document.documentElement.classList.add('electron');
 let es = null, frameW = 0, frameH = 0;
 
+var _cfg = {};
+async function getCfg() {
+  try { const d = await fetch('/api/config').then(r => r.json()); _cfg = (d && d.config) || {}; } catch (e) { _cfg = {}; }
+  return _cfg;
+}
+function setVal(id, v) { const el = $(id); if (el != null && v != null) el.value = v; }
+async function loadTaskSettings() {
+  const c = await getCfg();
+  setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('max', c.task_max);
+  setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
+  if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
+  if ($('slot_pacing')) $('slot_pacing').value = c.slot_pacing || 'even';
+  if ($('schedule-form')) { const _sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule(); renderSchedule(_sch); markConflicts(); }
+  updateTaskSummary();
+}
+function toMinUI(hhmm) { const a = String(hhmm || '0:0').split(':').map(Number); return (a[0] || 0) * 60 + (a[1] || 0); }
+function validateSchedule(sch) {
+  const errs = [];
+  (sch || []).forEach(function (day, d) {
+    if (!day || day.on === false) return;
+    const wins = (day.windows || []);
+    for (const w of wins) { if (toMinUI(w.start) >= toMinUI(w.end)) errs.push(WD2[d] + ':「' + w.start + '–' + w.end + '」开始要早于结束'); }
+    const sorted = wins.slice().sort(function (a, b) { return toMinUI(a.start) - toMinUI(b.start); });
+    for (let k = 1; k < sorted.length; k++) {
+      if (toMinUI(sorted[k].start) < toMinUI(sorted[k - 1].end)) {
+        errs.push(WD2[d] + ':「' + sorted[k - 1].start + '–' + sorted[k - 1].end + '」与「' + sorted[k].start + '–' + sorted[k].end + '」时段重叠');
+      }
+    }
+  });
+  return errs;
+}
+function mark(el, msg) { el.style.outline = '2px solid var(--bad)'; el.style.borderRadius = '4px'; el.title = msg; }
+function markConflicts() {
+  let bad = false;
+  document.querySelectorAll('.sch-day').forEach(function (row) {
+    const on = row.querySelector('.sch-on').checked;
+    const wins = Array.prototype.slice.call(row.querySelectorAll('.sch-win'));
+    wins.forEach(function (w) { w.style.outline = ''; w.title = ''; });
+    if (!on) return;
+    const ps = wins.map(function (w) { return { el: w, s: toMinUI(w.querySelector('.sch-s').value), e: toMinUI(w.querySelector('.sch-e').value) }; });
+    ps.forEach(function (p) { if (p.s >= p.e) { mark(p.el, '开始要早于结束'); bad = true; } });
+    for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
+      if (ps[i].s < ps[j].e && ps[j].s < ps[i].e) { mark(ps[i].el, '与同日其他时段重叠'); mark(ps[j].el, '与同日其他时段重叠'); bad = true; }
+    }
+  });
+  return bad;
+}
+function gatherSchedule() {
+  const sch = [];
+  document.querySelectorAll('.sch-day').forEach(function (row) {
+    const on = row.querySelector('.sch-on').checked;
+    const windows = [];
+    row.querySelectorAll('.sch-win').forEach(function (w) {
+      const s = w.querySelector('.sch-s').value, e = w.querySelector('.sch-e').value;
+      const qel = w.querySelector('.sch-q');
+      const q = Number(qel ? qel.value : 8) || 8;
+      if (s && e) windows.push({ start: s, end: e, quota: q });
+    });
+    sch.push({ on: on, windows: windows.length ? windows : [{ start: '09:30', end: '23:00', quota: 8 }] });
+  });
+  return sch;
+}
+function saveTaskSettings() {
+  const _schedule = gatherSchedule();
+  const _errs = validateSchedule(_schedule);
+  if (_errs.length) { const h = $('tasksavehint'); h.style.color = 'var(--bad)'; h.textContent = '✗ ' + _errs.join('；'); return; }
+  $('tasksavehint').style.color = '';
+  const data = {
+    schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
+    task_keyword: $('kw').value, task_direction: $('dir').value, task_max: Number($('max').value) || 40,
+    task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value
+  };
+  $('tasksavehint').textContent = '保存中…';
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('tasksavehint').textContent = d.ok ? '✓ 已保存,控制台开始即用' : ('✗ ' + d.msg); updateTaskSummary(); });
+}
+function updateTaskSummary() {
+  const el = $('tasksummary'); if (!el) return;
+  const g = (id, def) => (($(id) && $(id).value) || def);
+  el.textContent = '本次任务:关键词「' + g('kw', '—') + '」 · 排序' + g('f_sort', '综合') + ' · 时间' + g('f_time', '不限') + ' · 类型' + g('f_type', '不限');
+}
+const WD2 = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+function defSchedule() { return WD2.map(function () { return { on: true, windows: [{ start: '09:30', end: '23:00' }] }; }); }
+async function loadSchedule() {
+  const c = await getCfg();
+  $('sch_enabled').checked = c.schedule_enabled !== false;
+  const sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule();
+  renderSchedule(sch);
+}
+function winHtml(w) {
+  w = w || {};
+  return '<span class="sch-win" style="display:inline-flex;align-items:center;gap:3px"><input type="time" class="sch-s" onchange="markConflicts()" value="' + (w.start || '09:30') + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + (w.end || '23:00') + '"> <input type="number" class="sch-q" min="0" value="' + (w.quota != null ? w.quota : 8) + '" style="width:54px" title="本时段评论上限"><span style="color:var(--sub);font-size:12px">条</span> <a href="#" onclick="rmWin(this);return false" style="color:var(--bad);text-decoration:none">✕</a></span>';
+}
+function renderSchedule(sch) {
+  const box = $('schedule-form'); box.innerHTML = '';
+  WD2.forEach(function (name, d) {
+    const day = sch[d] || { on: true, windows: [{ start: '09:30', end: '23:00' }] };
+    const wins = (day.windows && day.windows.length) ? day.windows : [{ start: '09:30', end: '23:00' }];
+    const row = document.createElement('div');
+    row.className = 'sch-day'; row.dataset.d = d;
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap';
+    row.innerHTML = '<label style="width:78px;cursor:pointer;font-weight:600"><input type="checkbox" class="sch-on" onchange="markConflicts()"' + (day.on !== false ? ' checked' : '') + '> ' + name + '</label>' +
+      '<span class="sch-wins" style="display:inline-flex;gap:8px;flex-wrap:wrap">' + wins.map(winHtml).join('') + '</span>' +
+      '<a href="#" onclick="addWin(' + d + ');return false" style="font-size:12px;color:var(--brand);text-decoration:none">+ 加时段</a>';
+    box.appendChild(row);
+  });
+}
+function addWin(d) {
+  const wrap = document.querySelector('.sch-day[data-d="' + d + '"] .sch-wins');
+  if (!wrap) return;
+  const tmp = document.createElement('div'); tmp.innerHTML = winHtml({ start: '09:30', end: '23:00' });
+  wrap.appendChild(tmp.firstChild);
+  markConflicts();
+}
+function rmWin(a) {
+  const win = a.closest('.sch-win'); const wins = win && win.parentNode;
+  if (wins && wins.querySelectorAll('.sch-win').length > 1) win.remove();
+  markConflicts();
+}
+function saveSchedule() {
+  const sch = [];
+  document.querySelectorAll('.sch-day').forEach(function (row) {
+    const on = row.querySelector('.sch-on').checked;
+    const windows = [];
+    row.querySelectorAll('.sch-win').forEach(function (w) {
+      const s = w.querySelector('.sch-s').value, e = w.querySelector('.sch-e').value;
+      if (s && e) windows.push({ start: s, end: e });
+    });
+    sch.push({ on: on, windows: windows.length ? windows : [{ start: '09:30', end: '23:00' }] });
+  });
+  const data = { schedule_enabled: $('sch_enabled').checked, schedule: sch };
+  $('schsavehint').textContent = '保存中…';
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('schsavehint').textContent = d.ok ? '✓ 已保存,立即生效' : ('✗ ' + d.msg); });
+}
 function showPage(p) {
+  const isConsole = (p === 'console');
+  if (window.electronView) window.electronView.setVisible(isConsole); // 只有控制台显示监视器
+  document.documentElement.classList.toggle('fullwidth', !isConsole); // 其他页签铺平
   document.querySelectorAll('.page').forEach(e => e.classList.remove('on'));
   $('page-' + p).classList.add('on');
   document.querySelectorAll('.side .nav').forEach(e => e.classList.toggle('on', e.dataset.p === p));
-  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', throttle: '防封控制' }[p] || '';
+  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', throttle: '防封控制', tasksettings: '任务设置' }[p] || '';
   if (p === 'comments' || p === 'notes') loadRecords();
   if (p === 'throttle') loadThrottle();
+  if (p === 'tasksettings') loadTaskSettings();
 }
 function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function setPhase(p) {
@@ -217,19 +388,49 @@ function addResult(r) {
 async function start() {
   const logged = await checkLogin();
   if (!logged) { $('loginhint').textContent = '⚠ 还没登录,先点上面的「点我登录」扫码,登录后再开始'; return; }
-  $('go').disabled = true; $('log').textContent = ''; $('results').innerHTML = '';
+  $('go').disabled = true; $('stopbtn').disabled = false; $('log').textContent = ''; $('results').innerHTML = '';
   ['m-total','m-seek','m-supply','m-target'].forEach(id => $(id).textContent = '–'); $('rcount').textContent = '';
   const kw = encodeURIComponent($('kw').value), dir = encodeURIComponent($('dir').value), max = $('max').value;
   setPhase('search');
-  es = new EventSource('/api/run?keyword=' + kw + '&max=' + max + '&direction=' + dir);
+  es = new EventSource('/api/run?keyword=' + kw + '&max=' + max + '&direction=' + dir +
+        '&sort=' + encodeURIComponent($('f_sort').value) + '&note_time=' + encodeURIComponent($('f_time').value) +
+        '&note_type=' + encodeURIComponent($('f_type').value) + '&note_range=' + encodeURIComponent($('f_range').value));
   es.addEventListener('log', e => addLog(JSON.parse(e.data)));
   es.addEventListener('phase', e => setPhase(JSON.parse(e.data).phase));
   es.addEventListener('stats', e => { const s = JSON.parse(e.data); $('m-total').textContent = s.total; $('m-seek').textContent = s.byIntent['求租']||0; $('m-supply').textContent = s.byIntent['房源']||0; $('m-target').textContent = s.targetCount; });
   es.addEventListener('result', e => addResult(JSON.parse(e.data)));
-  es.addEventListener('done', e => { const d = JSON.parse(e.data); setPhase('done'); addLog(d.error ? ('出错:'+d.error) : ('完成:生成 '+(d.generated||0)+' 条待发送')); $('rcount').textContent = d.generated ? ('· '+d.generated+' 条') : ''; $('go').disabled = false; loadRecords(); es.close(); });
-  es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; es && es.close(); };
+  es.addEventListener('done', e => { const d = JSON.parse(e.data); setPhase('done'); addLog(d.error ? ('出错:'+d.error) : ('完成:生成 '+(d.generated||0)+' 条待发送')); $('rcount').textContent = d.generated ? ('· '+d.generated+' 条') : ''; $('go').disabled = false; $('stopbtn').disabled = true; loadRecords(); es.close(); });
+  es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; $('stopbtn').disabled = true; es && es.close(); };
 }
 
+function addAutoResult(r) {
+  const div = document.createElement('div'); div.className = 'note';
+  const st = r.dry ? '<span class="badge b-warn">🟡 演练 · 走完流程未发送</span>' : (r.ok ? '<span class="badge b-ok">✅ 已自动发送</span>' : '<span class="badge b-bad">✗ 发送失败</span>');
+  div.innerHTML = '<h4>' + esc(r.title) + ' <span class="badge b-seek">求租</span></h4>'
+    + '<div class="meta">' + esc(r.region || '') + ' · <a href="' + esc(r.url) + '" target="_blank">🔗 打开笔记</a>　' + st + '</div>'
+    + '<div class="hint" style="white-space:pre-wrap;margin-top:4px">' + esc(r.comment) + '</div>';
+  $('results').appendChild(div);
+}
+function autoRun() {
+  const real = $('autoreal') && $('autoreal').checked;
+  if (real && !confirm('⚠ 真发模式会真的把评论发到对方笔记!确认现在登录的是全新小号(不是被检测的旧号)吗?')) return;
+  $('go').disabled = true; $('stopbtn').disabled = false; $('log').textContent = ''; $('results').innerHTML = '';
+  ['m-total','m-seek','m-supply','m-target'].forEach(id => $(id).textContent = '–'); $('rcount').textContent = '';
+  setPhase('search');
+  es = new EventSource('/api/auto-run?dry=' + (real ? '0' : '1'));
+  es.addEventListener('log', e => addLog(JSON.parse(e.data)));
+  es.addEventListener('phase', e => setPhase(JSON.parse(e.data).phase));
+  es.addEventListener('stats', e => { const x = JSON.parse(e.data); $('m-total').textContent = x.total; $('m-seek').textContent = x.byIntent['求租']||0; $('m-supply').textContent = x.byIntent['房源']||0; $('m-target').textContent = x.targetCount; });
+  es.addEventListener('result', e => addAutoResult(JSON.parse(e.data)));
+  es.addEventListener('done', e => { const d = JSON.parse(e.data); setPhase('done'); addLog(d.error ? ('出错:'+d.error) : ('自动评论结束:处理 '+(d.done||0)+' 条,真发 '+(d.sent||0)+' 条'+(d.dry?'(演练)':''))); $('go').disabled = false; $('stopbtn').disabled = true; loadRecords(); es.close(); });
+  es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; $('stopbtn').disabled = true; es && es.close(); };
+}
+function stopRun() {
+  $('stopbtn').disabled = true; $('go').disabled = false;
+  addLog('⏹ 正在停止…(当前这步完成后中断)');
+  fetch('/api/stop').catch(() => {});
+  if (es) es.close();
+}
 function doSend(i, dry) {
   if (!dry && !confirm('确认真发这条评论到对方笔记?(用的是你登录的小号)')) return;
   const ta = $('cmt' + i), st = $('st' + i); st.textContent = dry ? '定位中…' : '发送中…';
@@ -243,13 +444,26 @@ function connectMonitor() {
   const mes = new EventSource('/api/screencast');
   mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接' : ('连接失败:'+(h.msg||'')); });
   mes.addEventListener('frame', e => { const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH; const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block'; const ce = $('castempty'); if (ce) ce.style.display = 'none'; });
-  mes.addEventListener('pointer', e => { const p = JSON.parse(e.data); showCursor(p.x, p.y); });
+  mes.addEventListener('pointer', e => { const p = JSON.parse(e.data); showCursor(p.x, p.y, p.type); });
   mes.onerror = () => { $('caststatus').textContent = '○ 重连中…'; };
 }
-function showCursor(x, y) {
+let _trail = [], _trailI = 0;
+function ensureTrail() {
+  if (_trail.length) return;
+  const screen = $('screen'); if (!screen) return;
+  for (let i = 0; i < 28; i++) { const d = document.createElement('div'); d.className = 'trail'; screen.appendChild(d); _trail.push(d); }
+}
+function showCursor(x, y, type) {
   const img = $('cast'); if (!frameW || !frameH || !img.clientWidth) return;
-  const cur = $('cursor'); cur.style.left = (x/frameW*img.clientWidth)+'px'; cur.style.top = (y/frameH*img.clientHeight)+'px'; cur.style.opacity = '1';
-  cur.classList.remove('ping'); void cur.offsetWidth; cur.classList.add('ping');
+  const px = x / frameW * img.clientWidth, py = y / frameH * img.clientHeight;
+  const cur = $('cursor'); cur.style.left = px + 'px'; cur.style.top = py + 'px'; cur.style.opacity = '1';
+  if (type === 'click') { cur.classList.remove('ping'); void cur.offsetWidth; cur.classList.add('ping'); }
+  ensureTrail();
+  if (_trail.length) {
+    const d = _trail[_trailI % _trail.length]; _trailI++;
+    d.style.transition = 'none'; d.style.left = px + 'px'; d.style.top = py + 'px'; d.style.opacity = '0.5';
+    void d.offsetWidth; d.style.transition = 'opacity .7s ease-out'; d.style.opacity = '0';
+  }
 }
 $('cast').addEventListener('click', e => {
   if (!frameW || !frameH || !e.target.clientWidth) return;
@@ -319,6 +533,9 @@ function saveConfig() {
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('savehint').textContent = d.ok ? '✓ 已保存,立即生效' : ('✗ ' + d.msg); loadThrottle(); });
 }
 checkLogin();
+loadTaskSettings();
+loadSchedule();
+fetch('/api/cursor-install').catch(function () {});
 </script>
 </body>
 </html>

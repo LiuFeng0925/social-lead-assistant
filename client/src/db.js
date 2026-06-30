@@ -98,6 +98,29 @@ const DEFAULT_CONFIG = {
   work_end: '23:00',
   nurture_enabled: true,     // 养号阶梯开关
   nurture_stages: [{ days: 3, comment: 3 }, { days: 7, comment: 8 }, { days: 14, comment: 15 }, { days: 9999, comment: 30 }],
+  // ── 任务设置(在「任务设置」页改)──
+  task_keyword: '朝阳 租房',
+  task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
+  task_max: 40,
+  task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
+  // ── 打开笔记后的拟人浏览(在「任务设置」可配)──
+  browse_images_min: 2, browse_images_max: 5,            // 图文看几张图
+  browse_body_dwell_min: 1500, browse_body_dwell_max: 5000, // 正文停留(ms)
+  browse_comment_scrolls_min: 2, browse_comment_scrolls_max: 5, // 往下滑读评论几下
+  browse_comment_dwell_min: 1000, browse_comment_dwell_max: 3000, // 每下停留读评论(ms)
+  // ── 排班(在「排班管理」页改)── 7 天,index 0=周一..6=周日;每天 {on, windows:[{start,end}]}
+  slot_pacing: 'even', // 时段内节奏:even 匀速摊开 | burst 开头集中发完就歇
+  auto_send_dry_run: true, // 自动评论默认只演练(走完整流程但不真发);改 false 才真发
+  schedule_enabled: true,
+  schedule: [
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] },
+    { on: true, windows: [{ start: '09:30', end: '23:00', quota: 8 }] }
+  ],
   fail_rate_threshold: 0.3   // 健康:评论失败率阈值
 };
 
@@ -116,6 +139,10 @@ function firstUsedAt() {
   if (r) { try { return JSON.parse(r.v); } catch (e) { return r.v; } }
   const t = now(); open().prepare("insert into config(k,v) values('first_used_at',?)").run(JSON.stringify(t)); return t;
 }
+function commentCountSince(iso) {
+  const r = open().prepare("select count(*) c from comments where status='sent' and created_at >= ?").get(iso);
+  return r ? r.c : 0;
+}
 function commentStats() {
   const ds = new Date(); ds.setHours(0, 0, 0, 0);
   const hourAgo = new Date(Date.now() - 3600 * 1000).toISOString();
@@ -125,4 +152,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince };

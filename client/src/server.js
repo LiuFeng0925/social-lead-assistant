@@ -31,8 +31,18 @@ const PROBE = `(function(){
 })()`;
 
 let lastRun = null; // { client, target, results }
+let runState = { running: false, cancelled: false }; // 任务停止开关
 const monitors = new Set(); // 实时监控的 SSE 推送函数
 function broadcastPointer(p) { monitors.forEach((s) => { try { s('pointer', p); } catch (e) {} }); }
+let sharedCast = null; // 单一共享 screencast:所有 monitor 共用一份,避免互相 start/stop 打架
+function broadcastFrame(p) { monitors.forEach((s) => { try { s('frame', p); } catch (e) {} }); }
+async function ensureScreencast(client, target) {
+  if (sharedCast) return;
+  sharedCast = { handle: null, lastFrame: null }; // 先占位(同步),防并发重复启动
+  try {
+    sharedCast.handle = await startScreencast({ target, endpoint: ENDPOINT, onFrame: (data, meta) => { const p = { d: data, w: meta.deviceWidth || 0, h: meta.deviceHeight || 0 }; sharedCast.lastFrame = p; broadcastFrame(p); } });
+  } catch (e) { sharedCast = null; throw e; }
+}
 
 function sse(res) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
@@ -40,16 +50,20 @@ function sse(res) {
 }
 
 async function handleRun(req, res, q) {
-  const keyword = q.get('keyword') || '朝阳 租房';
-  const max = Number(q.get('max') || 40);
-  const direction = q.get('direction') || '我是房源方,结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式';
+  const cfg = db.getConfig();
+  const keyword = q.get('keyword') || cfg.task_keyword || '朝阳 租房';
+  const max = Number(q.get('max') || cfg.task_max || 40);
+  const filters = { sort: q.get('sort') || cfg.task_sort || '综合', noteTime: q.get('note_time') || cfg.task_note_time || '不限', noteType: q.get('note_type') || cfg.task_note_type || '不限', noteRange: q.get('note_range') || cfg.task_note_range || '不限' };
+  const direction = q.get('direction') || cfg.task_direction || '我是房源方,结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式';
   const send = sse(res);
+  runState = { running: true, cancelled: false };
   try {
     send('log', '连接 CDP…');
     const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
     send('log', '已接管:' + (target.title || target.url));
     send('phase', { phase: 'search' });
-    const notes = await engine.scanClean({ client, target, keyword, maxNotes: max, onLog: (m) => send('log', m) });
+    const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: max, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled });
+    if (runState.cancelled) { send('log', '⏹ 任务已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
     send('phase', { phase: 'match' });
     const { tagged, targets, byIntent } = engine.matchNotes(notes);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} }); // 存采集历史(看过哪些笔记,带意向/地区)
@@ -61,11 +75,12 @@ async function handleRun(req, res, q) {
     const results = [];
     const todo = fresh.slice(0, DETAIL_N);
     for (let i = 0; i < todo.length; i++) {
+      if (runState.cancelled) { send('log', '⏹ 任务已停止'); break; }
       const t = todo[i];
       send('log', `读详情 + 生成 ${i + 1}/${todo.length}:${t.title || '(无标题)'}`);
       let d;
       try {
-        d = await engine.readDetail({ client, target, note: t, onLog: (m) => send('log', m) });
+        d = await engine.readDetail({ client, target, note: t, onLog: (m) => send('log', m), browse: { imagesMin: cfg.browse_images_min, imagesMax: cfg.browse_images_max, bodyMin: cfg.browse_body_dwell_min, bodyMax: cfg.browse_body_dwell_max, cScrollMin: cfg.browse_comment_scrolls_min, cScrollMax: cfg.browse_comment_scrolls_max, cDwellMin: cfg.browse_comment_dwell_min, cDwellMax: cfg.browse_comment_dwell_max } });
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         if (msg.startsWith('note_card_not_found:') || msg.startsWith('note_detail_not_opened:')) {
@@ -167,22 +182,28 @@ async function handleSend(req, res, q) {
 async function handleScreencast(req, res) {
   const send = sse(res);
   monitors.add(send);
-  let cast = null;
   try {
     let client, target;
     if (lastRun && lastRun.target) { client = lastRun.client; target = lastRun.target; }
     else { const c = await engine.connect(ENDPOINT, broadcastPointer); client = c.client; target = c.target; lastRun = { client, target, results: [] }; }
     send('hello', { ok: true });
-    // 先主动推一张当前截图,保证一连上就有画面(不用干等页面变化)
-    try {
-      const img = await client.screenshot({ target });
-      let wh = {};
-      try { const vp = await client.evaluate({ target, expression: 'JSON.stringify({w:window.innerWidth,h:window.innerHeight})' }); wh = JSON.parse((vp && vp.value) || '{}'); } catch (e) {}
-      if (img) send('frame', { d: img, w: wh.w || 1280, h: wh.h || 800 });
-    } catch (e) {}
-    cast = await startScreencast({ target, endpoint: ENDPOINT, onFrame: (data, meta) => send('frame', { d: data, w: meta.deviceWidth || 0, h: meta.deviceHeight || 0 }) });
+    // 一连上就给画面:有共享最近帧直接发,否则现拍一张
+    if (sharedCast && sharedCast.lastFrame) { send('frame', sharedCast.lastFrame); }
+    else {
+      try {
+        const img = await client.screenshot({ target });
+        let wh = {};
+        try { const vp = await client.evaluate({ target, expression: 'JSON.stringify({w:window.innerWidth,h:window.innerHeight})' }); wh = JSON.parse((vp && vp.value) || '{}'); } catch (e) {}
+        if (img) send('frame', { d: img, w: wh.w || 1280, h: wh.h || 800 });
+      } catch (e) {}
+    }
+    // 单一共享 screencast,帧广播给所有 monitor(多个连接不再各自 start/stop 打架)
+    await ensureScreencast(client, target);
   } catch (e) { send('hello', { ok: false, msg: e.message }); }
-  req.on('close', () => { monitors.delete(send); if (cast) cast.stop(); });
+  req.on('close', () => {
+    monitors.delete(send);
+    if (monitors.size === 0 && sharedCast && sharedCast.handle) { try { sharedCast.handle.stop(); } catch (e) {} sharedCast = null; }
+  });
 }
 
 async function handleClick(req, res, q) {
@@ -202,6 +223,12 @@ async function handleRecords(req, res) {
   try {
     res.end(JSON.stringify({ ok: true, stats: db.stats(), comments: db.listComments(100), notes: db.listNotes(120), leads: db.listLeads(60) }));
   } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+
+async function handleStop(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  runState.cancelled = true; // 引擎循环会在下一步检查到并中断
+  res.end(JSON.stringify({ ok: true }));
 }
 
 async function handleThrottle(req, res) {
@@ -249,6 +276,117 @@ async function handleTriggerLogin(req, res) {
   } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 
+async function handleCursorInstall(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try {
+    let client, target;
+    if (lastRun && lastRun.target) { client = lastRun.client; target = lastRun.target; }
+    else { const c = await engine.connect(ENDPOINT, broadcastPointer); client = c.client; target = c.target; lastRun = { client, target, results: [] }; }
+    await client.installCursor({ target });
+    res.end(JSON.stringify({ ok: true }));
+  } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+
+// 打开一篇笔记 → 定位评论框 →(真发:输入+点发送+验证成功+入库)→ 关闭。dry=true 只定位不发。
+// 在「已打开且已浏览到评论区」的笔记上评论:定位评论框 →(真发:输入+点发送+验证+入库)。不开不关(由 readDetail 管)。
+async function commentOnOpenNote({ client, target, note, comment, dry, onLog = () => {} }) {
+  try {
+    let probe = { inputs: [], sendBtns: [] };
+    try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
+    if (!probe.inputs[0]) { await client.wheelScroll({ target, x: 600, y: 500, totalDeltaY: 420 }).catch(() => {}); await sleep(rand(700, 1300)); try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {} }
+    if (!probe.inputs[0]) return { ok: false, msg: '没定位到评论框' };
+    if (dry) return { ok: true, msg: '演练:已定位评论框(未发送)' };
+    try { const st = await readLoginStatus(client, target); if (!st.loggedIn) return { ok: false, msg: '未登录,跳过(绝不假发)' }; } catch (e) {}
+    await client.click({ target, x: probe.inputs[0].x, y: probe.inputs[0].y });
+    await sleep(rand(700, 1300));
+    await client.typeText({ target, text: comment });
+    await sleep(rand(1200, 2000));
+    let probe2 = { sendBtns: [] };
+    try { probe2 = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
+    const btn = (probe2.sendBtns || [])[0] || (probe.sendBtns || [])[0];
+    if (!btn) return { ok: false, msg: '评论已输入但没找到发送按钮' };
+    await client.click({ target, x: btn.x, y: btn.y });
+    await sleep(1800);
+    let okSent = false;
+    try {
+      const vf = await client.evaluate({ target, expression: '(function(){var t=document.body.innerText.indexOf("评论成功")>=0;var b=document.querySelector("p[class*=content-input],div[contenteditable=true]");var empty=b?((b.innerText||"").trim().length===0):false;return (t||empty)?"ok":"no";})()' });
+      okSent = vf && vf.value === 'ok';
+    } catch (e) {}
+    if (okSent) {
+      try { db.insertComment({ noteId: note.id, noteTitle: note.title, noteUrl: note.url, content: comment, status: 'sent' }); } catch (e) {}
+      return { ok: true, msg: '已发送✓(已确认成功)' };
+    }
+    return { ok: false, msg: '点了发送但没确认成功(可能未登录/被拦)' };
+  } catch (e) {
+    return { ok: false, msg: e.message };
+  }
+}
+
+// 自动评论循环:采集→匹配→去重→逐条(限频闸门→生成→合规→打开评论关闭→拟人间隔)。默认演练。
+async function handleAutoRun(req, res, q) {
+  const send = sse(res);
+  runState = { running: true, cancelled: false };
+  const cfg = db.getConfig();
+  const dryParam = q.get('dry');
+  const dry = dryParam != null ? (dryParam !== '0') : (cfg.auto_send_dry_run !== false);
+  try {
+    send('log', dry ? '🟡 自动评论 · 演练模式(走完整流程,不真发)' : '🔴 自动评论 · 真发模式(会真的发评论!)');
+    send('phase', { phase: 'search' });
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    lastRun = { client, target, results: [] };
+    try { await client.installCursor({ target }); } catch (e) {}
+    let loggedIn = true; try { loggedIn = (await readLoginStatus(client, target)).loggedIn; } catch (e) {}
+    if (!loggedIn && !dry) { send('log', '⚠ 浏览器未登录小红书,真发模式已停止(先扫码登录)'); send('done', { error: 'not_logged_in' }); res.end(); runState.running = false; return; }
+    const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
+    const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: cfg.task_max || 40, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
+    if (runState.cancelled) { send('log', '⏹ 已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
+    send('phase', { phase: 'match' });
+    const { tagged, targets, byIntent } = engine.matchNotes(notes);
+    tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
+    const fresh = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } });
+    send('stats', { total: notes.length, byIntent, targetCount: fresh.length });
+    send('log', '求租目标 ' + targets.length + ',去重后待评 ' + fresh.length + ' 条');
+    send('phase', { phase: 'generate' });
+    let sent = 0, done = 0;
+    for (const t of fresh) {
+      if (runState.cancelled) { send('log', '⏹ 已停止'); break; }
+      const gate = throttle.canComment({ ignoreGap: true }); // 不卡固定间隔,浏览本身就是自然间隔
+      if (!gate.ok) {
+        send('log', '⛔ ' + gate.reason);
+        if (/休息日|不在.*时段|今日.*上限|配额.*用完/.test(gate.reason)) { send('log', '今日/本时段配额到顶,自动停。'); break; }
+        send('log', '…' + gate.reason + ',跳过这条'); continue;
+      }
+      const browse = { imagesMin: cfg.browse_images_min, imagesMax: cfg.browse_images_max, bodyMin: cfg.browse_body_dwell_min, bodyMax: cfg.browse_body_dwell_max, cScrollMin: cfg.browse_comment_scrolls_min, cScrollMax: cfg.browse_comment_scrolls_max, cDwellMin: cfg.browse_comment_dwell_min, cDwellMax: cfg.browse_comment_dwell_max };
+      try {
+        // 一次访问:打开 → 正常浏览(看图/读评论/正文停留)→ 浏览完遇匹配就评论 → 关闭
+        await engine.readDetail({ client, target, note: t, browse, onLog: (m) => send('log', '  ' + m), onBeforeClose: async ({ detail }) => {
+          const merged = Object.assign({}, t, { tags: (detail && detail.tags) || [], desc: (detail && detail.desc) || '' });
+          const comment = engine.genComment(merged, cfg.task_direction || '');
+          if (!engine.check(comment).ok) { send('log', '  跳过(合规不过)'); return; }
+          send('log', (dry ? '  [演练] ' : '  ') + '评论:' + comment);
+          const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => send('log', '    ' + m) });
+          send('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, region: t.region, ok: r.ok, dry: dry });
+          send('log', '  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
+          done++;
+          if (r.ok && !dry) sent++;
+        } });
+      } catch (e) { send('log', '  跳过:' + e.message); }
+      await sleep(rand(1200, 3500)); // 去下一篇前的自然小停(不再强制几分钟)
+    }
+    send('done', { sent: sent, done: done, dry: dry });
+  } catch (e) {
+    send('log', '✗ 出错:' + e.message);
+    send('done', { error: e.message });
+  }
+  runState.running = false;
+  res.end();
+}
+
+async function handleConfig(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try { res.end(JSON.stringify({ ok: true, config: db.getConfig() })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
   if (u.pathname === '/') {
@@ -257,12 +395,16 @@ const server = http.createServer(async (req, res) => {
     res.end(html); return;
   }
   if (u.pathname === '/api/run') { await handleRun(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/auto-run') { await handleAutoRun(req, res, u.searchParams); return; }
   if (u.pathname === '/api/send') { await handleSend(req, res, u.searchParams); return; }
   if (u.pathname === '/api/screencast') { await handleScreencast(req, res); return; }
   if (u.pathname === '/api/click') { await handleClick(req, res, u.searchParams); return; }
   if (u.pathname === '/api/records') { await handleRecords(req, res); return; }
   if (u.pathname === '/api/login-status') { await handleLoginStatus(req, res); return; }
   if (u.pathname === '/api/trigger-login') { await handleTriggerLogin(req, res); return; }
+  if (u.pathname === '/api/stop') { await handleStop(req, res); return; }
+  if (u.pathname === '/api/cursor-install') { await handleCursorInstall(req, res); return; }
+  if (u.pathname === '/api/config') { await handleConfig(req, res); return; }
   if (u.pathname === '/api/throttle') { await handleThrottle(req, res); return; }
   if (u.pathname === '/api/save-config') { await handleSaveConfig(req, res, u.searchParams); return; }
   res.writeHead(404); res.end('not found');

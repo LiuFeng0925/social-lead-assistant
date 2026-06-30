@@ -121,7 +121,7 @@
   <nav class="toc"><strong>全文结构(✅=本批已写 ｜ ○=待写)</strong>
   <ul>
     <li><span class="done">✅</span> 1 产品总览</li>
-    <li><span class="done">✅</span> 2.2 检索配置与执行(样板)</li>
+    <li><span class="done">✅</span> 2.2 任务设置:检索条件 + 筛选</li>
     <li><span class="todo">○</span> 2.1 接入与账号</li>
     <li><span class="todo">○</span> 2.3 匹配引擎</li>
     <li><span class="todo">○</span> 2.4 内容生成</li>
@@ -130,9 +130,9 @@
     <li><span class="todo">○</span> 2.7 触达执行</li>
     <li><span class="todo">○</span> 2.8 加微转化</li>
     <li><span class="todo">○</span> 2.9 线索管理</li>
-    <li><span class="todo">○</span> 2.10 防封号与运行控制</li>
+    <li><span class="done">✅</span> 2.10 排班管理</li>
     <li><span class="todo">○</span> 2.11 配置中心</li>
-    <li><span class="todo">○</span> 2.12 运行监控与日志</li>
+    <li><span class="done">◐</span> 2.12 运行监控与日志(监控器+鼠标轨迹)</li>
     <li><span class="todo">○</span> 3 中央后台(看板/线索/租户)</li>
     <li><span class="todo">○</span> 4 配置项总表</li>
     <li><span class="todo">○</span> 5 关键页面 mockup 汇总</li>
@@ -157,14 +157,12 @@
   <div class="card">
     <p><strong>桌面客户端</strong>(左侧导航):</p>
     <ul>
-      <li><strong>控制台</strong> — 启停总开关、今日数据、账号状态一览</li>
-      <li><strong>检索</strong> · <strong>匹配规则</strong> · <strong>内容生成</strong> — 获客策略三件套</li>
-      <li><strong>房源素材库</strong> · <strong>话术库</strong> — 素材两件套</li>
-      <li><strong>触达执行</strong> — 四类动作开关与节奏</li>
-      <li><strong>线索</strong> — 本账号线索列表 / 待接管对话</li>
-      <li><strong>防封号与运行控制</strong> — 限频、工作时间、养号、健康、紧急刹车</li>
-      <li><strong>配置中心</strong> · <strong>运行日志</strong> · <strong>账号/接入设置</strong></li>
+      <li><strong>控制台</strong> — 只做监控:登录状态、实时监控器(内嵌浏览器画面 + 机器鼠标轨迹红点)、阶段进度、指标、实时日志、开始/停止、待发评论复核;不放任何配置</li>
+      <li><strong>设置</strong> 分组:<strong>任务设置</strong>(关键词+筛选+评论方向+抓取上限,并入排班) · <strong>排班管理</strong>(按周几多时段+每段评论配额+节奏) · <strong>防封控制</strong>(限频/养号/紧急刹车)</li>
+      <li><strong>记录</strong> 分组:<strong>评论记录</strong> · <strong>采集记录</strong></li>
+      <li>(规划中)匹配规则 · 内容生成 · 房源素材库 · 话术库 · 触达执行 · 线索 · 配置中心 · 接入设置</li>
     </ul>
+    <p style="margin-top:6px;color:#6b6b70;font-size:13px">注:已从"每页自带配置+启停"重构为"控制台只监控/启停、配置类收进设置分组",是当前客户端实际形态。</p>
     <p style="margin-top:8px"><strong>中央后台</strong>(网页):账号总览看板 · 线索汇总 · <span class="badge p2">P2</span> 租户管理</p>
   </div>
 
@@ -184,20 +182,20 @@
   </section>
 
   <!-- ========== 2.2 检索(样板模块) ========== -->
-  <section id="search"><h2 class="sec"><span class="n">2.2</span>检索配置与执行 <span class="badge p0">P0</span></h2>
-  <p class="msub" style="margin-bottom:14px">↓ 这是"样板模块",展示每个功能模块的统一写法:功能卡 + 高保真 mockup + 验收标准。</p>
+  <section id="search"><h2 class="sec"><span class="n">2.2</span>任务设置:检索条件 + 筛选 <span class="badge p0">P0</span> <span class="done" style="font-size:13px">✅已实现</span></h2>
+  <p class="msub" style="margin-bottom:14px">↓ 「任务设置」页 = 整体条件(关键词/筛选/评论方向/抓取上限)+ 排班(见 2.10);本节讲整体条件。</p>
 
   <div class="fcard">
-    <div class="fhead">功能卡 · 检索配置与执行</div>
+    <div class="fhead">功能卡 · 任务设置:检索条件 + 筛选</div>
     <table class="ftbl">
       <tr><th>功能目的</th><td>让运营自定义检索条件,系统据此在小红书上找到相关求租/房源笔记及其评论区,作为后续匹配与触达的来源。</td></tr>
-      <tr><th>用户怎么用</th><td>在"检索"页配置:目标城市(可多城、可开关)、搜索关键词、笔记类型、时间窗、采集范围 → 点"保存配置";运行可由控制台总开关统一调度,也可在本页"开始检索"单独试跑。</td></tr>
+      <tr><th>用户怎么用</th><td>在「任务设置」页配置:搜索关键词、<strong>筛选</strong>(排序/发布时间/笔记类型/搜索范围,= 小红书搜索页原生筛选)、评论主方向、抓取上限 → 点"保存";控制台「▶ 开始」即按保存的设置跑。</td></tr>
       <tr><th>详细规则</th><td>
-        ① 系统按"关键词 × 城市"组合生成检索词,逐个搜索;<br>
-        ② 读取每条笔记:标题/正文/标签/发布时间/作者/地区,以及评论区(识别"问房子"的潜在客户);<br>
-        ③ 受全局限频与拟人节奏约束(翻页有随机间隔);<br>
-        ④ 采集到的笔记/评论进入匹配漏斗(见 2.3);<br>
-        ⑤ 已处理过的笔记/评论去重,不重复触达。</td></tr>
+        ① 用关键词生成检索词进搜索页;<br>
+        ② <strong>筛选用拟人点击应用</strong>——不在 URL 拼参数,而是导航后像真人一样点开筛选面板、按可见文字("最新""一周内""图文"等)点选(排序若是下拉先展开),按文字定位、抗改版,命中/未命中都打日志;<br>
+        ③ 读取每条笔记:标题/正文/标签/发布时间/作者/地区,以及评论区(识别"问房子"潜客);<br>
+        ④ 受全局限频与拟人节奏约束(翻页随机间隔 + trusted 滚轮);<br>
+        ⑤ 采集进匹配漏斗(见 2.3);⑥ 已处理去重,不重复触达。</td></tr>
       <tr><th>配置项</th><td>
         <table class="cfg">
           <tr><th>配置项</th><th>默认</th><th>取值/说明</th></tr>
@@ -207,6 +205,12 @@
           <tr><td>笔记类型</td><td>求租+房源</td><td>求租帖 / 房源帖 可分别勾选</td></tr>
           <tr><td>时间窗</td><td>无预设</td><td>N 天内;求租按发帖、评论客户按评论时间</td></tr>
           <tr><td>采集范围</td><td>—</td><td>每次最多 N 条、翻页深度 N 页</td></tr>
+          <tr><td>排序方式</td><td>综合</td><td>小红书原生:综合/最新/最多点赞/最多评论/最多收藏(求租建议"最新")</td></tr>
+          <tr><td>发布时间</td><td>不限</td><td>小红书原生:不限/一天内/一周内/半年内</td></tr>
+          <tr><td>笔记内容形式</td><td>不限</td><td>小红书原生:不限/图文/视频(与"求租/房源"意向分层不同)</td></tr>
+          <tr><td>搜索范围</td><td>不限</td><td>小红书原生:不限/已看过/未看过/已关注</td></tr>
+          <tr><td>评论主方向</td><td>—</td><td>喂给生成的口吻/立场</td></tr>
+          <tr><td>抓取上限</td><td>40</td><td>每轮检索最多采集多少条笔记</td></tr>
         </table></td></tr>
       <tr><th>输入 / 输出</th><td><strong>输入</strong>:检索配置。<strong>输出</strong>:候选笔记/评论列表(含元数据),写入本地待匹配队列。</td></tr>
       <tr><th>异常与边界</th><td>搜索无结果→提示并跳过;页面改版/选择器失效→记录错误并告警(不静默失败);触发限流→自动降速/暂停并上报;重复内容→去重跳过。</td></tr>
@@ -222,6 +226,8 @@
         <li>同一笔记/评论不会被重复采集进待处理队列。</li>
         <li>翻页/采集间隔存在随机抖动,非固定节奏。</li>
         <li>页面结构异常时有明确错误提示与日志,不静默丢数据。</li>
+        <li>选"排序=最新/发布时间=一周内/内容形式=图文/搜索范围=未看过"后,系统以拟人点击应用筛选,结果随之变化;未命中的筛选项日志明确提示。</li>
+        <li>任务设置保存后,控制台「开始」即按保存值运行(含筛选)。</li>
       </ul>
     </div>
     <div class="mockwrap">
@@ -278,10 +284,78 @@
   </div>
   </section>
 
+  <!-- ========== 2.10 排班管理 ========== -->
+  <section id="schedule"><h2 class="sec"><span class="n">2.10</span>排班管理 <span class="badge p0">P0</span> <span class="done" style="font-size:13px">✅已实现</span></h2>
+  <p class="msub" style="margin-bottom:14px">排班决定 WHEN(什么时候开工、每段跑多少),防封决定 HOW FAST/SAFE,两者叠加取最严。参考同机 BOSS「Agent 工作时间」并简化适配(单账号、单一评论动作)。</p>
+  <div class="fcard">
+    <div class="fhead">功能卡 · 排班管理</div>
+    <table class="ftbl">
+      <tr><th>功能目的</th><td>按"周几 + 时段"安排机器作息,并给每段单独设评论条数上限,贴近真人节律、分散行为、降低风控风险。</td></tr>
+      <tr><th>用户怎么用</th><td>「任务设置」页下半「排班」区:① 开/关启用排班;② 周一~周日每天 开关上班 + 设工作时段(可多段);③ 每段填评论条数上限;④ 选时段内节奏;⑤ 保存。</td></tr>
+      <tr><th>详细规则</th><td>
+        ① 只在"今天周几"对应、且命中当前时刻的时段内才动作,非时段/休息日自动收工;<br>
+        ② 每段配额 = 该时段最多发多少条,发够即停、等下段;<br>
+        ③ 节奏:<strong>匀速摊开</strong>按"时段已过百分比"放行,<strong>开头集中</strong>配额内连续放行;<br>
+        ④ <strong>养号阶梯/每日上限是安全天花板</strong>,任何配额都突破不了;每小时上限、最小间隔照常叠加(取最严);<br>
+        ⑤ 启用排班后优先于「防封控制」的单一工作时段(后者作兜底)。</td></tr>
+      <tr><th>配置项</th><td>
+        <table class="cfg">
+          <tr><th>配置项</th><th>默认</th><th>取值/说明</th></tr>
+          <tr><td>启用排班</td><td>开</td><td>关=不限时段,只受防封限频约束</td></tr>
+          <tr><td>每天 上班开关</td><td>全开</td><td>周一~周日各一个;关=该天休息</td></tr>
+          <tr><td>工作时段</td><td>09:30–23:00</td><td>每天可多段;时:分</td></tr>
+          <tr><td>每段评论上限</td><td>8</td><td>该时段最多发多少条评论</td></tr>
+          <tr><td>时段内节奏</td><td>匀速摊开</td><td>匀速摊开 / 开头集中发完再歇</td></tr>
+        </table></td></tr>
+      <tr><th>冲突校验</th><td>同一天多个时段不得重叠、开始须早于结束(首尾相接合法);保存时拦截并提示哪天哪两段;编辑时实时标红冲突段。</td></tr>
+      <tr><th>异常与边界</th><td>全天休息→当天不动作;配额留空→默认 8;旧数据无 quota→该段不设时段配额、仅受养号天花板。</td></tr>
+      <tr><th>优先级</th><td><span class="badge p0">P0</span></td></tr>
+      <tr><th>关联需求</th><td><code>FR-9.2/9.3/9.4</code> · 反检测清单第 2 类</td></tr>
+    </table>
+    <div class="accept">
+      <b>验收标准</b>
+      <ul>
+        <li>设某天休息,该天到点不动作;限频原因显示"今天(周X)排班为休息日"。</li>
+        <li>某天设两段不同配额,各段发够即停、互不挪用。</li>
+        <li>匀速节奏下时段刚开始不会一次发完配额;开头集中配额内连续放行。</li>
+        <li>新号即使把配额配高,实发也不超过养号阶梯当天上限(如第 1 天 3 条)。</li>
+        <li>同日时段重叠或起止颠倒:保存被拦并提示;编辑时冲突段实时红框。</li>
+      </ul>
+    </div>
+  </div>
+  </section>
+
+  <!-- ========== 2.12 运行监控与日志 ========== -->
+  <section id="monitor"><h2 class="sec"><span class="n">2.12</span>运行监控与日志 <span class="badge p2">P1</span> <span class="done" style="font-size:13px">◐部分已实现</span></h2>
+  <div class="fcard">
+    <div class="fhead">功能卡 · 运行监控与日志</div>
+    <table class="ftbl">
+      <tr><th>功能目的</th><td>让运营实时看到机器在浏览器里的真实操作(画面 + 鼠标轨迹),建立信任、便于发现异常。</td></tr>
+      <tr><th>用户怎么用</th><td>控制台「实时监控」区:看内嵌浏览器实时画面 + 明显的红点光标,跟随机器鼠标移动/滚动/点击;下方实时日志逐行打印引擎动作。</td></tr>
+      <tr><th>详细规则</th><td>
+        ① 画面用 CDP 截图流(screencast)实时推送;<br>
+        ② 红点=机器鼠标位置:移动按贝塞尔轨迹、滚动随页翻动、点击放扩散环,走过留<strong>淡出彗星尾巴</strong>画出路径;<br>
+        ③ 监控画面一连上,红点<strong>居中常驻显示</strong>(呼吸脉动)便于辨认;<br>
+        ④ 画面可点击 = 直接在监控里操作内嵌浏览器;坐标按画面缩放比映射。</td></tr>
+      <tr><th>异常与边界</th><td>监控画面未连上(无截图帧)时红点不显示——属预期,连上即居中出现。</td></tr>
+      <tr><th>优先级</th><td><span class="badge p2">P1</span></td></tr>
+      <tr><th>关联需求</th><td><code>FR-C</code> · 反检测清单第 6 类</td></tr>
+    </table>
+    <div class="accept">
+      <b>验收标准</b>
+      <ul>
+        <li>跑检索时,红点沿轨迹移动、滚动翻页拖尾巴、点开笔记放扩散环。</li>
+        <li>红点足够明显(约 42px + 红心白环红晕 + 脉动),白底页面清晰可见。</li>
+        <li>在监控画面上点击能驱动内嵌浏览器。</li>
+      </ul>
+    </div>
+  </div>
+  </section>
+
   <div class="callout c-amber"><strong>请校准:这就是后续每个模块的"样子"</strong>
   每个功能模块都会是这样一张「功能卡(目的/用法/规则/配置项/输入输出/异常/优先级/FR回链)+ 验收标准 + 该页高保真 mockup」。请看:① 功能卡的<strong>详略</strong>合适吗?② mockup 的<strong>保真度/风格</strong>是你要的吗?③ 配置项颗粒度对吗?确认后我按此把其余 ~13 个模块补齐。</div>
 
-  <footer>小红书自动化获客工具 · 产品功能文档 v0.1(第 1 批) ｜ 2026-06-24</footer>
+  <footer>小红书自动化获客工具 · 产品功能文档 v0.2(第 2 批:任务设置/排班/监控) ｜ 2026-06-28</footer>
 </div>
 </body>
 </html>
