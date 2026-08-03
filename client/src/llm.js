@@ -33,21 +33,26 @@ function postChat({ host, path, apiKey, body, timeoutMs = 12000 }) {
   });
 }
 
-// 按对方笔记 + 方向,让大模型生成一句拟人评论
-async function genComment({ note, direction, provider, model, apiKey }) {
-  const ep = PROVIDERS[provider] || PROVIDERS.ark;
+function buildCommentMessages({ note, direction }) {
   const title = (note && note.title) || '';
   const desc = ((note && note.desc) || '').slice(0, 600);
   const tags = ((note && note.tags) || []).join(' ');
-  const sys = '你是帮租房中介在小红书做获客的助手。读对方的求租笔记,写一句自然、口语化、像真人随手回的评论,呼应对方的具体诉求(地区/户型/预算/通勤等),态度友好,引导对方看你主页或私聊。硬性红线:绝对不能出现微信号、手机号、二维码、任何外链或"加我"等明示联系方式;不超过 50 字;只输出评论本身,不要引号、不要解释。';
-  const user = '【对方笔记标题】' + title + '\n【正文】' + desc + '\n【标签】' + tags + '\n【我的方向/卖点】' + (direction || '友好回应,引导看主页/私聊') + '\n请按上面要求写这一句评论。';
+  const context = (note && note.comment_context) ? String(note.comment_context) : '';
+  const sys = '你是帮租房中介在小红书做获客的助手。读对方的求租笔记,写一句自然、口语化、像真人随手回的评论,呼应对方的具体诉求(地区/户型/预算/通勤等),态度友好,引导对方看你主页或私聊。如果系统判断里预算、户型、通勤等是未知,绝对不能编造,要自然追问缺失信息。硬性红线:绝对不能出现微信号、手机号、二维码、任何外链或"加我"等明示联系方式;不超过 50 字;只输出评论本身,不要引号、不要解释。';
+  const user = '【对方笔记标题】' + title + '\n【正文】' + desc + '\n【标签】' + tags + (context ? '\n【系统判断】\n' + context : '') + '\n【我的方向/卖点】' + (direction || '友好回应,引导看主页/私聊') + '\n请按上面要求写这一句评论。';
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+// 按对方笔记 + 方向,让大模型生成一句拟人评论
+async function genComment({ note, direction, provider, model, apiKey }) {
+  const ep = PROVIDERS[provider] || PROVIDERS.ark;
   const j = await postChat({
     host: ep.host, path: ep.path, apiKey,
-    body: { model: model || '', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], temperature: 0.9, max_tokens: 120 },
+    body: { model: model || '', messages: buildCommentMessages({ note, direction }), temperature: 0.9, max_tokens: 120 },
   });
   const txt = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
   if (!txt) throw new Error('LLM 没返回内容');
   return String(txt).trim().replace(/^["「『]|["」』]$/g, '').trim();
 }
 
-module.exports = { genComment, PROVIDERS };
+module.exports = { genComment, buildCommentMessages, PROVIDERS };

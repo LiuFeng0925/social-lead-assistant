@@ -7,6 +7,8 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
+const inboxUtils = require('./inbox-utils');
+const leadModel = require('./lead-model');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 let db = null;
@@ -39,14 +41,36 @@ function open() {
       note_title text, note_url text, action_date text, intent text,
       status text default 'new', reply_text text, fail_reason text,
       received_at text, replied_at text,
-      dedup_key text unique
+      dedup_key text unique,
+      event_key text, actor_key text, content_norm text, source_key text,
+      time_raw text, event_at_est text, time_confidence text,
+      duplicate_of integer, skip_reason text, last_seen_at text,
+      basis_text text, raw_text text
     );
     create table if not exists config (k text primary key, v text);
   `);
+  ensureInboxSchema(db);
+  backfillInboxIdentities(db);
   return db;
 }
 
 const now = () => new Date().toISOString();
+
+function rangeWhere(fieldSql, range) {
+  const clauses = [];
+  const args = [];
+  if (range && range.start) { clauses.push(`${fieldSql} >= ?`); args.push(range.start); }
+  if (range && range.end) { clauses.push(`${fieldSql} < ?`); args.push(range.end); }
+  return { clauses, args };
+}
+
+function countWhere(table, extraWhere, fieldSql, range) {
+  const r = rangeWhere(fieldSql, range);
+  const where = [extraWhere].filter(Boolean).concat(r.clauses).join(' and ');
+  const sql = `select count(*) c from ${table}` + (where ? ` where ${where}` : '');
+  const row = open().prepare(sql).get(...r.args);
+  return row ? row.c : 0;
+}
 
 // 采集到的笔记:存/更新(同 id 覆盖热度等,保留首次采集时间)
 function upsertNote(n) {
@@ -83,46 +107,176 @@ function insertLead(l) {
   } catch (e) { /* 忽略重复 */ }
 }
 
-function listComments(limit = 100) { return open().prepare(`select * from comments order by id desc limit ?`).all(limit); }
-function listNotes(limit = 200) { return open().prepare(`select * from notes order by last_seen_at desc limit ?`).all(limit); }
+function listComments(limit = 100, range = {}) {
+  const r = rangeWhere('created_at', range);
+  const where = r.clauses.length ? `where ${r.clauses.join(' and ')}` : '';
+  return open().prepare(`select * from comments ${where} order by id desc limit ?`).all(...r.args, limit);
+}
+function listNotes(limit = 200, range = {}) {
+  const r = rangeWhere('last_seen_at', range);
+  const where = r.clauses.length ? `where ${r.clauses.join(' and ')}` : '';
+  return open().prepare(`select * from notes ${where} order by last_seen_at desc limit ?`).all(...r.args, limit);
+}
 function listLeads(limit = 100) { return open().prepare(`select * from leads order by id desc limit ?`).all(limit); }
 
 // ── 承接收件箱 ──
+function ensureInboxSchema(d) {
+  const cols = new Set(d.prepare('pragma table_info(inbox)').all().map((r) => r.name));
+  const add = (name, sql) => { if (!cols.has(name)) d.exec(`alter table inbox add column ${name} ${sql}`); };
+  add('event_key', 'text');
+  add('actor_key', 'text');
+  add('content_norm', 'text');
+  add('source_key', 'text');
+  add('time_raw', 'text');
+  add('event_at_est', 'text');
+  add('time_confidence', 'text');
+  add('duplicate_of', 'integer');
+  add('skip_reason', 'text');
+  add('last_seen_at', 'text');
+  add('basis_text', 'text');
+  add('raw_text', 'text');
+  d.exec(`
+    create index if not exists idx_inbox_event_key on inbox(event_key);
+    create index if not exists idx_inbox_identity on inbox(actor_key, content_norm);
+    create index if not exists idx_inbox_duplicate_of on inbox(duplicate_of);
+  `);
+}
+
+function _statusRank(status) {
+  if (status === 'replied') return 4;
+  if (status === 'failed') return 3;
+  if (status === 'skipped') return 2;
+  return 1;
+}
+
+function backfillInboxIdentities(d) {
+  const rows = d.prepare('select * from inbox order by id').all();
+  if (!rows.length) return;
+  const groups = new Map();
+  for (const row of rows) {
+    const p = inboxUtils.prepareInboxItem(row);
+    const cur = groups.get(p.event_key) || [];
+    cur.push({ row, prepared: p });
+    groups.set(p.event_key, cur);
+  }
+  const update = d.prepare(`update inbox set
+    event_key=?, actor_key=?, content_norm=?, source_key=?, time_raw=?,
+    event_at_est=?, time_confidence=?, duplicate_of=?, skip_reason=?,
+    last_seen_at=coalesce(last_seen_at, received_at),
+    basis_text=coalesce(nullif(basis_text,''), ?),
+    raw_text=coalesce(nullif(raw_text,''), ?)
+    where id=?`);
+  const updateStatus = d.prepare(`update inbox set status=?, skip_reason=coalesce(skip_reason, ?) where id=?`);
+  for (const group of groups.values()) {
+    let primary = group[0];
+    for (const item of group) {
+      const a = _statusRank(item.row.status);
+      const b = _statusRank(primary.row.status);
+      if (a > b || (a === b && item.row.id > primary.row.id)) primary = item;
+    }
+    for (const item of group) {
+      const isPrimary = item.row.id === primary.row.id;
+      const p = item.prepared;
+      const duplicateOf = isPrimary ? null : primary.row.id;
+      const skipReason = item.row.skip_reason || (p.skip_reason && item.row.status !== 'replied' ? p.skip_reason : null) || null;
+      update.run(p.event_key, p.actor_key, p.content_norm, p.source_key, p.time_raw, p.event_at_est, p.time_confidence, duplicateOf, skipReason, p.basis_text, p.raw_text, item.row.id);
+      if (p.skip_reason && item.row.status === 'new') updateStatus.run('skipped', p.skip_reason, item.row.id);
+    }
+  }
+}
+
+function backfillInboxIfNeeded() {
+  const d = open();
+  const r = d.prepare(`select count(*) c from inbox where event_key is null or event_key=''`).get();
+  if (r && r.c > 0) backfillInboxIdentities(d);
+  d.prepare(`update inbox
+    set event_at_est=coalesce(received_at,replied_at), time_confidence='estimated'
+    where duplicate_of is null and status='replied'
+      and replied_at is not null and event_at_est is not null and event_at_est > replied_at`).run();
+}
+
 // 插入一条收到的评论;dedup_key 已存在则忽略(不重复入库)。返回 true=新增。
 function insertInbox(it) {
-  const r = open().prepare(`insert or ignore into inbox
-    (type, nick, user_link, content, note_title, note_url, action_date, intent, status, received_at, dedup_key)
-    values (?,?,?,?,?,?,?,?,?,?,?)`).run(
-    it.type || '', it.nick || '', it.user_link || '', it.content || '',
-    it.note_title || '', it.note_url || '', it.action_date || '', it.intent || '',
-    it.status || 'new', now(), it.dedup_key || (String(it.nick) + '|' + String(it.content) + '|' + String(it.action_date)));
+  const d = open();
+  const p = inboxUtils.prepareInboxItem(it);
+  const old = d.prepare(`select id, action_date, time_raw, event_at_est, time_confidence from inbox where event_key=? and duplicate_of is null order by id desc limit 1`).get(p.event_key);
+  if (old) {
+    const merged = inboxUtils.mergeEventTime(old, p);
+    const useIncomingTime = merged.event_at_est === p.event_at_est && merged.time_confidence === p.time_confidence;
+    d.prepare(`update inbox set last_seen_at=?, time_raw=?, action_date=?, event_at_est=?, time_confidence=? where id=?`)
+      .run(now(), useIncomingTime ? p.time_raw : old.time_raw, useIncomingTime ? p.action_date : old.action_date, merged.event_at_est, merged.time_confidence, old.id);
+    return false;
+  }
+  const status = (it.status && it.status !== 'new') ? it.status : (p.skip_reason ? 'skipped' : (it.status || 'new'));
+  const r = d.prepare(`insert or ignore into inbox
+    (type, nick, user_link, content, note_title, note_url, action_date, intent, status, received_at, last_seen_at, dedup_key,
+     event_key, actor_key, content_norm, source_key, time_raw, event_at_est, time_confidence, skip_reason, basis_text, raw_text)
+    values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    p.type || '', p.nick || '', p.user_link || '', p.content || '',
+    it.note_title || '', p.note_url || it.note_url || '', p.action_date || '', it.intent || '',
+    status, now(), now(), p.dedup_key,
+    p.event_key, p.actor_key, p.content_norm, p.source_key, p.time_raw, p.event_at_est, p.time_confidence, p.skip_reason || it.skip_reason || '', p.basis_text || '', p.raw_text || '');
   return r.changes > 0;
 }
-function listInbox(limit = 100) { return open().prepare(`select * from inbox order by id desc limit ?`).all(limit); }
+function listInbox(limit = 100, range = {}) {
+  backfillInboxIfNeeded();
+  const r = rangeWhere('coalesce(i.event_at_est,i.received_at)', range);
+  const where = ['i.duplicate_of is null'].concat(r.clauses).join(' and ');
+  return open().prepare(`select i.*,
+    (select count(*) from inbox d where d.duplicate_of=i.id) duplicate_count
+    from inbox i where ${where} order by i.id desc limit ?`).all(...r.args, limit);
+}
+function findInboxByEventKey(key) {
+  backfillInboxIfNeeded();
+  return open().prepare(`select * from inbox where event_key=? and duplicate_of is null order by id desc limit 1`).get(key);
+}
 function updateInboxByKey(key, fields) {
   const f = fields || {};
-  open().prepare(`update inbox set status=coalesce(?,status), reply_text=coalesce(?,reply_text), fail_reason=coalesce(?,fail_reason), intent=coalesce(?,intent), replied_at=coalesce(?,replied_at) where dedup_key=?`)
-    .run(f.status != null ? f.status : null, f.reply_text != null ? f.reply_text : null, f.fail_reason != null ? f.fail_reason : null, f.intent != null ? f.intent : null, f.replied_at != null ? f.replied_at : null, key);
+  open().prepare(`update inbox set
+    status=coalesce(?,status), reply_text=coalesce(?,reply_text),
+    fail_reason=coalesce(?,fail_reason), intent=coalesce(?,intent),
+    replied_at=coalesce(?,replied_at), skip_reason=coalesce(?,skip_reason),
+    last_seen_at=?
+    where dedup_key=? or event_key=?`)
+    .run(f.status != null ? f.status : null, f.reply_text != null ? f.reply_text : null,
+      f.fail_reason != null ? f.fail_reason : null, f.intent != null ? f.intent : null,
+      f.replied_at != null ? f.replied_at : null, f.skip_reason != null ? f.skip_reason : null,
+      now(), key, key);
 }
 function repliedToday() {
+  backfillInboxIfNeeded();
   const day = now().slice(0, 10);
-  const r = open().prepare(`select count(*) c from inbox where status='replied' and substr(coalesce(replied_at,received_at),1,10)=?`).get(day);
+  const r = open().prepare(`select count(*) c from inbox where duplicate_of is null and status='replied' and substr(coalesce(replied_at,received_at),1,10)=?`).get(day);
   return r.c || 0;
 }
-function inboxStats() {
+function hasRecentInboxReply(it, days = 7) {
+  backfillInboxIfNeeded();
+  const p = inboxUtils.prepareInboxItem(it);
+  if (!p.actor_key || !p.content_norm) return false;
+  const since = new Date(Date.now() - (Number(days) || 7) * 86400000).toISOString();
+  const r = open().prepare(`select count(*) c from inbox
+    where duplicate_of is null and status='replied'
+      and actor_key=? and content_norm=?
+      and coalesce(replied_at, received_at, '') >= ?`).get(p.actor_key, p.content_norm, since);
+  return !!(r && r.c > 0);
+}
+function inboxStats(range = {}) {
+  backfillInboxIfNeeded();
+  const r = rangeWhere('coalesce(event_at_est,received_at)', range);
+  const where = ['duplicate_of is null'].concat(r.clauses).join(' and ');
   const row = open().prepare(`select
     count(*) total,
     sum(case when status='new' then 1 else 0 end) pending,
     sum(case when status='replied' then 1 else 0 end) replied,
     sum(case when status='skipped' then 1 else 0 end) skipped,
     sum(case when status='failed' then 1 else 0 end) failed
-    from inbox`).get();
+    from inbox where ${where}`).get(...r.args);
   return { total: row.total || 0, pending: row.pending || 0, replied: row.replied || 0, skipped: row.skipped || 0, failed: row.failed || 0 };
 }
 
-function stats() {
-  const c = open().prepare(`select count(*) c from comments where status='sent'`).get();
-  const n = open().prepare(`select count(*) c from notes`).get();
+function stats(ranges = {}) {
+  const c = { c: countWhere('comments', "status='sent'", 'created_at', ranges.comments || {}) };
+  const n = { c: countWhere('notes', '', 'last_seen_at', ranges.notes || {}) };
   const l = open().prepare(`select count(*) c from leads`).get();
   return { commented: c.c, notes: n.c, leads: l.c };
 }
@@ -146,6 +300,8 @@ const DEFAULT_CONFIG = {
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
   // ── 评论生成 LLM(可切换 provider:ark 火山方舟 / dashscope 阿里百炼)。默认关=用内置话术模板;填 key 并启用后,评论改由大模型按对方正文+方向生成 ──
   llm_enabled: false, llm_provider: 'ark', llm_model: '', llm_api_key: '',
+  // ── 获客模型:笔记分类、提槽和分类后的处理动作。租房只是默认模板,可在「获客模型」页改成其他行业 ──
+  lead_model: leadModel.defaultLeadModel(),
   // ── 评论承接(在「评论承接」页改)── 别人评论/回复我 → 自动接住回复
   reply_enabled: true,                 // 任务里是否承接(开始任务时一并跑)
   reply_scope_comment: true, reply_scope_reply: true, reply_scope_mention: true, // 接哪些动作
@@ -205,6 +361,7 @@ function getConfig() {
       });
     });
   }
+  cfg.lead_model = leadModel.normalizeLeadModel(cfg.lead_model);
   return cfg;
 }
 function setConfig(partial) {
@@ -229,4 +386,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };

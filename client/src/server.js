@@ -10,6 +10,8 @@ const engine = require('./engine');
 const { startScreencast } = require('./cdp/screencast');
 const db = require('./db');
 const throttle = require('./throttle');
+const inboxUtils = require('./inbox-utils');
+const dateFilter = require('./date-filter');
 const { readLoginStatus } = require('./login-status');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 
@@ -19,6 +21,11 @@ const TMP = path.join(__dirname, '..', 'tmp');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
+
+function formatCategoryCounts(byIntent) {
+  const rows = Object.entries(byIntent || {}).filter(([, v]) => Number(v) > 0);
+  return rows.length ? rows.map(([k, v]) => `${k} ${v}`).join(' / ') : '无分类';
+}
 
 // 评论框 / 发送按钮定位(同 m4)
 const PROBE = `(function(){
@@ -65,11 +72,11 @@ async function handleRun(req, res, q) {
     const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: max, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled });
     if (runState.cancelled) { send('log', '⏹ 任务已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
     send('phase', { phase: 'match' });
-    const { tagged, targets, byIntent } = engine.matchNotes(notes);
+    const { tagged, targets, byIntent } = engine.matchNotes(notes, cfg);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} }); // 存采集历史(看过哪些笔记,带意向/地区)
     const fresh = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } }); // 评过的跳过
     const skipped = targets.length - fresh.length;
-    send('log', `匹配:${notes.length} 条 → 求租 ${byIntent['求租'] || 0} / 房源 ${byIntent['房源'] || 0} / 不明 ${byIntent['不明'] || 0};该评论 ${targets.length} 条${skipped ? `(已评过 ${skipped} 条自动跳过,剩 ${fresh.length})` : ''}`);
+    send('log', `分类:${notes.length} 条 → ${formatCategoryCounts(byIntent)};待评论 ${targets.length} 条${skipped ? `(已评过 ${skipped} 条自动跳过,剩 ${fresh.length})` : ''}`);
     send('stats', { total: notes.length, byIntent, targetCount: fresh.length });
     send('phase', { phase: 'generate' });
     const results = [];
@@ -96,7 +103,7 @@ async function handleRun(req, res, q) {
       const r = {
         index: i, id: t.id, url: t.url, title: t.title || '(无标题)', author: t.author, region: t.region,
         searchUrl: t.searchUrl,
-        likes: t.likes, collects: t.collects, comments: t.comments, intent: t.intent, tags: d.tags || [],
+        likes: t.likes, collects: t.collects, comments: t.comments, intent: t.intent, category_name: t.category_name, category_action: t.category_action, category_confidence: t.category_confidence, classify_reason: t.classify_reason, tags: d.tags || [],
         descSample: (d.desc || '').replace(/#[^#]*\[话题\]#/g, '').replace(/\s+/g, ' ').trim().slice(0, 80),
         comment, compliant: comp.ok, violations: comp.violations, agentReject
       };
@@ -218,10 +225,18 @@ async function handleClick(req, res, q) {
   } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 
-async function handleRecords(req, res) {
+async function handleRecords(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
-    res.end(JSON.stringify({ ok: true, stats: db.stats(), comments: db.listComments(100), notes: db.listNotes(120), leads: db.listLeads(60) }));
+    const commentsRange = dateFilter.parseRangeParams(q, 'comments_');
+    const notesRange = dateFilter.parseRangeParams(q, 'notes_');
+    res.end(JSON.stringify({
+      ok: true,
+      stats: db.stats({ comments: commentsRange, notes: notesRange }),
+      comments: db.listComments(100, commentsRange),
+      notes: db.listNotes(120, notesRange),
+      leads: db.listLeads(60),
+    }));
   } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 
@@ -232,23 +247,39 @@ async function handleStop(req, res) {
 }
 
 // 承接 step1:刷新收件 = 进通知页抓「评论和@」→ 去重入库 → 返回列表+统计
-async function handleInboxScan(req, res) {
+async function handleInboxScan(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
+    const range = dateFilter.parseRangeParams(q);
     const cfg = db.getConfig();
     const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
     try { await client.installCursor({ target }); } catch (e) {}
     const items = await engine.scanInbox({ client, target, max: 40, recentDays: Number(cfg.reply_recent_days) || 0 });
     let added = 0;
     for (const it of items) {
-      try { if (db.insertInbox({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, action_date: it.date, status: 'new' })) added++; } catch (e) {}
+      const p = inboxUtils.prepareInboxItem({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, basis_text: it.basis_text, raw_text: it.raw_text, action_date: it.date, note_url: it.note_url, source_key: it.source_key });
+      const timeWhy = inboxTimeSkipReason(p, cfg);
+      const why = p.skip_reason || timeWhy;
+      try { if (db.insertInbox({ ...p, status: why ? 'skipped' : 'new', skip_reason: why })) added++; } catch (e) {}
     }
-    res.end(JSON.stringify({ ok: true, scanned: items.length, added, items: db.listInbox(100), stats: db.inboxStats() }));
+    res.end(JSON.stringify({ ok: true, scanned: items.length, added, items: db.listInbox(100, range), stats: db.inboxStats(range) }));
   } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
-async function handleInboxList(req, res) {
+
+function inboxTimeSkipReason(item, cfg) {
+  const recentDays = Number(cfg && cfg.reply_recent_days) || 0;
+  if (recentDays <= 0) return '';
+  const parsed = inboxUtils.parseNotificationTime(item.action_date || item.date || item.time_raw || '');
+  if (parsed.confidence === 'unknown') return '未识别到评论时间';
+  if (Number.isFinite(parsed.daysAgo) && parsed.daysAgo > recentDays) return '超出近 ' + recentDays + ' 天';
+  return '';
+}
+async function handleInboxList(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  try { res.end(JSON.stringify({ ok: true, items: db.listInbox(100), stats: db.inboxStats() })); }
+  try {
+    const range = dateFilter.parseRangeParams(q);
+    res.end(JSON.stringify({ ok: true, items: db.listInbox(100, range), stats: db.inboxStats(range) }));
+  }
   catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 // 独立跑一轮承接(测试 / 手动「开始承接」);dry 默认看 reply_dry_run
@@ -365,48 +396,62 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
 // 承接一轮:进通知页抓「评论和@」→ 逐条判意向+回复(限频/批量上限)→ 回搜索页。dry=演练只定位+草稿。
 async function drainInbox({ client, target, cfg, dry, send }) {
   send('log', '📥 发现通知,暂停外呼,先去回复…');
+  let beforeInboxUrl = '';
+  try { beforeInboxUrl = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
+  const returnUrl = inboxUtils.resolvePostInboxReturnUrl(beforeInboxUrl) || engine.buildSearchUrl(cfg.task_keyword || '朝阳 租房');
   const items = await engine.scanInbox({ client, target, max: 40, recentDays: Number(cfg.reply_recent_days) || 0, onLog: (m) => send('log', '  ' + m) });
   let replied = 0;
+  const seenThisRun = new Set();
   const batchMax = Number(cfg.reply_batch_max) || 5;
   const dailyCap = Number(cfg.reply_daily) || 30;
   if (!items.length) { send('log', '  近 ' + (Number(cfg.reply_recent_days) || 0) + ' 天内没有新评论可回(更早的按"只回近N天"略过)'); }
   for (const it of items) {
     if (runState.cancelled) break;
-    const intent = engine.inboxIntent(it.content, cfg);
-    const key = (it.nick || '') + '|' + (it.content || '') + '|' + (it.date || '');
-    try { db.insertInbox({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, action_date: it.date, intent, status: 'new', dedup_key: key }); } catch (e) {}
-    const row = db.listInbox(300).find((r) => r.dedup_key === key);
-    if (row && row.status !== 'new') { send('log', '  跳过 ' + it.nick + '(之前已处理过)'); continue; }
-    if (!engine.shouldReply(it, cfg)) {
+    const prepared = inboxUtils.prepareInboxItem({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, basis_text: it.basis_text, raw_text: it.raw_text, action_date: it.date, note_url: it.note_url, source_key: it.source_key });
+    const intent = engine.inboxIntent(prepared.content, cfg);
+    const key = prepared.event_key;
+    if (seenThisRun.has(key)) { send('log', '  跳过 ' + prepared.nick + '(本轮重复通知)'); continue; }
+    seenThisRun.add(key);
+    const timeWhy = inboxTimeSkipReason(prepared, cfg);
+    const preSkip = prepared.skip_reason || timeWhy;
+    try { db.insertInbox({ ...prepared, intent, status: preSkip ? 'skipped' : 'new', skip_reason: preSkip }); } catch (e) {}
+    const row = db.findInboxByEventKey(key);
+    if (row && row.status !== 'new') { send('log', '  跳过 ' + prepared.nick + '(' + (row.skip_reason || row.fail_reason || '之前已处理过') + ')'); continue; }
+    if (db.hasRecentInboxReply(prepared, 7)) {
+      db.updateInboxByKey(key, { status: 'skipped', intent, skip_reason: '同一用户同一内容近期已回复' });
+      send('log', '  跳过 ' + prepared.nick + '(同一用户同一内容近期已回复)');
+      continue;
+    }
+    if (!engine.shouldReply(prepared, cfg)) {
       let why = '不符承接规则';
-      if (!it.content || it.content === '原评论已删除') why = '原评论已删/无内容';
-      else if ((cfg.reply_black_words || []).some((w) => it.content.indexOf(w) >= 0)) why = '命中黑词';
+      if (prepared.skip_reason) why = prepared.skip_reason;
+      else if ((cfg.reply_black_words || []).some((w) => prepared.content.indexOf(w) >= 0)) why = '命中黑词';
       else if (cfg.reply_only_intent && intent === 'other') why = '没意向词(已开"只回有意向")';
       else why = '该类型未在承接范围勾选';
-      db.updateInboxByKey(key, { status: 'skipped', intent });
-      send('log', '  跳过 ' + it.nick + '(' + why + ')');
+      db.updateInboxByKey(key, { status: 'skipped', intent, skip_reason: why });
+      send('log', '  跳过 ' + prepared.nick + '(' + why + ')');
       continue;
     }
     if (db.repliedToday() >= dailyCap) { send('log', '  今日回复达上限 ' + dailyCap + ',停止承接'); break; }
     if (replied >= batchMax) { send('log', '  本轮已回 ' + batchMax + ' 条,先回外呼'); break; }
-    const text = await engine.makeReply(it, cfg);
-    send('log', (dry ? '  [演练] ' : '  ') + '回复 ' + (it.nick || '') + ':' + text);
+    if (replied > 0) await sleep(dry ? rand(1500, 3000) : rand((cfg.reply_gap_min || 1) * 60000, (cfg.reply_gap_max || 4) * 60000));
+    const text = await engine.makeReply(prepared, cfg);
+    send('log', (dry ? '  [演练] ' : '  ') + '回复 ' + (prepared.nick || '') + ':' + text);
     if (!dry) { let li = true; try { li = (await readLoginStatus(client, target)).loggedIn; } catch (e) {} if (!li) { send('log', '  未登录,停止真发承接'); break; } }
-    const r = await engine.replyInboxItem({ client, target, item: it, text, dry });
+    const r = await engine.replyInboxItem({ client, target, item: prepared, text, dry });
     send('log', '  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
     if (r.ok && !dry) {
       db.updateInboxByKey(key, { status: 'replied', reply_text: text, intent, replied_at: new Date().toISOString() });
       replied++;
-      if (intent !== 'other') { try { db.insertLead({ note_id: '', nickname: it.nick, question: it.content, city: '' }); } catch (e) {} }
+      if (intent !== 'other') { try { db.insertLead({ note_id: '', nickname: prepared.nick, question: prepared.content, city: '' }); } catch (e) {} }
     } else if (dry) {
       db.updateInboxByKey(key, { reply_text: text, intent }); // 演练:存草稿,状态留 new
     } else {
       db.updateInboxByKey(key, { status: 'failed', fail_reason: r.msg, intent });
     }
-    await sleep(dry ? rand(1500, 3000) : rand((cfg.reply_gap_min || 1) * 60000, (cfg.reply_gap_max || 4) * 60000));
   }
-  send('log', '📥 承接完成(本轮回复 ' + replied + ' 条),回到外呼');
-  await client.navigate({ target, url: engine.buildSearchUrl(cfg.task_keyword || '朝阳 租房') });
+  send('log', '📥 承接完成(本轮回复 ' + replied + ' 条),回到主线页面');
+  await client.navigate({ target, url: returnUrl });
   for (let k = 0; k < 12; k++) { await sleep(1000); try { const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; } catch (e) {} }
   await sleep(rand(2000, 3500));
   return replied;
@@ -481,12 +526,12 @@ async function _rescanTargets(cfg) {
   const client = machine.client, target = machine.target;
   const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
   const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => emitLog(m), shouldStop: () => !machine.running, filters });
-  const { tagged, targets, byIntent } = engine.matchNotes(notes);
+  const { tagged, targets, byIntent } = engine.matchNotes(notes, cfg);
   tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
   machine.targets = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } });
   machine.lastScan = Date.now();
   emitEvent('stats', { total: notes.length, byIntent, targetCount: machine.targets.length });
-  emitLog('检索 ' + notes.length + ' 篇,求租 ' + targets.length + ',去重后待评 ' + machine.targets.length + ' 条');
+  emitLog('检索 ' + notes.length + ' 篇,' + formatCategoryCounts(byIntent) + ',去重后待评 ' + machine.targets.length + ' 条');
 }
 async function _processOutbound(cfg, t, dry) {
   const client = machine.client, target = machine.target;
@@ -498,7 +543,7 @@ async function _processOutbound(cfg, t, dry) {
       if (!engine.check(comment).ok) { emitLog('  跳过(合规不过)'); return; }
       emitLog((dry ? '  [演练] ' : '  ') + '评论 → 《' + (t.title || '无标题') + '》:' + comment);
       const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => emitLog('    ' + m) });
-      emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, region: t.region, ok: r.ok, dry: dry });
+      emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, category_name: t.category_name, category_action: t.category_action, category_confidence: t.category_confidence, region: t.region, ok: r.ok, dry: dry });
       emitLog('  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
       machine.done++;
       if (r.ok && !dry) { machine.sent++; emitEvent('status', machineStatus()); }
@@ -524,11 +569,11 @@ async function handleAutoRun(req, res, q) {
     const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
     if (runState.cancelled) { send('log', '⏹ 已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
     send('phase', { phase: 'match' });
-    const { tagged, targets, byIntent } = engine.matchNotes(notes);
+    const { tagged, targets, byIntent } = engine.matchNotes(notes, cfg);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
     const fresh = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } });
     send('stats', { total: notes.length, byIntent, targetCount: fresh.length });
-    send('log', '求租目标 ' + targets.length + ',去重后待评 ' + fresh.length + ' 条');
+    send('log', '目标分类 ' + targets.length + ',去重后待评 ' + fresh.length + ' 条');
     send('phase', { phase: 'generate' });
     let sent = 0, done = 0, lastInboxCheck = 0;
     for (const t of fresh) {
@@ -557,7 +602,7 @@ async function handleAutoRun(req, res, q) {
           if (!engine.check(comment).ok) { send('log', '  跳过(合规不过)'); return; }
           send('log', (dry ? '  [演练] ' : '  ') + '评论:' + comment);
           const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => send('log', '    ' + m) });
-          send('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, region: t.region, ok: r.ok, dry: dry });
+          send('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, category_name: t.category_name, category_action: t.category_action, category_confidence: t.category_confidence, region: t.region, ok: r.ok, dry: dry });
           send('log', '  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
           done++;
           if (r.ok && !dry) sent++;
@@ -591,9 +636,9 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/send') { await handleSend(req, res, u.searchParams); return; }
   if (u.pathname === '/api/screencast') { await handleScreencast(req, res); return; }
   if (u.pathname === '/api/click') { await handleClick(req, res, u.searchParams); return; }
-  if (u.pathname === '/api/records') { await handleRecords(req, res); return; }
-  if (u.pathname === '/api/inbox-scan') { await handleInboxScan(req, res); return; }
-  if (u.pathname === '/api/inbox-list') { await handleInboxList(req, res); return; }
+  if (u.pathname === '/api/records') { await handleRecords(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/inbox-scan') { await handleInboxScan(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/inbox-list') { await handleInboxList(req, res, u.searchParams); return; }
   if (u.pathname === '/api/inbox-run') { await handleInboxRun(req, res, u.searchParams); return; }
   if (u.pathname === '/api/engine/start') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine(), status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }

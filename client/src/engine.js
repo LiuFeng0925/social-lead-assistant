@@ -7,6 +7,8 @@ const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
 const { check, rejectsAgent } = require('./compliance');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 const llm = require('./llm');
+const inboxUtils = require('./inbox-utils');
+const leadModel = require('./lead-model');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
@@ -60,31 +62,12 @@ const DETAIL_EXTRACT = `(function(){
   }catch(e){ return JSON.stringify({ok:false,error:String((e&&e.message)||e)}); }
 })()`;
 
-// ── 匹配规则(同 match.js) ──
-const TARGET_REGIONS = ['朝阳', '北京', '望京', '国贸', '三里屯', '双井', '十里河', '大悦城', '酒仙桥', '798', '团结湖', '安贞', '劲松', '潘家园', '日坛', '亮马', '燕莎', '草房', '常营', '管庄', '高碑店', '四惠'];
-const RE_SEEK = /(求租|求转租|求直租|求推荐|求靠谱|求房|找房|蹲|谁有|有没有|想租|要租|跪求|急租|预算[\d千万]|[\d千万]+(以)?内.{0,4}(一居|两居|室|开间|房|公寓))/;
-const RE_SUPPLY = /(整租|^直租|房东直租|出租|转租出|拎包入住|可短租|月付|押[一二三]付|空房|新出|有房|出房|招租|转租|急转)/;
-const RE_AGENT = /(CH$|好房|直租|物业|公寓|甄选|管家|房产|租房记|安家|房探|地产|不动产|优选|房屋|租赁|严选)/;
-
-function classify(note) {
-  const title = note.title || '';
-  const author = note.author || '';
-  const region = TARGET_REGIONS.find((r) => title.includes(r)) || (/租/.test(title) ? '(泛北京)' : '');
-  const isAgent = RE_AGENT.test(author);
-  const seek = RE_SEEK.test(title);
-  const supply = RE_SUPPLY.test(title);
-  let intent = seek ? '求租' : (supply ? '房源' : '不明');
-  const isTarget = intent === '求租' && !!region && !isAgent;
-  const heat = Number(note.comments || 0) + Number(note.likes || 0);
-  return { ...note, region, isAgent, intent, isTarget, heat };
+function classify(note, model) {
+  return leadModel.classifyNote(note, model);
 }
 
-function matchNotes(notes) {
-  const tagged = notes.map(classify);
-  const byIntent = {};
-  tagged.forEach((n) => { byIntent[n.intent] = (byIntent[n.intent] || 0) + 1; });
-  const targets = tagged.filter((n) => n.isTarget).sort((a, b) => b.heat - a.heat);
-  return { tagged, targets, byIntent };
+function matchNotes(notes, cfg = {}) {
+  return leadModel.classifyNotes(notes, cfg.lead_model || cfg.leadModel || cfg);
 }
 
 // ── CDP 连接 ──
@@ -200,15 +183,138 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
 // ── 生成评论 · 内置话术模板(读对方正文+诉求,多套句式按笔记轮换、不雷同;direction 是给 LLM 的指令,模板用不上)──
 function _hash(s) { let h = 0; s = String(s || ''); for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return h; }
 function _pick(arr, seed) { return arr[Math.abs(seed) % arr.length]; }
+function buildCommentDirection(note, direction) {
+  const strategy = String((note && (note.category_reply_strategy || note.categoryReplyStrategy || note.replyStrategy)) || '').trim();
+  const globalDirection = String(direction || '').trim();
+  const parts = [];
+  if (strategy) parts.push(strategy);
+  if (globalDirection && globalDirection !== strategy) parts.push(globalDirection);
+  return parts.join('；') || '友好回应对方诉求,引导看主页/私聊,绝不留联系方式';
+}
+
+const LOCATION_RULES = [
+  { name: '望京SOHO', city: '北京', type: '地标/商圈', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '望京南', city: '北京', type: '地铁站/邻近区域', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '望京西', city: '北京', type: '地铁站/邻近区域', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '东湖渠', city: '北京', type: '地铁站/邻近区域', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '来广营', city: '北京', type: '邻近区域', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '阜通', city: '北京', type: '地铁站/邻近区域', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '望京', city: '北京', type: '商圈/区域', nearby: ['望京', '望京SOHO', '望京南', '望京西', '阜通', '东湖渠', '来广营附近'] },
+  { name: '朝阳大悦城', city: '北京', type: '商圈/地标', nearby: ['朝阳大悦城', '青年路', '十里堡', '高碑店', '四惠', '常营'] },
+  { name: '团结湖', city: '北京', type: '商圈/地铁站', nearby: ['团结湖', '三里屯', '农业展览馆', '呼家楼', '亮马桥'] },
+  { name: '国贸', city: '北京', type: '商圈/地铁站', nearby: ['国贸', '大望路', '双井', '永安里', '建国门'] },
+  { name: '三里屯', city: '北京', type: '商圈/区域', nearby: ['三里屯', '团结湖', '农业展览馆', '东直门', '亮马桥'] },
+  { name: '双井', city: '北京', type: '商圈/地铁站', nearby: ['双井', '九龙山', '劲松', '国贸', '广渠门外'] },
+  { name: '朝阳', city: '北京', type: '行政区', nearby: ['朝阳', '望京', '国贸', '三里屯', '双井', '青年路'] },
+];
+
+function commentHay(note) {
+  const tags = Array.isArray(note && note.tags) ? note.tags.join(' ') : '';
+  return [note && note.title, note && note.desc, tags].map((x) => String(x || '')).join(' ');
+}
+
+function detectLocation(text) {
+  const sorted = LOCATION_RULES.slice().sort((a, b) => b.name.length - a.name.length);
+  return sorted.find((r) => String(text || '').includes(r.name)) || null;
+}
+
+function detectBudget(text) {
+  const s = String(text || '');
+  const m = s.match(/(\d[\d,]{2,5})\s*(元|块)/) || s.match(/(\d(\.\d)?)\s*[kK千]/) || s.match(/预算\s*(\d[\d,]{2,5})/);
+  return m ? m[0].replace(/[,]/g, '') : '';
+}
+
+function detectRoomType(text) {
+  const s = String(text || '');
+  if (/三居|3居|三室/.test(s)) return '三居';
+  if (/两居|2居|两室|二居/.test(s)) return '两居';
+  if (/一居|1居|一室/.test(s)) return '一居';
+  if (/单间|主卧|次卧/.test(s)) return '单间';
+  if (/开间/.test(s)) return '开间';
+  return '';
+}
+
+function detectCommute(text) {
+  const s = String(text || '');
+  if (/地铁|近地铁|轨交/.test(s)) return '近地铁';
+  if (/通勤|上班|公司/.test(s)) return '通勤';
+  return '';
+}
+
+function inferCity(text, cfg, location) {
+  const ctx = [text, cfg && cfg.task_keyword].map((x) => String(x || '')).join(' ');
+  if (/北京|朝阳|望京|国贸|三里屯|双井|团结湖/.test(ctx)) return '北京';
+  return (location && location.city) || '未知';
+}
+
+function analyzeCommentNeed(note, cfg = {}) {
+  const text = commentHay(note);
+  const location = detectLocation(text);
+  const budget = detectBudget(text);
+  const roomType = detectRoomType(text);
+  const commute = detectCommute(text);
+  const intent = /求租|找房|求房|想租|要租|租房|求推荐|蹲|有没有|预算/.test(text) ? '求租' : '未知';
+  const missing = [];
+  if (!budget) missing.push('预算');
+  if (!roomType) missing.push('户型');
+  if (!commute) missing.push('通勤/地铁要求');
+  const city = inferCity(text, cfg, location);
+  let mode = 'probe';
+  if (intent === '求租' && location && budget && roomType) mode = 'full_match';
+  else if (intent === '求租' && location) mode = 'semi_match';
+  return {
+    intent,
+    location: location ? location.name : '未知',
+    locationType: location ? location.type : '未知',
+    city,
+    budget: budget || '未知',
+    roomType: roomType || '未知',
+    commute: commute || '未知',
+    nearbyLocations: location ? location.nearby.slice() : [],
+    missing,
+    mode,
+  };
+}
+
+function formatCommentContext(analysis) {
+  const a = analysis || {};
+  const nearby = (a.nearbyLocations || []).length ? a.nearbyLocations.join('、') : '暂无';
+  return [
+    '系统能确定的只有:',
+    '- 意向: ' + (a.intent || '未知'),
+    '- 地点: ' + (a.location || '未知'),
+    '- 地点粒度: ' + (a.locationType || '未知') + ((a.locationType && a.locationType !== '未知') ? ',不是具体小区' : ''),
+    '- 预算: ' + (a.budget || '未知'),
+    '- 户型: ' + (a.roomType || '未知'),
+    '- 通勤/地铁要求: ' + (a.commute || '未知'),
+    '',
+    '判断逻辑:',
+    '1. 先把地点识别成槽位,例如 location = ' + (a.location || '未知') + ', location_type = ' + (a.locationType || '未知') + ', city = ' + (a.city || '未知') + '。',
+    '2. 房源库检索时先用地点做第一层召回,优先找: ' + nearby + '。',
+    '3. 预算/户型未知时不要硬筛,不要脑补预算/户型;可以选地点贴近、展示质量较好、可沟通空间大的房源作为候选,但评论里要追问缺失信息。',
+    '4. 评论应使用半匹配话术,比如: “' + (a.location && a.location !== '未知' ? a.location : '这边') + '这边我有几套在看,近地铁和商圈附近的都有。你大概预算和想要几居呀?”',
+    '不要直接说: “我这有一套' + (a.location && a.location !== '未知' ? a.location : '附近') + '6500一居,特别适合你”。'
+  ].join('\n');
+}
+
 function genComment(note, direction) {
   const title = note.title || '';
   const desc = note.desc || '';
-  const hay = title + ' ' + desc + ' ' + (note.tags || []).join(' ');
-  const region = ['朝阳大悦城', '团结湖', '望京', '国贸', '三里屯', '双井', '十里河', '高碑店', '四惠', '酒仙桥', '青年路', '常营', '管庄', '朝阳'].find((r) => hay.includes(r)) || note.region || '你说的那一片';
-  const hu = /三居|3居|三室/.test(hay) ? '三居' : /两居|2居|两室|二居/.test(hay) ? '两居' : /(一居|1居|单间|开间|主卧|次卧|一室)/.test(hay) ? '一居' : '';
-  const bm = hay.match(/(\d[\d,]{2,5})\s*(元|块)/) || hay.match(/(\d(\.\d)?)\s*[kK千]/);
-  const budget = bm ? bm[0].replace(/[,]/g, '') : '';
+  const hay = commentHay(note);
+  const analysis = (note && note.comment_analysis) || analyzeCommentNeed(note || {});
+  const region = (analysis.location && analysis.location !== '未知') ? analysis.location : (note.region || '你说的那一片');
+  const hu = analysis.roomType && analysis.roomType !== '未知' ? analysis.roomType : '';
+  const budget = analysis.budget && analysis.budget !== '未知' ? analysis.budget : '';
   const need = /地铁|通勤|上班|公司/.test(hay) ? '通勤' : /拎包|家电|家具|齐全|押一付一|随时入住|短租/.test(hay) ? '拎包入住' : /独卫|朝南|采光|阳台|精装|新装修/.test(hay) ? '居住体验' : '';
+  if (analysis.mode === 'semi_match' && region !== '你说的那一片' && (!hu || !budget)) {
+    const seed = _hash(note.id || title);
+    const opens = [region + '这边我有几套在看,', '看你在找' + region + '附近,', region + '这块可以帮你看看,'];
+    const asks = (!hu && !budget)
+      ? ['你大概预算和想要几居呀?', '预算和户型大概怎么想的呀?', '你想要几居、预算多少呀?']
+      : (!budget ? ['你大概预算多少呀?', '预算大概卡在哪个范围呀?'] : ['你想要几居或单间呀?', '户型这块想看几居呀?']);
+    const ends = ['合适我再帮你挑~', '合适的话再给你细看~', '我按这个给你筛一下~'];
+    return _pick(opens, seed) + _pick(asks, seed >> 3) + _pick(ends, seed >> 6);
+  }
   const huP = hu ? ('的' + hu) : '的房子';
   const budP = budget ? ('预算' + budget + '左右的话,') : '';
   const seed = _hash(note.id || title);
@@ -220,13 +326,16 @@ function genComment(note, direction) {
 // 评论生成统一入口:开了 LLM 且填了 key → 大模型按对方正文+你的方向生成;否则回退内置话术模板。失败也回退,不阻断。
 async function makeComment(note, direction, cfg) {
   cfg = cfg || {};
+  const analysis = analyzeCommentNeed(note, cfg);
+  const noteWithContext = Object.assign({}, note || {}, { comment_analysis: analysis, comment_context: formatCommentContext(analysis) });
+  const effectiveDirection = buildCommentDirection(noteWithContext, direction);
   if (cfg.llm_enabled && cfg.llm_api_key) {
     try {
-      const c = await llm.genComment({ note, direction, provider: cfg.llm_provider, model: cfg.llm_model, apiKey: cfg.llm_api_key });
+      const c = await llm.genComment({ note: noteWithContext, direction: effectiveDirection, provider: cfg.llm_provider, model: cfg.llm_model, apiKey: cfg.llm_api_key });
       if (c && c.length >= 4 && check(c).ok) return c;
     } catch (e) { /* 回退模板 */ }
   }
-  return genComment(note, direction);
+  return genComment(noteWithContext, effectiveDirection);
 }
 
 
@@ -352,6 +461,8 @@ async function applyFilters({ client, target, filters = {}, onLog = () => {} }) 
 // ── 承接:抓「评论和@」通知 ── 在浏览器里跑(用 .toString 嵌入,免转义),解析每条:昵称/类型/内容/日期/主页/可回复
 function _inboxScanFn() {
   var ACT = [['回复了你的评论', 'reply'], ['评论了你的笔记', 'comment'], ['评论了你的评论', 'reply'], ['提到了你', 'mention']];
+  var BAD_LINE = { '回复': 1, '作者': 1, '你的关注': 1, '你的粉丝': 1 };
+  function cleanHref(h) { return String(h || '').split('?')[0]; }
   var links = document.querySelectorAll('a[href*="/user/profile"]');
   var out = [], seen = {};
   for (var i = 0; i < links.length; i++) {
@@ -363,29 +474,31 @@ function _inboxScanFn() {
     var type = '', actStr = ''; for (var a = 0; a < ACT.length; a++) { if (txt.indexOf(ACT[a][0]) >= 0) { type = ACT[a][1]; actStr = ACT[a][0]; break; } }
     if (!type) continue;
     var href = L.getAttribute('href') || '';
-    var dm = txt.match(/(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|今天|昨天|\d+\s*(分钟|小时|天)前)/); var date = dm ? dm[0] : '';
+    var attrDate = '';
+    try {
+      var dated = box.querySelector('time,[datetime],[title],[data-time],[data-timestamp]');
+      if (dated) attrDate = dated.getAttribute('datetime') || dated.getAttribute('title') || dated.getAttribute('data-time') || dated.getAttribute('data-timestamp') || '';
+    } catch (e) {}
+    var dm = txt.match(/(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|刚刚|今天|昨天|\d+\s*(秒|分钟|小时|天)前)/); var date = attrDate || (dm ? dm[0] : '');
+    var source = '';
+    try {
+      var as = box.querySelectorAll('a[href]');
+      for (var x = 0; x < as.length; x++) { var ah = as[x].getAttribute('href') || ''; if (ah.indexOf('/explore/') >= 0 || ah.indexOf('/search_result/') >= 0) { source = cleanHref(ah); break; } }
+    } catch (e) {}
     var lines = txt.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
-    var content = ''; for (var j = 0; j < lines.length; j++) { var ln = lines[j]; if (ln === nick || ln.indexOf(actStr) >= 0 || ln === '回复' || ln === '作者' || /^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2})$/.test(ln)) continue; content = ln; break; }
-    var key = nick + '|' + content + '|' + date; if (seen[key]) continue; seen[key] = 1;
-    out.push({ nick: nick, type: type, content: content, date: date, link: href.split('?')[0], canReply: /\n回复$/.test(txt) });
+    var content = '', basis = '';
+    for (var j = 0; j < lines.length; j++) {
+      var ln = lines[j];
+      if (ln === nick || ln.indexOf(actStr) >= 0 || ln === '回复' || ln === '作者' || /^(刚刚|今天|昨天|\d+\s*(秒|分钟|小时|天)前|\d{4}-\d{2}-\d{2}|\d{2}-\d{2})$/.test(ln)) continue;
+      if (!content && !BAD_LINE[ln]) { content = ln; continue; }
+      if (!basis && ln !== content) basis = ln;
+    }
+    var key = type + '|' + cleanHref(href) + '|' + content + '|' + source; if (seen[key]) continue; seen[key] = 1;
+    out.push({ nick: nick, type: type, content: content, basis_text: basis, raw_text: txt, date: date, link: cleanHref(href), source_key: source, note_url: source, canReply: /\n回复$/.test(txt) });
   }
   return JSON.stringify(out);
 }
 const SCAN_INBOX = '(' + _inboxScanFn.toString() + ')()';
-
-// 把通知日期串(2024-09-04 / 02-02 / 今天 / 昨天 / 3天前 / 2小时前)换算成"几天前"
-function _daysAgo(dateStr) {
-  if (!dateStr) return 99999;
-  if (/今天|分钟前|小时前/.test(dateStr)) return 0;
-  if (/昨天/.test(dateStr)) return 1;
-  const dm = dateStr.match(/(\d+)\s*天前/); if (dm) return Number(dm[1]);
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  let m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (m) { return Math.max(0, Math.floor((now - new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) / 86400000)); }
-  m = dateStr.match(/^(\d{2})-(\d{2})$/); // MM-DD：当年；若落在未来则算去年
-  if (m) { let d = new Date(now.getFullYear(), Number(m[1]) - 1, Number(m[2])); if (d > now) d = new Date(now.getFullYear() - 1, Number(m[1]) - 1, Number(m[2])); return Math.max(0, Math.floor((now - d) / 86400000)); }
-  return 99999; // 看不懂的日期当很旧
-}
 // recentDays>0：只要近 N 天的；通知是新→旧排列，滚到已经超出窗口就停，不用把老的全读一遍
 const FIND_NOTIF_ICON = '(function(){var as=document.querySelectorAll(\'a[href="/notification"]\');for(var i=0;i<as.length;i++){var a=as[i];if(a.offsetParent===null)continue;var r=a.getBoundingClientRect();if(r.width>0&&r.height>0)return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});}return "";})()';
 async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDays = 0 }) {
@@ -411,14 +524,17 @@ async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDay
     try { const r = await client.evaluate({ target, expression: SCAN_INBOX }); items = JSON.parse(r.value || '[]'); } catch (e) {}
     if (items.length >= max) break;
     // 已经滚到"超出近 N 天"的老评论了，停止往下翻
-    if (recentDays > 0 && items.length && _daysAgo(items[items.length - 1].date) > recentDays) break;
+    if (recentDays > 0 && items.length && inboxUtils.shouldStopForRecentWindow(items[items.length - 1].date, recentDays)) break;
     // 拟人:滚动前鼠标先滑到内容区(和浏览页面同款)
     await client.humanMove({ target, toX: rand(260, 680), toY: rand(340, 640) }).catch(() => {});
     await sleep(rand(250, 600));
     await client.wheelScroll({ target, x: rand(400, 700), y: rand(360, 600), totalDeltaY: rand(500, 900) }).catch(() => {});
     await sleep(rand(900, 1500));
   }
-  if (recentDays > 0) items = items.filter(function (it) { return _daysAgo(it.date) <= recentDays; });
+  if (recentDays > 0) items = items.filter(function (it) {
+    var parsed = inboxUtils.parseNotificationTime(it.date);
+    return !Number.isFinite(parsed.daysAgo) || parsed.daysAgo <= recentDays;
+  });
   onLog('收件:解析到 ' + items.length + ' 条' + (recentDays > 0 ? '(近 ' + recentDays + ' 天)' : ''));
   return items.slice(0, max);
 }
@@ -433,6 +549,7 @@ function inboxBlocked(content, cfg) { content = content || ''; return ((cfg && c
 // 这条该不该回（范围 + 黑词 + 意向过滤 + 内容有效）
 function shouldReply(item, cfg) {
   cfg = cfg || {};
+  if (item.can_auto_reply === false || inboxUtils.invalidIncomingReason(item.content)) return false;
   if (item.type === 'comment' && cfg.reply_scope_comment === false) return false;
   if (item.type === 'reply' && cfg.reply_scope_reply === false) return false;
   if (item.type === 'mention' && cfg.reply_scope_mention === false) return false;
@@ -521,4 +638,4 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   return okSent ? { ok: true, msg: '已回复✓' } : { ok: false, msg: '点了发送但没确认成功' };
 }
 
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, makeComment, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem };
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem };

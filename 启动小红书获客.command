@@ -9,5 +9,9 @@ cd "/Users/liufeng/Documents/项目/小红书自动获取线索/client" || { ech
 pkill -f "electron/main.js" 2>/dev/null
 sleep 1
 
+# 清除 ELECTRON_RUN_AS_NODE,否则 electron 会以普通 Node.js 模式运行
+# 导致 require('electron') 返回路径字符串而非 API 对象
+unset ELECTRON_RUN_AS_NODE
+
 echo "正在启动小红书获客…(首次启动稍等几秒,窗口会自动弹出)"
 npm run app

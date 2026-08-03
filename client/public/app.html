@@ -11,7 +11,7 @@
   body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
   .app{display:flex;min-height:100vh}
   /* 左侧菜单 */
-  .side{width:174px;flex:none;background:#20242c;color:#c4c9d4;padding:12px 0;position:sticky;top:0;height:100vh;align-self:flex-start;overflow-y:auto}
+  .side{width:174px;flex:none;background:#20242c;color:#c4c9d4;padding:12px 0;position:fixed;left:0;top:0;bottom:0;height:100vh;overflow-y:auto;z-index:20}
   .side .brand{display:flex;align-items:center;gap:7px;padding:4px 16px 13px;font-weight:700;color:#fff;font-size:14px;border-bottom:1px solid #2f343d;margin-bottom:8px}
   .side .brand .d{width:9px;height:9px;border-radius:50%;background:var(--brand)}
   .side .nav{display:block;padding:9px 16px;color:#aab0bd;cursor:pointer;font-size:13px;border-left:3px solid transparent}
@@ -20,7 +20,7 @@
   .side .nav.dim{color:#666d78;cursor:default}.side .nav.dim:hover{background:transparent}
   .side .grp{font-size:10.5px;color:#5f6671;padding:13px 16px 4px;letter-spacing:.5px}
   /* 主区 */
-  .main{flex:1;min-width:0}
+  .main{flex:1;min-width:0;margin-left:174px}
   .bar{display:flex;align-items:center;gap:10px;padding:11px 20px;background:#fff;border-bottom:1px solid var(--line)}
   .bar b{font-size:15px}.bar .acct{margin-left:auto;font-size:12px;color:var(--muted)}
   .page{padding:16px 26px 50px;display:none}.page.on{display:block}
@@ -42,11 +42,48 @@
   .log{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;color:#43505f;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:180px;overflow:auto;white-space:pre-wrap}
   .note{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
   .note h4{margin:0 0 4px;font-size:14px}.note .meta{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .basis-detail{margin-top:6px;font-size:12px;color:var(--muted)}
+  .basis-detail summary{cursor:pointer;display:inline;color:#64748b}
+  .basis-detail div{margin-top:5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#f8fafc;white-space:pre-wrap;line-height:1.5;color:#64748b}
   .badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:20px;margin-right:6px}
   .b-seek{background:var(--blue-bg);color:var(--blue)}.b-ok{background:var(--green-bg);color:var(--green)}.b-warn{background:var(--amber-bg);color:var(--amber)}.b-bad{background:var(--red-bg);color:var(--red)}
   .note textarea{width:100%;min-height:54px;margin-top:4px}.note .acts{display:flex;gap:8px;margin-top:8px;align-items:center}
   a{color:var(--blue);text-decoration:none;font-size:12px}
   .hint{font-size:12px;color:var(--muted)}
+  .date-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-2px 0 12px}
+  .date-filter .scope{font-size:12px;color:var(--muted);white-space:nowrap}
+  .date-filter .seg{display:flex;gap:4px;flex-wrap:wrap}
+  .date-filter button{border:1px solid #d6dae2;background:#fff;color:#43505f;border-radius:7px;padding:5px 9px;font-size:12px;font-weight:600;cursor:pointer}
+  .date-filter button.on{background:#fff4f5;border-color:#ffb5bf;color:var(--brand)}
+  .date-filter .custom-range{display:none;align-items:center;gap:6px;flex-wrap:wrap}
+  .date-filter.custom .custom-range{display:flex}
+  .date-filter input{padding:5px 8px;font-size:12px;border-radius:7px}
+  .time-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+  .time-label{font-size:12px;color:var(--muted)}
+  .time-label b{color:#43505f;font-weight:600}
+  .limit-grid{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .limit-item{display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fafbfc;font-size:13px;color:#43505f}
+  .limit-item input{width:64px;padding:6px 8px;text-align:center}
+  .limit-item .unit{font-size:12px;color:var(--muted);white-space:nowrap}
+  .lm-category{border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0;background:#fafbfc}
+  .lm-category .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .lm-category textarea{min-height:46px}
+  .slot-panel{margin-top:14px;border:1px solid #dde3ec;border-radius:10px;background:#fbfcfe;overflow:hidden}
+  .slot-panel .slot-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);background:#fff}
+  .slot-title{font-size:13px;font-weight:700;color:#253044}
+  .slot-source{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+  .slot-chip{font-size:11px;color:#42526b;background:#eef4ff;border:1px solid #d8e5fb;border-radius:999px;padding:2px 8px}
+  .slot-list{padding:10px 12px}
+  .lead-slot{display:grid;grid-template-columns:auto minmax(140px,220px) 1fr auto;gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid #e9edf3}
+  .lead-slot:last-child{border-bottom:none}
+  .slot-enable{display:flex;align-items:center;gap:5px;padding-top:28px;font-size:12px;color:#43505f;white-space:nowrap;cursor:pointer}
+  .slot-field label,.slot-advanced label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .slot-field input{width:100%}
+  .slot-advanced{grid-column:2/4;margin-top:-2px}
+  .slot-advanced summary{cursor:pointer;color:#64748b;font-size:12px;display:inline-block}
+  .slot-advanced input{margin-top:5px;width:220px}
+  .slot-del{align-self:center;border:none;background:transparent;color:var(--red);font-size:12px;cursor:pointer;padding:6px}
+  @media(max-width:980px){.lead-slot{grid-template-columns:1fr}.slot-enable{padding-top:0}.slot-advanced{grid-column:auto}.slot-del{justify-self:start}}
   /* 监控 */
   .screen{position:relative;background:#0d0f12;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;width:100%;min-height:200px}
   .screen img{width:100%;height:auto;display:block;cursor:crosshair}
@@ -66,6 +103,125 @@
   table.rec{width:100%;font-size:12px;border-collapse:collapse}
   table.rec td{padding:5px 6px;border-bottom:1px solid var(--line)}
   table.rec tr:first-child td{color:var(--muted);font-weight:600}
+  .help-tip{display:inline-flex;align-items:center;justify-content:center;position:relative;width:16px;height:16px;margin-left:5px;border:1px solid #cfd5df;border-radius:50%;color:#64748b;background:#fff;font-size:11px;font-weight:700;line-height:1;cursor:help;vertical-align:middle}
+  .help-tip .help-pop{display:none;position:absolute;left:50%;bottom:22px;transform:translateX(-50%);width:560px;max-width:82vw;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#1f2937;color:#fff;font-size:12px;font-weight:400;line-height:1.5;box-shadow:0 8px 22px rgba(15,23,42,.22);z-index:30;text-align:left;white-space:pre-line}
+  .help-tip:hover .help-pop,.help-tip:focus .help-pop{display:block}
+
+  /* C 风格:浅色专业后台 + 小红书红主题。仅覆盖视觉样式,不改变页面结构和逻辑。 */
+  :root{
+    --bg:#f3f6fa;--card:#fff;--ink:#17202f;--muted:#667085;--line:#dbe3ef;--brand:#ff2442;
+    --green:#087a55;--green-bg:#e7f7ef;--amber:#a86105;--amber-bg:#fff4dd;--red:#c22538;--red-bg:#fff0f2;
+    --blue:#2563eb;--blue-bg:#edf4ff;--shadow:0 12px 32px rgba(16,24,40,.06);
+  }
+  html{background:var(--bg)}
+  body{background:var(--bg);font-size:13px;line-height:1.55;letter-spacing:0}
+  .app{background:var(--bg)}
+  .side{
+    width:220px;background:#f8fafc;color:#344054;border-right:1px solid var(--line);
+    padding:14px 10px;box-shadow:8px 0 24px rgba(16,24,40,.03)
+  }
+  .side .brand{
+    min-height:48px;padding:0 12px 14px;margin-bottom:12px;color:#111827;font-size:15px;
+    border-bottom:1px solid var(--line)
+  }
+  .side .brand .d{
+    width:32px;height:32px;border-radius:8px;background:var(--brand);box-shadow:0 8px 18px rgba(255,36,66,.18)
+  }
+  .side .nav{
+    min-height:36px;display:flex;align-items:center;border-left:0;border-radius:8px;margin:3px 0;
+    padding:0 11px;color:#4b5565;font-size:13px;font-weight:650
+  }
+  .side .nav:hover{background:#eef4ff;color:#1f2937}
+  .side .nav.on{background:#fff0f2;color:var(--brand);box-shadow:inset 3px 0 0 var(--brand);font-weight:800}
+  .side .nav.dim{color:#98a2b3}.side .nav.dim:hover{background:transparent;color:#98a2b3}
+  .side .grp,.side div[style*="letter-spacing"]{
+    color:#7a8494!important;padding:14px 11px 6px!important;font-size:11px!important;letter-spacing:0!important;font-weight:800!important
+  }
+  .main{margin-left:220px;background:var(--bg)}
+  .bar{
+    min-height:56px;padding:0 24px;background:rgba(255,255,255,.94);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:10;backdrop-filter:saturate(160%) blur(8px)
+  }
+  .bar b{font-size:17px;color:#111827}.bar .acct{font-size:12px;color:#697386}
+  .page{padding:18px 24px 54px}
+  .card{
+    border:1px solid var(--line);border-radius:8px;background:var(--card);box-shadow:var(--shadow);
+    padding:16px;margin-bottom:14px
+  }
+  .row{gap:10px}
+  .fld label,.time-label,.slot-field label,.slot-advanced label{color:#697386;font-size:12px;font-weight:650}
+  input,textarea,select{
+    min-height:34px;border:1px solid #cfd8e6;border-radius:7px;background:#fff;color:var(--ink);
+    padding:7px 10px;font-size:13px;transition:border-color .12s ease,box-shadow .12s ease,background .12s ease
+  }
+  textarea{line-height:1.5}
+  input:hover,textarea:hover,select:hover{border-color:#b9c5d6}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(255,36,66,.11)}
+  input[type="checkbox"]{min-height:auto;accent-color:var(--brand);box-shadow:none}
+  .btn{
+    min-height:34px;border-radius:7px;background:var(--brand);border:1px solid var(--brand);
+    box-shadow:0 8px 18px rgba(255,36,66,.14);padding:7px 14px;font-size:13px;font-weight:800
+  }
+  .btn:hover{filter:brightness(.98)}
+  .btn.ghost{
+    background:#fff;border:1px solid #cfd8e6;color:#243044;box-shadow:none;padding:6px 12px
+  }
+  .btn.ghost:hover{border-color:#b9c5d6;background:#f8fafc}
+  a{color:var(--brand);font-weight:700}
+  .hint{color:#667085}
+  .pipe{gap:8px;margin-top:12px}
+  .pp{
+    min-height:46px;border-radius:8px;background:#f8fafc;border-color:var(--line);
+    color:#667085;font-weight:760;display:flex;align-items:center;justify-content:center
+  }
+  .pp.on{background:#fff0f2;border-color:#ffb9c3;color:var(--brand)}
+  .pp.done{background:var(--green-bg);border-color:#bce7d0;color:var(--green)}
+  .mgrid{gap:12px}
+  .metric{
+    min-height:82px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:11px 13px
+  }
+  .metric .l{font-size:12px;color:#697386;font-weight:650}.metric .v{font-size:26px;color:#111827;line-height:1.15}
+  #m-target{color:var(--brand)!important}
+  .cols{gap:14px}
+  .screen{border-radius:8px;background:#111827;border:1px solid #1f2937}
+  .log{
+    border-radius:8px;background:#f8fafc;border-color:var(--line);color:#344054;max-height:220px;
+    font-size:12px;line-height:1.7
+  }
+  .note{
+    border-radius:8px;border-color:var(--line);background:#fff;padding:12px;margin-bottom:10px
+  }
+  .note:hover{border-color:#cbd5e1;background:#fcfdff}
+  .note h4{font-size:14px;color:#111827}
+  .note .meta{color:#697386}
+  .badge{
+    border-radius:999px;padding:2px 8px;font-size:11px;line-height:1.6;font-weight:800
+  }
+  .b-seek{background:var(--blue-bg);color:var(--blue)}.b-ok{background:var(--green-bg);color:var(--green)}
+  .b-warn{background:var(--amber-bg);color:var(--amber)}.b-bad{background:var(--red-bg);color:var(--red)}
+  .date-filter{gap:8px;margin-bottom:14px}
+  .date-filter button{
+    border-radius:7px;border-color:#cfd8e6;background:#fff;color:#344054;font-weight:760
+  }
+  .date-filter button.on{background:#fff0f2;border-color:#ffb9c3;color:var(--brand)}
+  .limit-item{
+    min-height:40px;border-radius:8px;background:#f8fafc;border-color:var(--line);color:#344054
+  }
+  .lm-category,.slot-panel{
+    border-radius:8px;background:#fbfcfe;border-color:var(--line);box-shadow:none
+  }
+  .lm-category{padding:12px;margin:12px 0}
+  .lm-category .head{padding-bottom:8px;border-bottom:1px solid #edf1f6}
+  .slot-panel .slot-top{background:#fff;padding:14px;border-bottom:1px solid var(--line)}
+  .slot-title{color:#111827;font-size:14px}
+  .slot-chip{background:#edf4ff;border-color:#d8e6ff;color:#2454b7;font-weight:760}
+  .lead-slot{border-bottom-color:#e7edf5}
+  .slot-del{color:var(--brand);font-weight:750}
+  .basis-detail div{border-radius:7px;background:#f8fafc;border-color:var(--line)}
+  table.rec td{border-bottom-color:#e7edf5}
+  .help-tip{border-color:#cfd8e6;color:#667085}
+  .help-tip .help-pop{border-color:#111827;border-radius:8px;background:#111827;box-shadow:0 18px 42px rgba(16,24,40,.24)}
+  html.electron .app{max-width:50vw}
 </style>
 </head>
 <body>
@@ -76,12 +232,14 @@
     <div class="nav" data-p="comments" onclick="showPage('comments')">📋 评论记录</div>
     <div class="nav" data-p="notes" onclick="showPage('notes')">🔍 采集记录</div>
     <div class="nav" data-p="inbox" onclick="showPage('inbox')">📥 线索·承接</div>
-    <div class="grp">配置(待做)</div>
+    <div class="grp">配置</div>
     
     <div class="nav dim">💬 话术库</div>
     <div class="nav dim">🏘️ 房源库</div>
     <div style="font-size:11px;color:#9a9aa0;padding:12px 12px 4px;font-weight:700;letter-spacing:.04em">设置</div>
         <div class="nav" data-p="tasksettings" onclick="showPage('tasksettings')">🎯 任务设置</div>
+        <div class="nav" data-p="leadmodel" onclick="showPage('leadmodel')">🧭 获客模型</div>
+        <div class="nav" data-p="modelsettings" onclick="showPage('modelsettings')">🤖 模型设置</div>
         <div class="nav" data-p="throttle" onclick="showPage('throttle')">🛡️ 防封控制</div>
         <div class="nav" data-p="replyrules" onclick="showPage('replyrules')">💬 评论承接</div>
     
@@ -115,9 +273,9 @@
         </div>
         <div class="mgrid">
           <div class="metric"><div class="l">检索到</div><div class="v" id="m-total">–</div></div>
-          <div class="metric"><div class="l">求租帖</div><div class="v" id="m-seek">–</div></div>
-          <div class="metric"><div class="l">房源/中介</div><div class="v" id="m-supply">–</div></div>
-          <div class="metric"><div class="l">该评论</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
+          <div class="metric"><div class="l">目标笔记</div><div class="v" id="m-seek">–</div></div>
+          <div class="metric"><div class="l">其他分类</div><div class="v" id="m-supply">–</div></div>
+          <div class="metric"><div class="l">待评论</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
         </div>
       </div>
 
@@ -156,6 +314,7 @@
           <span class="hint" id="recstats" style="margin-left:auto"></span>
           <button class="btn ghost" style="margin-left:10px" onclick="loadRecords()">刷新</button>
         </div>
+        <div id="comments-filter"></div>
         <div id="reccomments"><div class="hint">(还没有评论记录,去控制台跑一轮并发送)</div></div>
       </div>
     </div>
@@ -167,6 +326,7 @@
           <div style="font-size:14px;font-weight:600">🔍 采集记录 · 看过哪些笔记</div>
           <button class="btn ghost" style="margin-left:auto" onclick="loadRecords()">刷新</button>
         </div>
+        <div id="notes-filter"></div>
         <div id="recnotes"><div class="hint">(还没有采集记录)</div></div>
       </div>
     </div>
@@ -182,6 +342,7 @@
           <a href="#" onclick="showPage('replyrules');return false" style="font-size:12px;color:var(--brand);text-decoration:none">⚙ 承接规则</a>
         </div>
         <div class="hint" style="margin-bottom:10px">「刷新收件」只抓取展示;「开始承接」会逐条按规则判意向、生成回复(演练只定位+草稿,不真发)。承接也已接进控制台「开始」——任务运行中发现通知会自动插队回复。</div>
+        <div id="inbox-filter"></div>
         <div id="inbox-stats" class="hint" style="margin-bottom:8px;font-size:13px"></div>
         <div id="inbox-log" class="hint" style="margin-bottom:10px;font-size:12px;max-height:120px;overflow:auto;white-space:pre-wrap;display:none;background:#f6f8fa;padding:8px;border-radius:6px"></div>
         <div id="inbox-list"><div class="hint">(还没有收件,点上面「刷新收件」抓一次)</div></div>
@@ -200,33 +361,72 @@
           <div class="row">
             <div class="fld" style="flex:1"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
           </div>
-          <div style="font-size:13px;font-weight:700;margin:14px 0 4px">💬 评论生成</div>
-          <div class="hint" style="margin-bottom:8px">不开 AI = 用内置话术模板(读对方正文,多套话术轮换不雷同,但<b>方向/正文喂不进去</b>)。开 AI(国产大模型)后,才会按对方正文 + 你上面的「方向」生成贴合的回复。Key 只存在本机。</div>
-          <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="llm_enabled"> 用 AI 生成评论(需填下面的 Key)</label>
-          <div class="row">
-            <div class="fld"><label>服务商</label><select id="llm_provider"><option value="ark">火山方舟(豆包)</option><option value="dashscope">阿里百炼(通义)</option></select></div>
-            <div class="fld" style="flex:1"><label>模型 ID</label><input id="llm_model" placeholder="如 doubao-pro-32k / qwen-plus" style="width:100%"></div>
-          </div>
-          <div class="row">
-            <div class="fld" style="flex:1"><label>API Key(只存本机)</label><input id="llm_api_key" type="password" placeholder="粘贴 API Key" style="width:100%"></div>
-          </div>
           <div class="row">
             <div class="fld"><label>排序</label><select id="f_sort"><option>综合</option><option>最新</option><option>最多点赞</option><option>最多评论</option><option>最多收藏</option></select></div>
             <div class="fld"><label>发布时间</label><select id="f_time"><option>不限</option><option>一天内</option><option>一周内</option><option>半年内</option></select></div>
             <div class="fld"><label>笔记类型</label><select id="f_type"><option>不限</option><option>图文</option><option>视频</option></select></div>
             <div class="fld"><label>搜索范围</label><select id="f_range"><option>不限</option><option>已看过</option><option>未看过</option><option>已关注</option></select></div>
           </div>
-          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 每个时段「采集多少篇 / 评多少条」</div>
-            <div class="hint" style="margin-bottom:8px">按周几设置工作时段(可多段)。每段直接填:这个时段<b>采集多少篇</b>(搜索页往下刷、筛求租)+ <b>评多少条</b>(打开浏览+评论上限)。只在时段内自动跑;养号阶梯 / 限频是安全天花板,每小时上限和最小间隔照常叠加。</div>
+          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 时间段「采集多少篇 / 评多少条」</div>
+            <div class="hint" style="margin-bottom:8px">默认每个时间段每天生效。需要错峰时,新增多个时间段;需要区分工作日/周末时,在该时间段里勾选适用星期。养号阶梯 / 限频仍是安全天花板。</div>
             <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="sch_enabled"> 启用排班(关掉 = 不限时段,只受防封限频约束)</label>
             <div class="fld" style="margin-bottom:10px"><label>时段内节奏</label><select id="slot_pacing"><option value="even">匀速摊开(整段均匀发)</option><option value="burst">开头集中(到点先发完再歇)</option></select></div>
             <div id="schedule-form"></div>
+            <button class="btn ghost" type="button" onclick="addSlot()" style="margin-top:6px">+ 加时间段</button>
           <div style="margin-top:10px">
             <button class="btn" onclick="saveTaskSettings()">保存任务设置 + 排班</button>
             <span class="hint" id="tasksavehint" style="margin-left:10px"></span>
           </div>
         </div>
       </div>
+
+      <div class="page" id="page-leadmodel">
+      <div class="card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">🧭 获客模型 · 笔记分类规则</div>
+        <div class="hint" style="margin-bottom:14px">这里定义“什么样的笔记值得处理”。采集会按这些分类区分笔记,动作=评论的分类会进入待评论队列。租房只是默认模板,可以改成教育、装修、二手车等行业。</div>
+        <div class="row">
+          <div class="fld" style="flex:1"><label>模型名称</label><input id="lm_name" style="width:100%"></div>
+        </div>
+        <div style="font-size:13px;font-weight:700;margin:12px 0 6px">笔记分类</div>
+        <div id="lm_categories"></div>
+        <button class="btn ghost" type="button" onclick="addLeadCategory()">+ 加分类</button>
+        <div class="slot-panel">
+          <div class="slot-top">
+            <div>
+              <div class="slot-title">要从笔记里识别的信息</div>
+              <div class="hint">系统会从笔记标题、正文、标签里识别这些信息。识别不到就记为未知，评论时会追问，不会硬猜。</div>
+              <div class="slot-source"><span class="slot-chip">标题</span><span class="slot-chip">正文</span><span class="slot-chip">标签</span><span class="slot-chip">评论策略会使用</span></div>
+            </div>
+            <button class="btn ghost" type="button" onclick="addLeadSlot()">+ 加信息项</button>
+          </div>
+          <div id="lm_slots_editor" class="slot-list"></div>
+          <input id="lm_slots" type="hidden">
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn" onclick="saveLeadModel()">保存获客模型</button>
+          <span class="hint" id="lm_hint" style="margin-left:10px"></span>
+        </div>
+      </div>
+    </div>
+
+      <div class="page" id="page-modelsettings">
+      <div class="card">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">🤖 模型设置</div>
+        <div class="hint" style="margin-bottom:14px">这套模型配置会同时影响评论生成、评论承接回复等 AI 文案能力。不开 AI 时会继续使用内置话术模板。Key 只保存在本机。</div>
+        <label style="cursor:pointer;display:inline-block;margin-bottom:12px"><input type="checkbox" id="llm_enabled"> 启用 AI 生成文案</label>
+        <div class="row">
+          <div class="fld"><label>服务商</label><select id="llm_provider"><option value="ark">火山方舟(豆包)</option><option value="dashscope">阿里百炼(通义)</option></select></div>
+          <div class="fld" style="flex:1"><label>模型 ID</label><input id="llm_model" placeholder="如 doubao-pro-32k / qwen-plus" style="width:100%"></div>
+        </div>
+        <div class="row">
+          <div class="fld" style="flex:1"><label>API Key(只存本机)</label><input id="llm_api_key" type="password" placeholder="粘贴 API Key" style="width:100%"></div>
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn" onclick="saveModelSettings()">保存模型设置</button>
+          <span class="hint" id="modelsavehint" style="margin-left:10px"></span>
+        </div>
+      </div>
+    </div>
       <div class="page" id="page-throttle">
       <div class="card">
         <div style="font-size:14px;font-weight:600;margin-bottom:10px">🛡️ 防封控制 · 限频 / 工作时间 / 养号(全部可配,改完即生效)</div>
@@ -262,12 +462,12 @@
         <div class="row"><div class="fld"><label>只回复近几天的评论</label><span style="display:inline-flex;gap:4px;align-items:center"><input id="r_recent" type="number" min="0" style="width:70px" title="只接近 N 天的评论;抓取时滚到更老就停,不用全读。填 0=不限(全部)"><span style="color:var(--sub);font-size:13px">天(0=不限)</span></span></div></div>
         <div class="row"><div class="fld" style="flex:1"><label>回复方向(喂给生成;红线:不留明文联系方式)</label><input id="r_dir" style="width:100%"></div></div>
         <div style="font-size:13px;font-weight:700;margin:8px 0 4px">回复限频</div>
-        <div class="row">
-          <div class="fld"><label>每日上限</label><input id="r_daily" type="number" style="width:80px"></div>
-          <div class="fld"><label>每小时</label><input id="r_hourly" type="number" style="width:80px"></div>
-          <div class="fld"><label>间隔分钟(最小~最大)</label><span style="display:inline-flex;gap:4px;align-items:center"><input id="r_gapmin" type="number" style="width:60px"><span>~</span><input id="r_gapmax" type="number" style="width:60px"></span></div>
-          <div class="fld"><label>一轮最多回</label><input id="r_batch" type="number" style="width:70px" title="一次承接最多回几条,防外呼饿死"></div>
-          <div class="fld"><label>兜底每N分钟看通知</label><input id="r_check" type="number" style="width:70px"></div>
+        <div class="limit-grid">
+          <label class="limit-item">每日最多 <input id="r_daily" type="number" min="0"> <span class="unit">条回复</span></label>
+          <label class="limit-item">每小时最多 <input id="r_hourly" type="number" min="0"> <span class="unit">条回复</span></label>
+          <label class="limit-item">回复间隔 <input id="r_gapmin" type="number" min="0"> <span class="unit">到</span> <input id="r_gapmax" type="number" min="0"> <span class="unit">分钟</span></label>
+          <label class="limit-item">每次承接最多 <input id="r_batch" type="number" min="1" title="每次进入通知/收件箱处理时,最多连续回复几条"> <span class="unit">条回复</span></label>
+          <label class="limit-item">每 <input id="r_check" type="number" min="1"> <span class="unit">分钟看一次通知</span></label>
         </div>
         <label style="cursor:pointer;display:inline-block;margin:8px 0"><input type="checkbox" id="r_dry"> 默认演练(任务承接时只定位+生成草稿,不真发;收件箱页可单独勾真发测)</label>
         <div style="margin-top:10px"><button class="btn" onclick="saveReplyRules()">保存承接规则</button><span class="hint" id="r_hint" style="margin-left:10px"></span></div>
@@ -292,70 +492,239 @@ async function loadTaskSettings() {
   setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
   setVal('rescan', c.rescan_minutes);
-  if ($('llm_enabled')) $('llm_enabled').checked = !!c.llm_enabled;
-  setVal('llm_provider', c.llm_provider || 'ark'); setVal('llm_model', c.llm_model); setVal('llm_api_key', c.llm_api_key);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
   if ($('slot_pacing')) $('slot_pacing').value = c.slot_pacing || 'even';
   if ($('schedule-form')) { const _sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule(); renderSchedule(_sch); markConflicts(); }
   updateTaskSummary();
 }
+async function loadModelSettings() {
+  const c = await getCfg();
+  if ($('llm_enabled')) $('llm_enabled').checked = !!c.llm_enabled;
+  setVal('llm_provider', c.llm_provider || 'ark'); setVal('llm_model', c.llm_model); setVal('llm_api_key', c.llm_api_key);
+}
+function saveModelSettings() {
+  const data = {
+    llm_enabled: ($('llm_enabled') ? $('llm_enabled').checked : false),
+    llm_provider: $('llm_provider').value,
+    llm_model: $('llm_model').value,
+    llm_api_key: $('llm_api_key').value
+  };
+  $('modelsavehint').textContent = '保存中…';
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('modelsavehint').textContent = d.ok ? '✓ 已保存,评论和承接回复都会使用这套模型' : ('✗ ' + d.msg); });
+}
+function attr(s) { return esc(s).replace(/"/g, '&quot;'); }
+function wordsText(v) { return Array.isArray(v) ? v.join('，') : String(v || ''); }
+const COMMENT_STRATEGY_TIP = '例:笔记只写“望京求租房”。\n系统能确定的只有:意向=求租;地点=望京;地点粒度=商圈/区域级;预算: 未知;户型: 未知;通勤/地铁要求: 未知。\n判断逻辑:先抽取 location = 望京, location_type = 商圈/区域, city = 北京。房源库检索先用地点做第一层召回,优先找望京、望京SOHO、望京南、望京西、阜通、东湖渠、来广营附近。预算/户型未知时不要硬筛、不要脑补,评论里追问缺失信息。\n半匹配话术:望京这边我有几套在看,近地铁和商圈附近的都有。你大概预算和想要几居呀?\n不要直接说:我这有一套望京6500一居,特别适合你。';
+function helpTip(text) { return '<span class="help-tip" tabindex="0">?<span class="help-pop">' + esc(text) + '</span></span>'; }
+function defaultLeadSlot() { return { key: '', name: '新信息', description: '', enabled: true }; }
+function leadSlotKey(name, i, current) {
+  const known = { '区域': 'area', '地点': 'area', '预算': 'budget', '户型': 'room_type', '入住时间': 'move_in_time', '特殊要求': 'requirements', '通勤': 'requirements' };
+  if (current) return current;
+  if (known[name]) return known[name];
+  const slug = String(name || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  return slug || ('slot_' + (i + 1));
+}
+function leadSlotHtml(slot, i) {
+  slot = Object.assign(defaultLeadSlot(), slot || {});
+  const enabled = slot.enabled !== false;
+  return '<div class="lead-slot" data-i="' + i + '">' +
+    '<label class="slot-enable"><input type="checkbox" class="lm-s-enabled" onchange="syncLeadSlotsHidden()"' + (enabled ? ' checked' : '') + '> 启用</label>' +
+    '<div class="slot-field"><label>信息名称</label><input class="lm-s-name" value="' + attr(slot.name || '') + '" placeholder="例如:预算" oninput="syncLeadSlotsHidden()"></div>' +
+    '<div class="slot-field"><label>系统要识别什么</label><input class="lm-s-desc" value="' + attr(slot.description || '') + '" placeholder="例如:可接受租金、价格范围、几居、地铁/通勤要求" oninput="syncLeadSlotsHidden()"></div>' +
+    '<button class="slot-del" type="button" onclick="removeLeadSlot(' + i + ')">删除</button>' +
+    '<details class="slot-advanced"><summary>字段名(高级)</summary><label>给系统保存用，通常不用改</label><input class="lm-s-key" value="' + attr(slot.key || '') + '" placeholder="例如 budget" oninput="syncLeadSlotsHidden()"></details>' +
+    '</div>';
+}
+function renderLeadSlots(slots) {
+  const list = $('lm_slots_editor');
+  if (!list) return;
+  list.innerHTML = (Array.isArray(slots) && slots.length ? slots : [defaultLeadSlot()]).map(leadSlotHtml).join('');
+  syncLeadSlotsHidden();
+}
+function gatherLeadSlots() {
+  return Array.prototype.slice.call(document.querySelectorAll('.lead-slot')).map(function (row, i) {
+    const name = row.querySelector('.lm-s-name').value.trim() || ('信息 ' + (i + 1));
+    const key = leadSlotKey(name, i, row.querySelector('.lm-s-key').value.trim());
+    return {
+      key: key,
+      name: name,
+      description: row.querySelector('.lm-s-desc').value.trim(),
+      enabled: row.querySelector('.lm-s-enabled').checked
+    };
+  });
+}
+function syncLeadSlotsHidden() {
+  const el = $('lm_slots');
+  if (el) el.value = JSON.stringify(gatherLeadSlots(), null, 2);
+}
+function addLeadSlot() {
+  const slots = gatherLeadSlots();
+  slots.push(defaultLeadSlot());
+  renderLeadSlots(slots);
+}
+function removeLeadSlot(i) {
+  const slots = gatherLeadSlots();
+  slots.splice(i, 1);
+  renderLeadSlots(slots.length ? slots : [defaultLeadSlot()]);
+}
+function defaultLeadCategory() { return { id: '', name: '新分类', action: 'skip', keywords: [], excludeKeywords: [], replyStrategy: '', llmPrompt: '', fallback: false }; }
+function actionOptions(v) {
+  const opts = [{ v: 'comment', t: '评论' }, { v: 'skip', t: '跳过' }, { v: 'record', t: '只记录' }, { v: 'review', t: '人工复核' }];
+  return opts.map(function (o) { return '<option value="' + o.v + '"' + (v === o.v ? ' selected' : '') + '>' + o.t + '</option>'; }).join('');
+}
+function leadCategoryHtml(cat, i) {
+  cat = Object.assign(defaultLeadCategory(), cat || {});
+  return '<div class="lm-category" data-i="' + i + '">' +
+    '<div class="head"><b>分类 ' + (i + 1) + '</b><input class="lm-c-name" placeholder="分类名称" value="' + attr(cat.name) + '" style="width:160px">' +
+    '<select class="lm-c-action">' + actionOptions(cat.action || 'skip') + '</select>' +
+    '<label class="hint" style="cursor:pointer"><input type="checkbox" class="lm-c-fallback"' + (cat.fallback ? ' checked' : '') + '> 兜底分类</label>' +
+    '<a href="#" onclick="removeLeadCategory(' + i + ');return false" style="margin-left:auto;color:var(--red);text-decoration:none">删除</a></div>' +
+    '<div class="row"><div class="fld" style="flex:1"><label>分类说明</label><input class="lm-c-desc" value="' + attr(cat.description || '') + '" style="width:100%"></div></div>' +
+    '<div class="row"><div class="fld" style="flex:1"><label>命中关键词（任一命中即归类）</label><textarea class="lm-c-keywords" style="width:100%">' + esc(wordsText(cat.keywords)) + '</textarea></div>' +
+    '<div class="fld" style="flex:1"><label>排除关键词（命中则不归此类）</label><textarea class="lm-c-exclude" style="width:100%">' + esc(wordsText(cat.excludeKeywords)) + '</textarea></div></div>' +
+    '<div class="row"><div class="fld" style="flex:1"><label>LLM 判断说明（预留，暂未启用）</label><textarea class="lm-c-prompt" style="width:100%">' + esc(cat.llmPrompt || '') + '</textarea></div>' +
+    '<div class="fld" style="flex:1"><label>评论策略 ' + helpTip(COMMENT_STRATEGY_TIP) + '</label><textarea class="lm-c-reply" style="width:100%">' + esc(cat.replyStrategy || '') + '</textarea></div></div>' +
+    '</div>';
+}
+function renderLeadCategories(categories) {
+  $('lm_categories').innerHTML = (categories && categories.length ? categories : [defaultLeadCategory()]).map(leadCategoryHtml).join('');
+}
+async function loadLeadModelSettings() {
+  const c = await getCfg();
+  const m = c.lead_model || {};
+  setVal('lm_name', m.name || '租房获客');
+  renderLeadSlots(m.slots || []);
+  renderLeadCategories(m.categories || []);
+}
+function parseWords(v) { return String(v || '').split(/[，,、\n]+/).map(function (s) { return s.trim(); }).filter(Boolean); }
+function gatherLeadModel() {
+  const slots = gatherLeadSlots();
+  const categories = Array.prototype.slice.call(document.querySelectorAll('.lm-category')).map(function (row, i) {
+    const name = row.querySelector('.lm-c-name').value.trim();
+    return {
+      id: (name || ('category_' + (i + 1))).replace(/\s+/g, '_'),
+      name: name || ('分类 ' + (i + 1)),
+      action: row.querySelector('.lm-c-action').value,
+      description: row.querySelector('.lm-c-desc').value,
+      keywords: parseWords(row.querySelector('.lm-c-keywords').value),
+      excludeKeywords: parseWords(row.querySelector('.lm-c-exclude').value),
+      llmPrompt: row.querySelector('.lm-c-prompt').value,
+      replyStrategy: row.querySelector('.lm-c-reply').value,
+      fallback: row.querySelector('.lm-c-fallback').checked
+    };
+  });
+  return { name: $('lm_name').value || '获客模型', categories: categories, slots: slots };
+}
+function addLeadCategory() {
+  const rows = Array.prototype.slice.call(document.querySelectorAll('.lm-category'));
+  const cats = rows.length ? gatherLeadModel().categories : [];
+  cats.push(defaultLeadCategory());
+  renderLeadCategories(cats);
+}
+function removeLeadCategory(i) {
+  const cats = gatherLeadModel().categories;
+  cats.splice(i, 1);
+  renderLeadCategories(cats.length ? cats : [defaultLeadCategory()]);
+}
+function saveLeadModel() {
+  const h = $('lm_hint');
+  let model;
+  try { model = gatherLeadModel(); }
+  catch (e) { h.style.color = 'var(--red)'; h.textContent = '✗ 识别信息配置有误:' + e.message; return; }
+  if (!model.categories.length) { h.style.color = 'var(--red)'; h.textContent = '✗ 至少保留一个笔记分类'; return; }
+  h.style.color = ''; h.textContent = '保存中…';
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ lead_model: model }))).then(r => r.json()).then(d => { h.textContent = d.ok ? '✓ 已保存,下一轮采集按这些分类执行' : ('✗ ' + d.msg); });
+}
 function toMinUI(hhmm) { const a = String(hhmm || '0:0').split(':').map(Number); return (a[0] || 0) * 60 + (a[1] || 0); }
-function validateSchedule(sch) {
-  const errs = [];
-  (sch || []).forEach(function (day, d) {
+const WD2 = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+function defaultSlot() { return { days: [0, 1, 2, 3, 4, 5, 6], start: '09:30', end: '23:00', notes: 40, quota: 8 }; }
+function normalizeSlot(slot) {
+  slot = slot || {};
+  const days = (Array.isArray(slot.days) ? slot.days : [0, 1, 2, 3, 4, 5, 6]).map(Number).filter(function (d) { return d >= 0 && d <= 6; });
+  return { days: Array.from(new Set(days)).sort(function (a, b) { return a - b; }), start: slot.start || '09:30', end: slot.end || '23:00', notes: Number(slot.notes) || 40, quota: Number(slot.quota) || 8 };
+}
+function defSchedule() { return slotsToSchedule([defaultSlot()]); }
+function slotKey(w) { return [w.start || '09:30', w.end || '23:00', Number(w.notes) || 40, Number(w.quota) || 8].join('|'); }
+function scheduleToSlots(sch) {
+  if (!Array.isArray(sch) || sch.length !== 7) return [defaultSlot()];
+  const map = {};
+  sch.forEach(function (day, d) {
     if (!day || day.on === false) return;
-    const wins = (day.windows || []);
-    for (const w of wins) { if (toMinUI(w.start) >= toMinUI(w.end)) errs.push(WD2[d] + ':「' + w.start + '–' + w.end + '」开始要早于结束'); }
-    const sorted = wins.slice().sort(function (a, b) { return toMinUI(a.start) - toMinUI(b.start); });
-    for (let k = 1; k < sorted.length; k++) {
-      if (toMinUI(sorted[k].start) < toMinUI(sorted[k - 1].end)) {
-        errs.push(WD2[d] + ':「' + sorted[k - 1].start + '–' + sorted[k - 1].end + '」与「' + sorted[k].start + '–' + sorted[k].end + '」时段重叠');
-      }
-    }
-  });
-  return errs;
-}
-function mark(el, msg) { el.style.outline = '2px solid var(--bad)'; el.style.borderRadius = '4px'; el.title = msg; }
-function markConflicts() {
-  let bad = false;
-  document.querySelectorAll('.sch-day').forEach(function (row) {
-    const on = row.querySelector('.sch-on').checked;
-    const wins = Array.prototype.slice.call(row.querySelectorAll('.sch-win'));
-    wins.forEach(function (w) { w.style.outline = ''; w.title = ''; });
-    if (!on) return;
-    const ps = wins.map(function (w) { return { el: w, s: toMinUI(w.querySelector('.sch-s').value), e: toMinUI(w.querySelector('.sch-e').value) }; });
-    ps.forEach(function (p) { if (p.s >= p.e) { mark(p.el, '开始要早于结束'); bad = true; } });
-    for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
-      if (ps[i].s < ps[j].e && ps[j].s < ps[i].e) { mark(ps[i].el, '与同日其他时段重叠'); mark(ps[j].el, '与同日其他时段重叠'); bad = true; }
-    }
-  });
-  return bad;
-}
-function gatherSchedule() {
-  const sch = [];
-  document.querySelectorAll('.sch-day').forEach(function (row) {
-    const on = row.querySelector('.sch-on').checked;
-    const windows = [];
-    row.querySelectorAll('.sch-win').forEach(function (w) {
-      const s = w.querySelector('.sch-s').value, e = w.querySelector('.sch-e').value;
-      const qel = w.querySelector('.sch-q'); const nel = w.querySelector('.sch-n');
-      const q = Number(qel ? qel.value : 8) || 8;
-      const n = Number(nel ? nel.value : 40) || 40;
-      if (s && e) windows.push({ start: s, end: e, notes: n, quota: q });
+    (day.windows || []).forEach(function (w) {
+      const key = slotKey(w);
+      if (!map[key]) map[key] = normalizeSlot({ days: [], start: w.start, end: w.end, notes: w.notes, quota: w.quota });
+      map[key].days.push(d);
+      map[key].days = Array.from(new Set(map[key].days)).sort(function (a, b) { return a - b; });
     });
-    sch.push({ on: on, windows: windows.length ? windows : [{ start: '09:30', end: '23:00', notes: 40, quota: 8 }] });
   });
+  const slots = Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return toMinUI(a.start) - toMinUI(b.start) || a.days[0] - b.days[0]; });
+  return slots.length ? slots : [defaultSlot()];
+}
+function slotsToSchedule(slots) {
+  const sch = WD2.map(function () { return { on: false, windows: [] }; });
+  (slots && slots.length ? slots : [defaultSlot()]).map(normalizeSlot).forEach(function (slot) {
+    slot.days.forEach(function (d) {
+      sch[d].on = true;
+      sch[d].windows.push({ start: slot.start, end: slot.end, notes: slot.notes, quota: slot.quota });
+    });
+  });
+  sch.forEach(function (day) { day.windows.sort(function (a, b) { return toMinUI(a.start) - toMinUI(b.start); }); });
   return sch;
 }
+function validateScheduleSlots(slots) {
+  const errs = [];
+  const clean = (slots || []).map(normalizeSlot);
+  clean.forEach(function (slot, i) {
+    if (toMinUI(slot.start) >= toMinUI(slot.end)) errs.push('时间段 ' + (i + 1) + ':开始要早于结束');
+    if (!slot.days.length) errs.push('时间段 ' + (i + 1) + ':至少选择一天');
+  });
+  for (let d = 0; d < 7; d++) {
+    const daySlots = clean.map(function (slot, i) { return { slot: slot, i: i }; }).filter(function (x) { return x.slot.days.indexOf(d) >= 0; }).sort(function (a, b) { return toMinUI(a.slot.start) - toMinUI(b.slot.start); });
+    for (let i = 1; i < daySlots.length; i++) {
+      if (toMinUI(daySlots[i].slot.start) < toMinUI(daySlots[i - 1].slot.end)) errs.push(WD2[d] + ':时间段 ' + (daySlots[i - 1].i + 1) + ' 与 时间段 ' + (daySlots[i].i + 1) + ' 重叠');
+    }
+  }
+  return errs;
+}
+function validateSchedule(sch) { return validateScheduleSlots(scheduleToSlots(sch)); }
+function mark(el, msg) { el.style.outline = '2px solid var(--red)'; el.style.borderRadius = '4px'; el.title = msg; }
+function markConflicts() {
+  let bad = false;
+  const slots = gatherScheduleSlots();
+  document.querySelectorAll('.sch-slot').forEach(function (row) { row.style.outline = ''; row.title = ''; });
+  slots.forEach(function (slot, i) { if (toMinUI(slot.start) >= toMinUI(slot.end) || !slot.days.length) { const el = document.querySelector('.sch-slot[data-i="' + i + '"]'); if (el) mark(el, !slot.days.length ? '至少选择一天' : '开始要早于结束'); bad = true; } });
+  for (let d = 0; d < 7; d++) {
+    const daySlots = slots.map(function (slot, i) { return { slot: slot, i: i }; }).filter(function (x) { return x.slot.days.indexOf(d) >= 0; }).sort(function (a, b) { return toMinUI(a.slot.start) - toMinUI(b.slot.start); });
+    for (let i = 1; i < daySlots.length; i++) {
+      if (toMinUI(daySlots[i].slot.start) < toMinUI(daySlots[i - 1].slot.end)) {
+        const a = document.querySelector('.sch-slot[data-i="' + daySlots[i - 1].i + '"]');
+        const b = document.querySelector('.sch-slot[data-i="' + daySlots[i].i + '"]');
+        if (a) mark(a, '与同日其他时间段重叠');
+        if (b) mark(b, '与同日其他时间段重叠');
+        bad = true;
+      }
+    }
+  }
+  return bad;
+}
+function gatherScheduleSlots() {
+  return Array.prototype.slice.call(document.querySelectorAll('.sch-slot')).map(function (row) {
+    const days = Array.prototype.slice.call(row.querySelectorAll('.sch-day-on:checked')).map(function (el) { return Number(el.value); });
+    return normalizeSlot({ days: days, start: row.querySelector('.sch-s').value, end: row.querySelector('.sch-e').value, notes: row.querySelector('.sch-n').value, quota: row.querySelector('.sch-q').value });
+  });
+}
+function gatherSchedule() {
+  return slotsToSchedule(gatherScheduleSlots());
+}
 function saveTaskSettings() {
-  const _schedule = gatherSchedule();
-  const _errs = validateSchedule(_schedule);
-  if (_errs.length) { const h = $('tasksavehint'); h.style.color = 'var(--bad)'; h.textContent = '✗ ' + _errs.join('；'); return; }
+  const _slots = gatherScheduleSlots();
+  const _errs = validateScheduleSlots(_slots);
+  if (_errs.length) { const h = $('tasksavehint'); h.style.color = 'var(--red)'; h.textContent = '✗ ' + _errs.join('；'); return; }
   $('tasksavehint').style.color = '';
+  const _schedule = slotsToSchedule(_slots);
   const data = {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
     task_keyword: $('kw').value, task_direction: $('dir').value,
-    llm_enabled: ($('llm_enabled') ? $('llm_enabled').checked : false), llm_provider: $('llm_provider').value, llm_model: $('llm_model').value, llm_api_key: $('llm_api_key').value,
     task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value,
     rescan_minutes: Math.max(1, Number($('rescan').value) || 15)
   };
@@ -367,58 +736,49 @@ function updateTaskSummary() {
   const g = (id, def) => (($(id) && $(id).value) || def);
   el.textContent = '本次任务:关键词「' + g('kw', '—') + '」 · 排序' + g('f_sort', '综合') + ' · 时间' + g('f_time', '不限') + ' · 类型' + g('f_type', '不限');
 }
-const WD2 = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-function defSchedule() { return WD2.map(function () { return { on: true, windows: [{ start: '09:30', end: '23:00' }] }; }); }
 async function loadSchedule() {
   const c = await getCfg();
   $('sch_enabled').checked = c.schedule_enabled !== false;
   const sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule();
   renderSchedule(sch);
 }
-function winHtml(w) {
-  w = w || {};
-  return '<span class="sch-win" style="display:inline-flex;align-items:center;gap:3px"><input type="time" class="sch-s" onchange="markConflicts()" value="' + (w.start || '09:30') + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + (w.end || '23:00') + '"> <span style="color:var(--sub);font-size:12px;margin-left:4px">采集</span><input type="number" class="sch-n" min="0" value="' + (w.notes != null ? w.notes : 40) + '" style="width:50px" title="本时段在搜索页采集多少篇笔记来筛求租帖"><span style="color:var(--sub);font-size:12px">篇</span> <span style="color:var(--sub);font-size:12px">评</span><input type="number" class="sch-q" min="0" value="' + (w.quota != null ? w.quota : 8) + '" style="width:46px" title="本时段最多打开浏览+评论多少条"><span style="color:var(--sub);font-size:12px">条</span> <a href="#" onclick="rmWin(this);return false" style="color:var(--bad);text-decoration:none">✕</a></span>';
-}
 function renderSchedule(sch) {
-  const box = $('schedule-form'); box.innerHTML = '';
-  WD2.forEach(function (name, d) {
-    const day = sch[d] || { on: true, windows: [{ start: '09:30', end: '23:00' }] };
-    const wins = (day.windows && day.windows.length) ? day.windows : [{ start: '09:30', end: '23:00' }];
-    const row = document.createElement('div');
-    row.className = 'sch-day'; row.dataset.d = d;
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap';
-    row.innerHTML = '<label style="width:78px;cursor:pointer;font-weight:600"><input type="checkbox" class="sch-on" onchange="markConflicts()"' + (day.on !== false ? ' checked' : '') + '> ' + name + '</label>' +
-      '<span class="sch-wins" style="display:inline-flex;gap:8px;flex-wrap:wrap">' + wins.map(winHtml).join('') + '</span>' +
-      '<a href="#" onclick="addWin(' + d + ');return false" style="font-size:12px;color:var(--brand);text-decoration:none">+ 加时段</a>';
-    box.appendChild(row);
-  });
+  renderScheduleSlots(scheduleToSlots(sch));
 }
-function addWin(d) {
-  const wrap = document.querySelector('.sch-day[data-d="' + d + '"] .sch-wins');
-  if (!wrap) return;
-  const tmp = document.createElement('div'); tmp.innerHTML = winHtml({ start: '09:30', end: '23:00' });
-  wrap.appendChild(tmp.firstChild);
+function dayChecks(days) {
+  return '<span class="sch-days" style="display:inline-flex;gap:8px;flex-wrap:wrap">' + WD2.map(function (name, d) {
+    return '<label style="font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" class="sch-day-on" value="' + d + '" onchange="markConflicts()"' + (days.indexOf(d) >= 0 ? ' checked' : '') + '> ' + name + '</label>';
+  }).join('') + '</span>';
+}
+function slotHtml(slot, i) {
+  slot = normalizeSlot(slot);
+  const dayText = slot.days.length === 7 ? '每天' : slot.days.map(function (d) { return WD2[d]; }).join('、');
+  return '<div class="sch-slot" data-i="' + i + '" style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">' +
+    '<div style="width:70px;font-weight:700;color:var(--ink)">时间段 ' + (i + 1) + '</div>' +
+    '<div style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap"><input type="time" class="sch-s" onchange="markConflicts()" value="' + esc(slot.start) + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + esc(slot.end) + '"><span class="hint">采集</span><input type="number" class="sch-n" min="0" value="' + esc(slot.notes) + '" style="width:62px" title="本时段在搜索页采集多少篇笔记来筛求租帖"><span class="hint">篇</span><span class="hint">评</span><input type="number" class="sch-q" min="0" value="' + esc(slot.quota) + '" style="width:58px" title="本时段最多打开浏览+评论多少条"><span class="hint">条</span></div>' +
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="badge b-seek">' + esc(dayText) + '</span>' + dayChecks(slot.days) + '</div>' +
+    '<a href="#" onclick="rmSlot(' + i + ');return false" style="color:var(--red);text-decoration:none;font-size:12px;margin-left:auto">删除</a>' +
+    '</div>';
+}
+function renderScheduleSlots(slots) {
+  const box = $('schedule-form');
+  box.innerHTML = (slots && slots.length ? slots : [defaultSlot()]).map(slotHtml).join('');
   markConflicts();
 }
-function rmWin(a) {
-  const win = a.closest('.sch-win'); const wins = win && win.parentNode;
-  if (wins && wins.querySelectorAll('.sch-win').length > 1) win.remove();
-  markConflicts();
+function addSlot() {
+  const slots = gatherScheduleSlots();
+  slots.push(defaultSlot());
+  renderScheduleSlots(slots);
+}
+function rmSlot(i) {
+  const slots = gatherScheduleSlots();
+  slots.splice(i, 1);
+  renderScheduleSlots(slots.length ? slots : [defaultSlot()]);
 }
 function saveSchedule() {
-  const sch = [];
-  document.querySelectorAll('.sch-day').forEach(function (row) {
-    const on = row.querySelector('.sch-on').checked;
-    const windows = [];
-    row.querySelectorAll('.sch-win').forEach(function (w) {
-      const s = w.querySelector('.sch-s').value, e = w.querySelector('.sch-e').value;
-      if (s && e) windows.push({ start: s, end: e });
-    });
-    sch.push({ on: on, windows: windows.length ? windows : [{ start: '09:30', end: '23:00' }] });
-  });
+  const sch = gatherSchedule();
   const data = { schedule_enabled: $('sch_enabled').checked, schedule: sch };
-  $('schsavehint').textContent = '保存中…';
-  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('schsavehint').textContent = d.ok ? '✓ 已保存,立即生效' : ('✗ ' + d.msg); });
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(function () {});
 }
 function showPage(p) {
   const isConsole = (p === 'console');
@@ -427,10 +787,12 @@ function showPage(p) {
   document.querySelectorAll('.page').forEach(e => e.classList.remove('on'));
   $('page-' + p).classList.add('on');
   document.querySelectorAll('.side .nav').forEach(e => e.classList.toggle('on', e.dataset.p === p));
-  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', inbox: '线索·承接', throttle: '防封控制', tasksettings: '任务设置', replyrules: '评论承接' }[p] || '';
+  $('pagetitle').textContent = { console: '控制台', comments: '评论记录', notes: '采集记录', inbox: '线索·承接', throttle: '防封控制', tasksettings: '任务设置', leadmodel: '获客模型', modelsettings: '模型设置', replyrules: '评论承接' }[p] || '';
   if (p === 'comments' || p === 'notes') loadRecords();
   if (p === 'throttle') loadThrottle();
   if (p === 'tasksettings') loadTaskSettings();
+  if (p === 'leadmodel') loadLeadModelSettings();
+  if (p === 'modelsettings') loadModelSettings();
   if (p === 'inbox') loadInbox();
   if (p === 'replyrules') loadReplyRules();
 }
@@ -470,6 +832,109 @@ function saveReplyRules() {
 }
 const INTENT_LABEL = { reply: '回复我评论', comment: '评论我笔记', mention: '@我' };
 const INTENT_TAG = { hot: '<span class="badge b-bad">高意向</span>', seek: '<span class="badge b-ok">有意向</span>', other: '' };
+const DATE_PRESETS = [
+  { id: 'all', label: '全部' },
+  { id: 'today', label: '今日' },
+  { id: 'yesterday', label: '昨日' },
+  { id: 'last3', label: '近3日' },
+  { id: 'last7', label: '近7日' },
+  { id: 'custom', label: '自定义' }
+];
+const dateFilters = {
+  comments: { preset: 'all', start: '', end: '', scope: '按评论发送时间' },
+  notes: { preset: 'all', start: '', end: '', scope: '按最近采集时间' },
+  inbox: { preset: 'all', start: '', end: '', scope: '按用户互动时间' }
+};
+function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0); }
+function addDays(d, n) { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; }
+function localInputValue(d) {
+  if (!d || isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+}
+function inputIso(v, addEndSecond) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  if (addEndSecond) d.setSeconds(d.getSeconds() + 1);
+  return d.toISOString();
+}
+function presetRange(preset) {
+  const now = new Date();
+  const today = startOfDay(now);
+  const tomorrow = addDays(today, 1);
+  if (preset === 'today') return { start: today.toISOString(), end: tomorrow.toISOString() };
+  if (preset === 'yesterday') return { start: addDays(today, -1).toISOString(), end: today.toISOString() };
+  if (preset === 'last3') return { start: addDays(today, -2).toISOString(), end: tomorrow.toISOString() };
+  if (preset === 'last7') return { start: addDays(today, -6).toISOString(), end: tomorrow.toISOString() };
+  return {};
+}
+function dateRange(key) {
+  const f = dateFilters[key] || {};
+  if (f.preset === 'custom') {
+    const start = inputIso(f.start, false), end = inputIso(f.end, true);
+    return { start: start, end: end };
+  }
+  return presetRange(f.preset);
+}
+function appendDateParams(params, key, prefix) {
+  const r = dateRange(key);
+  if (r.start) params.set((prefix || '') + 'start', r.start);
+  if (r.end) params.set((prefix || '') + 'end', r.end);
+}
+function recordsQuery() {
+  const p = new URLSearchParams();
+  appendDateParams(p, 'comments', 'comments_');
+  appendDateParams(p, 'notes', 'notes_');
+  const s = p.toString();
+  return s ? '?' + s : '';
+}
+function inboxQuery() {
+  const p = new URLSearchParams();
+  appendDateParams(p, 'inbox', '');
+  const s = p.toString();
+  return s ? '?' + s : '';
+}
+function reloadDateTarget(key) {
+  if (key === 'inbox') loadInbox();
+  else loadRecords();
+}
+function setDatePreset(key, preset) {
+  const f = dateFilters[key]; if (!f) return;
+  f.preset = preset;
+  if (preset === 'custom' && (!f.start || !f.end)) {
+    const now = new Date();
+    f.start = localInputValue(startOfDay(now));
+    f.end = localInputValue(now);
+  }
+  renderDateFilter(key);
+  reloadDateTarget(key);
+}
+function setCustomDateRange(key) {
+  const f = dateFilters[key]; if (!f) return;
+  const s = $(key + '-start'), e = $(key + '-end');
+  f.start = s ? s.value : '';
+  f.end = e ? e.value : '';
+  f.preset = 'custom';
+  renderDateFilter(key);
+  reloadDateTarget(key);
+}
+function renderDateFilter(key) {
+  const el = $(key + '-filter'), f = dateFilters[key];
+  if (!el || !f) return;
+  const cls = 'date-filter' + (f.preset === 'custom' ? ' custom' : '');
+  const buttons = DATE_PRESETS.map(function(p) {
+    return '<button type="button" class="' + (f.preset === p.id ? 'on' : '') + '" onclick="setDatePreset(\'' + key + '\',\'' + p.id + '\')">' + p.label + '</button>';
+  }).join('');
+  el.className = cls;
+  el.innerHTML = '<span class="scope">' + esc(f.scope) + '</span><div class="seg">' + buttons + '</div>' +
+    '<div class="custom-range"><input id="' + key + '-start" type="datetime-local" step="1" value="' + esc(f.start) + '" onchange="setCustomDateRange(\'' + key + '\')">' +
+    '<span class="hint">至</span><input id="' + key + '-end" type="datetime-local" step="1" value="' + esc(f.end) + '" onchange="setCustomDateRange(\'' + key + '\')"></div>';
+}
+function renderAllDateFilters() {
+  renderDateFilter('comments');
+  renderDateFilter('notes');
+  renderDateFilter('inbox');
+}
 function renderInbox(d) {
   const s = d.stats || {};
   $('inbox-stats').innerHTML = '收件 <b>' + (s.total||0) + '</b> · 待处理 <b>' + (s.pending||0) + '</b> · 已回复 ' + (s.replied||0) + ' · 跳过 ' + (s.skipped||0) + ' · 失败 ' + (s.failed||0);
@@ -479,12 +944,26 @@ function renderInbox(d) {
     const badge = '<span class="badge b-seek">' + (INTENT_LABEL[it.type] || it.type || '') + '</span>';
     const itag = INTENT_TAG[it.intent] || '';
     const st = it.status === 'replied' ? '<span class="badge b-ok">已回复</span>' : it.status === 'failed' ? '<span class="badge b-bad">失败</span>' : it.status === 'skipped' ? '<span class="badge">跳过</span>' : '<span class="badge b-warn">待处理</span>';
-    const link = it.user_link ? ('https://www.xiaohongshu.com' + it.user_link) : '';
-    const reply = it.reply_text ? ('<div class="hint" style="margin-top:4px;color:var(--brand)">' + (it.status==='replied'?'已回:':'拟回(草稿):') + esc(it.reply_text) + '</div>') : '';
+    const dup = Number(it.duplicate_count || 0) ? '<span class="badge">重复出现 ' + Number(it.duplicate_count || 0) + ' 次</span>' : '';
+    const link = xhsUrl(it.user_link);
+    const noteLink = xhsUrl(it.note_url || it.source_key);
+    const incoming = it.content || it.incoming_text || '';
+    const basis = it.basis_text || basisFallback(it);
+    const absTime = formatInboxTime(it);
+    const replyTime = it.replied_at ? formatLocalSecond(it.replied_at) : '';
+    const replyLabel = it.status === 'replied' ? '我的回复' : '拟回复';
+    const reply = it.reply_text
+      ? ('<div style="margin-top:8px"><div class="hint" style="font-size:12px">' + replyLabel + '</div><div style="white-space:pre-wrap;color:var(--brand);font-size:14px;line-height:1.55">' + esc(it.reply_text) + '</div></div>')
+      : (it.status === 'skipped' ? '<div class="hint" style="margin-top:8px;color:#a16207">未回复：' + esc(it.skip_reason || it.fail_reason || '已按规则跳过') + '</div>' : '');
+    const timeRow = '<div class="time-row"><span class="time-label"><b>用户互动：</b>' + esc(absTime) + '</span>' +
+      (replyTime ? '<span class="time-label"><b>我的回复：</b>' + esc(replyTime) + '</span>' : '') + '</div>';
+    const basisDetail = basis ? ('<details class="basis-detail"><summary>查看依据</summary><div>' + esc(basis) + '</div></details>') : '';
     return '<div class="note"><h4>' + esc(it.nick||'(匿名)') + ' ' + badge + ' ' + itag + ' ' + st + '</h4>'
-      + '<div class="hint" style="white-space:pre-wrap;margin:4px 0">' + esc(it.content||'') + '</div>'
+      + '<div style="margin-top:6px"><div class="hint" style="font-size:12px">用户发来</div><div style="white-space:pre-wrap;margin-top:2px;font-size:14px;line-height:1.55">' + esc(incoming || '(未识别到评论正文)') + '</div></div>'
       + reply
-      + '<div class="meta">' + esc(it.action_date||'') + (link ? ' · <a href="' + esc(link) + '" target="_blank">主页</a>' : '') + '</div></div>';
+      + timeRow
+      + '<div class="meta">' + dup + (link ? ' · <a href="' + esc(link) + '" target="_blank">主页</a>' : '') + (noteLink ? ' · <a href="' + esc(noteLink) + '" target="_blank">来源</a>' : '') + '</div>'
+      + basisDetail + '</div>';
   }).join('');
 }
 function runInbox() {
@@ -498,20 +977,57 @@ function runInbox() {
   es2.onerror = () => { b.disabled = false; b.textContent = old; es2 && es2.close(); loadInbox(); };
 }
 function loadInbox() {
-  fetch('/api/inbox-list').then(r => r.json()).then(d => { if (d.ok) renderInbox(d); }).catch(()=>{});
+  fetch('/api/inbox-list' + inboxQuery()).then(r => r.json()).then(d => { if (d.ok) renderInbox(d); }).catch(()=>{});
 }
 function refreshInbox() {
   const b = $('inboxbtn'); b.disabled = true; const old = b.textContent; b.textContent = '抓取中…(进通知页,约 15 秒)';
-  fetch('/api/inbox-scan').then(r => r.json()).then(d => {
+  fetch('/api/inbox-scan' + inboxQuery()).then(r => r.json()).then(d => {
     b.disabled = false; b.textContent = old;
     if (d.ok) { renderInbox(d); addLog && addLog('收件:本次抓 ' + d.scanned + ' 条,新增 ' + d.added + ' 条'); }
     else { $('inbox-stats').textContent = '✗ ' + (d.msg || '抓取失败'); }
   }).catch(e => { b.disabled = false; b.textContent = old; $('inbox-stats').textContent = '✗ ' + e.message; });
 }
+function xhsUrl(path) {
+  const s = String(path || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//.test(s)) return s;
+  return 'https://www.xiaohongshu.com' + (s[0] === '/' ? s : '/' + s);
+}
+function basisFallback(it) {
+  if (it.type === 'comment') return it.note_title ? ('我的笔记：' + it.note_title) : '对方评论了我的笔记（未获取到原笔记标题）';
+  if (it.type === 'reply') return '对方回复了我的评论（未获取到原评论原文）';
+  if (it.type === 'mention') return '对方 @ 了我（未获取到原文上下文）';
+  return '未获取到原消息上下文';
+}
+function formatInboxTime(it) {
+  const raw = it.action_date || it.time_raw || '';
+  if (!it.event_at_est) return raw || '时间未知';
+  const d = new Date(it.event_at_est);
+  if (isNaN(d.getTime())) return raw || '时间未知';
+  const abs = d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+  const prefix = it.time_confidence === 'exact' ? '精确 ' : (it.time_confidence === 'unknown' ? '' : '约 ');
+  return prefix + abs + (raw ? '（页面显示 ' + raw + '）' : '');
+}
+function formatLocalSecond(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
 function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function setPhase(p) {
   const order = ['search','match','generate','done']; const idx = order.indexOf(p);
   order.forEach((k, i) => { const el = $('p-'+k); el.classList.remove('on','done'); if (i < idx) el.classList.add('done'); else if (i === idx) el.classList.add('on'); });
+}
+function renderStats(s) {
+  s = s || {};
+  const total = Number(s.total || 0);
+  const target = Number(s.targetCount || 0);
+  $('m-total').textContent = total || 0;
+  $('m-seek').textContent = target || 0;
+  $('m-supply').textContent = Math.max(0, total - target);
+  $('m-target').textContent = target || 0;
 }
 function addLog(m){ const el = $('log'); el.textContent += (el.textContent ? '\n' : '') + m; el.scrollTop = el.scrollHeight; }
 
@@ -519,8 +1035,9 @@ function addResult(r) {
   const div = document.createElement('div'); div.className = 'note';
   const comp = r.compliant ? '<span class="badge b-ok">合规 ✓</span>' : '<span class="badge b-bad">合规 ✗ ' + esc((r.violations||[]).map(v=>v.hint).join('、')) + '</span>';
   const warn = r.agentReject ? '<span class="badge b-warn">该帖中介勿扰</span>' : '';
+  const cat = r.category_name || r.intent || '目标笔记';
   div.innerHTML =
-    '<h4>' + esc(r.title) + '  <span class="badge b-seek">求租</span>' + warn + '</h4>' +
+    '<h4>' + esc(r.title) + '  <span class="badge b-seek">' + esc(cat) + '</span>' + warn + '</h4>' +
     '<div class="meta">' + esc(r.author||'?') + ' · ' + esc(r.region||'') + ' · 赞' + esc(r.likes) + '/藏' + esc(r.collects) + '/评' + esc(r.comments) + '　<a href="' + esc(r.url) + '" target="_blank">🔗 打开笔记</a></div>' +
     (r.descSample ? '<div class="hint" style="margin-bottom:6px">诉求:' + esc(r.descSample) + '</div>' : '') +
     '<label class="hint">生成评论(可改)' + comp + '</label>' +
@@ -543,7 +1060,7 @@ async function start() {
         '&note_type=' + encodeURIComponent($('f_type').value) + '&note_range=' + encodeURIComponent($('f_range').value));
   es.addEventListener('log', e => addLog(JSON.parse(e.data)));
   es.addEventListener('phase', e => setPhase(JSON.parse(e.data).phase));
-  es.addEventListener('stats', e => { const s = JSON.parse(e.data); $('m-total').textContent = s.total; $('m-seek').textContent = s.byIntent['求租']||0; $('m-supply').textContent = s.byIntent['房源']||0; $('m-target').textContent = s.targetCount; });
+  es.addEventListener('stats', e => renderStats(JSON.parse(e.data)));
   es.addEventListener('result', e => addResult(JSON.parse(e.data)));
   es.addEventListener('done', e => { const d = JSON.parse(e.data); setPhase('done'); addLog(d.error ? ('出错:'+d.error) : ('完成:生成 '+(d.generated||0)+' 条待发送')); $('rcount').textContent = d.generated ? ('· '+d.generated+' 条') : ''; $('go').disabled = false; $('stopbtn').disabled = true; loadRecords(); es.close(); });
   es.onerror = () => { addLog('(连接结束)'); $('go').disabled = false; $('stopbtn').disabled = true; es && es.close(); };
@@ -552,7 +1069,8 @@ async function start() {
 function addAutoResult(r) {
   const div = document.createElement('div'); div.className = 'note';
   const st = r.dry ? '<span class="badge b-warn">🟡 演练 · 走完流程未发送</span>' : (r.ok ? '<span class="badge b-ok">✅ 已自动发送</span>' : '<span class="badge b-bad">✗ 发送失败</span>');
-  div.innerHTML = '<h4>' + esc(r.title) + ' <span class="badge b-seek">求租</span></h4>'
+  const cat = r.category_name || r.intent || '目标笔记';
+  div.innerHTML = '<h4>' + esc(r.title) + ' <span class="badge b-seek">' + esc(cat) + '</span></h4>'
     + '<div class="meta">' + esc(r.region || '') + ' · <a href="' + esc(r.url) + '" target="_blank">🔗 打开笔记</a>　' + st + '</div>'
     + '<div class="hint" style="white-space:pre-wrap;margin-top:4px">' + esc(r.comment) + '</div>';
   $('results').appendChild(div);
@@ -565,7 +1083,7 @@ function connectStream() {
   _stream = new EventSource('/api/engine/stream');
   _stream.addEventListener('log', e => { const o = JSON.parse(e.data); addLog('[' + o.t + '] ' + o.m); });
   _stream.addEventListener('status', e => applyMachineStatus(JSON.parse(e.data)));
-  _stream.addEventListener('stats', e => { const x = JSON.parse(e.data); $('m-total').textContent = x.total; $('m-seek').textContent = x.byIntent['求租']||0; $('m-supply').textContent = x.byIntent['房源']||0; $('m-target').textContent = x.targetCount; });
+  _stream.addEventListener('stats', e => renderStats(JSON.parse(e.data)));
   _stream.addEventListener('result', e => { addAutoResult(JSON.parse(e.data)); loadRecords(); });
   _stream.onerror = () => { /* EventSource 浏览器会自动重连 */ };
 }
@@ -633,19 +1151,20 @@ $('cast').addEventListener('click', e => {
 connectMonitor();
 
 function loadRecords() {
-  fetch('/api/records').then(r => r.json()).then(d => {
+  fetch('/api/records' + recordsQuery()).then(r => r.json()).then(d => {
     if (!d.ok) return;
     $('recstats').textContent = '已评论 ' + d.stats.commented + ' · 看过笔记 ' + d.stats.notes + ' · 潜客 ' + d.stats.leads;
     $('reccomments').innerHTML = d.comments.length ? d.comments.map(c =>
       '<div class="note" style="padding:9px 12px"><div style="font-size:13px;font-weight:600">' + esc(c.note_title || '(无标题)') +
       ' <span class="badge ' + (c.status === 'sent' ? 'b-ok' : 'b-warn') + '">' + esc(c.status) + '</span> <a href="' + esc(c.note_url) + '" target="_blank">🔗 打开笔记</a></div>' +
       '<div style="font-size:12.5px;margin:4px 0">' + esc(c.content) + '</div>' +
-      '<div class="hint">' + esc((c.created_at || '').replace('T',' ').slice(0,16)) + '</div></div>'
+      '<div class="time-row"><span class="time-label"><b>评论发送：</b>' + esc(formatLocalSecond(c.created_at) || '时间未知') + '</span><span class="time-label"><b>笔记发布时间：</b>暂未采集到</span></div></div>'
     ).join('') : '<div class="hint">(还没有评论记录,去控制台跑一轮并发送)</div>';
-    $('recnotes').innerHTML = d.notes.length ? ('<table class="rec"><tr><td>标题</td><td>作者</td><td>意向</td><td>赞/评</td><td></td></tr>' +
-      d.notes.map(n => '<tr><td>' + esc((n.title||'(无标题)').slice(0,30)) + '</td><td>' + esc(n.author||'') + '</td><td>' + esc(n.intent||'') + '</td><td>' + esc(n.likes||'') + '/' + esc(n.comments||'') + '</td><td><a href="' + esc(n.url) + '" target="_blank">🔗</a></td></tr>').join('') + '</table>') : '<div class="hint">(还没有采集记录)</div>';
+    $('recnotes').innerHTML = d.notes.length ? ('<table class="rec"><tr><td>标题</td><td>作者</td><td>笔记分类</td><td>赞/评</td><td>首次采集</td><td>最近采集</td><td></td></tr>' +
+      d.notes.map(n => '<tr><td>' + esc((n.title||'(无标题)').slice(0,30)) + '</td><td>' + esc(n.author||'') + '</td><td>' + esc(n.intent||'') + '</td><td>' + esc(n.likes||'') + '/' + esc(n.comments||'') + '</td><td>' + esc(formatLocalSecond(n.first_seen_at) || '未知') + '</td><td>' + esc(formatLocalSecond(n.last_seen_at) || '未知') + '</td><td><a href="' + esc(n.url) + '" target="_blank">🔗</a></td></tr>').join('') + '</table>') : '<div class="hint">(还没有采集记录)</div>';
   }).catch(() => {});
 }
+renderAllDateFilters();
 loadRecords();
 
 // 登录状态检测 + 引导

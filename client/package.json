@@ -8,7 +8,8 @@
     "m1": "node src/m1-search.js",
     "launch": "bash scripts/launch-chrome.sh",
     "ui": "node src/server.js",
-    "app": "electron electron/main.js"
+    "app": "electron electron/main.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

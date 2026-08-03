@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书自动化获客工具 · 产品功能手册</title>
+<style>
+  :root{
+    --bg:#f4f6fa;--paper:#ffffff;--paper-2:#fbfcff;--ink:#182233;--muted:#5a6578;--faint:#8b96a8;
+    --line:#e2e7ef;--line-2:#cbd3df;--brand:#ff2742;--brand-2:#ff5f75;--brand-soft:#fff0f3;--brand-line:#ffc1ca;
+    --green:#0a8a5f;--green-soft:#e7f6ef;--blue:#1f6fd6;--blue-soft:#eaf2fc;--amber:#b97400;--amber-soft:#fff4df;
+    --violet:#534ab7;--violet-soft:#efedff;--red:#c92a2a;--red-soft:#fdecec;--dark:#1f242d;--dark-2:#2a303b;
+    --shadow:0 1px 2px rgba(20,30,50,.05),0 16px 42px rgba(20,30,50,.10);
+    --shadow-soft:0 1px 2px rgba(20,30,50,.04),0 8px 22px rgba(20,30,50,.06);
+    --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.7;-webkit-font-smoothing:antialiased}
+  a{text-decoration:none;color:inherit}
+  code{font-family:var(--mono);font-size:12px;background:#f1f3f8;color:#4338ca;border-radius:6px;padding:1px 6px}
+  .sidebar{position:fixed;top:0;bottom:0;left:0;width:288px;background:var(--dark);color:#cbd2dd;z-index:20;display:flex;flex-direction:column}
+  .brand{padding:22px 22px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .brand-row{display:flex;align-items:center;gap:10px;color:#fff;font-weight:900;font-size:15px}
+  .brand-mark{width:31px;height:31px;border-radius:8px;background:var(--brand);display:grid;place-items:center;color:#fff}
+  .brand-sub{font-size:12px;color:#798292;margin-top:8px}
+  .search{padding:14px 16px}
+  .search input{width:100%;height:36px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:var(--dark-2);color:#eef2f8;padding:0 12px;outline:none}
+  .search input::placeholder{color:#7e8796}
+  .nav{flex:1;overflow:auto;padding:4px 12px 26px}
+  .grp{font-size:11px;color:#6f7786;font-weight:900;padding:16px 10px 6px}
+  .nav a{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:#cbd2dd;font-size:13px}
+  .nav a:hover{background:#2b313c;color:#fff}
+  .nav a.active{background:var(--brand);color:#fff;font-weight:800}
+  .ix{width:24px;height:24px;border-radius:7px;background:rgba(255,255,255,.08);display:grid;place-items:center;font-size:11px;font-weight:900;color:#aeb7c5;flex:none}
+  .nav a.active .ix{background:rgba(255,255,255,.2);color:#fff}
+  .main{margin-left:288px;min-height:100vh}
+  .topbar{position:sticky;top:0;z-index:10;height:56px;background:rgba(244,246,250,.9);backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 40px;color:var(--muted);font-size:13px}
+  .topbar b{color:var(--ink)}
+  .topbar .pill{margin-left:auto;border-radius:999px;background:var(--brand-soft);color:var(--brand);border:1px solid var(--brand-line);padding:4px 11px;font-weight:800;font-size:12px}
+  .wrap{max-width:1160px;margin:0 auto;padding:38px 40px 92px}
+  .kicker{font-size:12px;font-weight:900;color:var(--brand)}
+  h1{font-size:34px;line-height:1.24;margin:9px 0 11px}
+  h2{font-size:22px;margin:0}
+  h3{font-size:17px;margin:24px 0 8px}
+  .lead{font-size:15px;color:var(--muted);max-width:850px;margin:0}
+  .status-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:17px}
+  .badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:900;border:1px solid transparent;white-space:nowrap}
+  .b-done{background:var(--green-soft);color:var(--green);border-color:#bfe5d7}.b-plan{background:var(--amber-soft);color:var(--amber);border-color:#ecd8ac}.b-api{background:var(--blue-soft);color:var(--blue);border-color:#c6dbf6}.b-risk{background:var(--red-soft);color:var(--red);border-color:#f2c1c1}.b-ui{background:var(--violet-soft);color:var(--violet);border-color:#d8d3ff}
+  section{margin-top:48px;scroll-margin-top:76px}
+  .sec-title{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .num{width:36px;height:36px;border-radius:8px;background:var(--brand);color:#fff;display:grid;place-items:center;font-weight:900;font-size:13px;flex:none}
+  .sub{margin:0 0 16px 48px;color:var(--muted)}
+  .path{margin:0 0 14px 48px;font-size:12.5px;color:var(--faint)}
+  .callout{display:flex;gap:12px;border-radius:8px;padding:14px 16px;margin:15px 0;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow-soft)}
+  .callout .cic{width:25px;height:25px;border-radius:7px;background:var(--brand);color:#fff;display:grid;place-items:center;flex:none;font-weight:900}
+  .callout>div{min-width:0}
+  .callout.info{background:var(--blue-soft);border-color:#c6dbf6}.callout.warn{background:var(--amber-soft);border-color:#ecd8ac}.callout.red{background:var(--red-soft);border-color:#f2c1c1}
+  .flow{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin:16px 0}
+  .flow-card{min-width:132px;flex:1;background:#fff;border:1px solid var(--line);border-radius:8px;padding:13px 14px;box-shadow:var(--shadow-soft)}
+  .flow-card b{display:block}.flow-card span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+  .arr{align-self:center;color:var(--faint);font-weight:900}
+  table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;font-size:13px;margin:12px 0}
+  th{background:#f8fafc;color:var(--muted);font-weight:900;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid #eef1f6;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .steps{display:grid;gap:10px;margin:14px 0}
+  .step{display:flex;gap:12px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:13px 15px;box-shadow:var(--shadow-soft)}
+  .step .sno{width:26px;height:26px;border-radius:7px;background:var(--brand);color:#fff;display:grid;place-items:center;flex:none;font-weight:900;font-size:12px}
+  .step h4{margin:0 0 3px;font-size:14px}.step p{margin:0;color:var(--muted);font-size:13px}
+
+  /* High fidelity product screenshot system */
+  .shot{position:relative;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 22px 58px rgba(20,30,50,.16);overflow:hidden;margin:17px 0 8px}
+  .shotbar{height:44px;background:#f8fafc;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 14px}
+  .actual-shot img{display:block;width:100%;height:auto;background:#fff}
+  .dot{width:10px;height:10px;border-radius:50%;background:#d6dce6}.dot.red{background:#ff6b6b}.dot.yellow{background:#f7c948}.dot.green{background:#4ade80}
+  .shotbar .title{font-weight:900;margin-left:6px}.shotbar .meta{margin-left:auto;font-size:12px;color:var(--faint)}
+  .product{display:grid;grid-template-columns:204px 1fr;min-height:486px;background:#f5f6f8}
+  .pside{background:#20242c;color:#c6ccd7;padding:12px 0}
+  .plogo{display:flex;align-items:center;gap:7px;color:#fff;font-weight:900;padding:4px 16px 14px;border-bottom:1px solid #303641;margin-bottom:8px}
+  .plogo .ld{width:10px;height:10px;border-radius:50%;background:var(--brand)}
+  .pgrp{font-size:10.5px;color:#6d7480;padding:12px 16px 4px;font-weight:900}
+  .pnav{position:relative;padding:8px 14px 8px 16px;font-size:12.5px;border-left:3px solid transparent}
+  .pnav.on{background:#2b303a;color:#fff;border-left-color:var(--brand);font-weight:800}
+  .pnav.dim{color:#68707d}
+  .pbadge{margin-left:6px;display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--brand);color:#fff;font-size:10px;font-weight:900}
+  .pbody{min-width:0}
+  .ptop{height:58px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 18px}
+  .ptop .t{font-weight:900;font-size:15.5px}.ptop .s{font-size:12px;color:var(--faint);margin-top:2px}
+  .pcontent{padding:16px 18px}
+  .toolbar{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px;box-shadow:var(--shadow-soft);flex-wrap:wrap}
+  .btn{height:30px;border:1px solid var(--line-2);border-radius:7px;background:#fff;color:var(--ink);font-size:12px;font-weight:800;padding:0 11px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}.btn.ghost{background:#fff}.btn.green{background:var(--green);border-color:var(--green);color:#fff}.btn.danger{color:var(--red);border-color:#efbcbc}
+  .switch{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);font-weight:800}
+  .toggle{width:34px;height:18px;border-radius:999px;background:#d8dee8;position:relative}.toggle:before{content:"";position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;left:2px;top:2px;box-shadow:0 1px 2px rgba(0,0,0,.2)}.toggle.on{background:var(--brand)}.toggle.on:before{left:18px}
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+  .metric{background:#fff;border:1px solid var(--line);border-radius:8px;padding:11px 12px;box-shadow:var(--shadow-soft)}
+  .metric .ml{font-size:11.5px;color:var(--muted)}.metric .mv{font-size:23px;font-weight:900;line-height:1.25}
+  .pipe{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px}
+  .pipe div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center;font-size:12px;color:var(--muted)}
+  .pipe .on{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand);font-weight:900}
+  .split{display:grid;grid-template-columns:1.35fr .95fr;gap:12px}
+  .browser{position:relative;background:#10141a;border-radius:8px;min-height:226px;overflow:hidden;padding:12px}
+  .browser-top{height:28px;background:#202631;border-radius:7px;display:flex;align-items:center;padding:0 9px;color:#778294;font-size:11px;margin-bottom:10px}
+  .xhs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+  .run-grid{display:grid;grid-template-columns:1.12fr .88fr;gap:12px;margin-top:12px}
+  .xhs-sim{background:#f7f8fb;border:1px solid var(--line);border-radius:8px;padding:12px;box-shadow:var(--shadow-soft)}
+  .xhs-searchline{height:34px;border:1px solid var(--line-2);border-radius:999px;background:#fff;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:12.5px;color:var(--ink);box-shadow:0 1px 2px rgba(20,30,50,.04)}
+  .xhs-searchline b{color:var(--brand)}.xhs-searchline span{margin-left:auto;color:var(--faint);font-size:11px;font-weight:800}
+  .xhs-filterbar{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .xhs-filterbar span{height:24px;border-radius:999px;background:#fff;border:1px solid var(--line);display:inline-flex;align-items:center;padding:0 9px;color:var(--muted);font-size:11.5px;font-weight:800}
+  .xhs-filterbar .on{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand)}
+  .xhs-feed{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+  .feed-card{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 5px 14px rgba(20,30,50,.06)}
+  .feed-card.hot{border-color:var(--brand-line);box-shadow:0 0 0 2px rgba(255,39,66,.08),0 8px 22px rgba(20,30,50,.12)}
+  .feed-img{height:86px;background:linear-gradient(135deg,#ffd6df,#cde7ff);display:grid;place-items:center;color:#556176;font-size:11px;font-weight:900}
+  .feed-img.room{background:linear-gradient(135deg,#f8d7c7,#dcecff)}.feed-img.map{background:linear-gradient(135deg,#d6f4e8,#e3e0ff)}
+  .feed-body{padding:8px}.feed-body b{display:block;font-size:12.5px;line-height:1.35}.feed-body span{display:block;color:var(--muted);font-size:11px;margin-top:4px}
+  .note-preview{margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;display:grid;grid-template-columns:170px 1fr;box-shadow:var(--shadow-soft)}
+  .note-photos{position:relative;min-height:152px;background:linear-gradient(135deg,#ffdfe5,#d7ebff);display:grid;place-items:center;color:#475569;font-weight:900;font-size:12px}
+  .photo-dots{position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:5px}.photo-dots i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.75)}.photo-dots i.on{background:var(--brand)}
+  .note-info{padding:11px 12px}.note-info h4{margin:0 0 6px;font-size:14px}.note-info p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}.note-info .comment-mini{margin-top:8px;background:#f8fafc;border:1px solid #edf1f7;border-radius:7px;padding:7px;color:#64748b;font-size:11.5px}
+  .decision-board{display:grid;gap:10px}
+  .decision-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px;box-shadow:var(--shadow-soft)}
+  .decision-card h4{margin:0 0 8px;font-size:13.5px}.decision-card p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.55}
+  .mini-rows{display:grid;gap:7px}.mini-row{display:grid;grid-template-columns:.95fr .8fr 1fr;gap:8px;align-items:center;border:1px solid #eef1f6;border-radius:7px;padding:7px 8px;font-size:11.8px;background:#fbfcff}.mini-row b{font-size:12.3px}.mini-row span{color:var(--muted)}
+  .kv-tags{display:flex;gap:6px;flex-wrap:wrap}.kv-tags span{border-radius:7px;background:#eef2f7;color:#526073;font-size:11.5px;font-weight:800;padding:3px 7px}.kv-tags .hot{background:var(--brand-soft);color:var(--brand)}.kv-tags .ok{background:var(--green-soft);color:var(--green)}
+  .xhs-bottom{position:absolute;left:12px;right:12px;bottom:12px;height:42px;border-radius:12px;background:#fff;border:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;text-align:center;font-size:11px;color:var(--muted);box-shadow:0 -8px 24px rgba(20,30,50,.10)}
+  .xhs-bottom b{display:block;color:var(--ink);font-size:12px}.unread-dot{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 4px rgba(255,39,66,.18);right:23%;top:7px}
+  .dm-shell{display:grid;grid-template-columns:260px 1fr;min-height:330px;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:var(--shadow-soft)}
+  .dm-list{background:#f8fafc;border-right:1px solid var(--line);padding:10px;display:grid;gap:8px;align-content:start}.dm-user{position:relative;background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 10px}.dm-user.on{border-color:var(--brand-line);background:var(--brand-soft)}.dm-user b{display:block;font-size:13px}.dm-user span{display:block;color:var(--muted);font-size:11.5px}.dm-user .unread-dot{right:9px;top:9px;width:9px;height:9px}
+  .dm-chat{display:grid;grid-template-rows:auto 1fr auto;min-width:0}.dm-head{height:44px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;font-weight:900}.dm-body{padding:14px;background:#f6f7fb;display:grid;gap:9px;align-content:start}.dm-input{border-top:1px solid var(--line);padding:10px;background:#fff;display:flex;gap:8px}.dm-input .input{flex:1}
+  .real-app{display:grid;grid-template-columns:178px minmax(392px,.92fr) minmax(430px,1.08fr);min-height:660px;background:#fff;color:#1d2430}
+  .real-side{background:#20242c;color:#cbd2dd;border-right:1px solid #151922;padding:18px 0}.real-logo{height:45px;display:flex;align-items:center;gap:8px;padding:0 16px 16px;color:#fff;font-size:16px;font-weight:900;border-bottom:1px solid rgba(255,255,255,.08)}.real-logo:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--brand)}
+  .real-nav{padding:10px 0}.real-nav .grp{padding:14px 14px 5px;color:#717985;font-size:11px}.real-nav .item{height:42px;display:flex;align-items:center;gap:8px;padding:0 18px;border-left:3px solid transparent;font-weight:800;color:#c2cad6}.real-nav .item.on{background:#2b303a;border-left-color:var(--brand);color:#fff}.real-nav .item.dim{color:#737b88}.real-nav .numdot{margin-left:auto;min-width:18px;height:18px;border-radius:999px;background:var(--brand);color:#fff;display:grid;place-items:center;font-size:10px}
+  .real-local{background:#f4f6fa;border-right:1px solid #e9edf3;min-width:0}.real-head{height:58px;background:#fff;border-bottom:1px solid #e7ebf2;display:flex;align-items:center;justify-content:space-between;padding:0 22px}.real-head b{font-size:18px}.real-head span{color:#5f6878;font-weight:800}
+  .real-main{padding:18px 24px}.real-card{background:#fff;border:1px solid #e0e6ef;border-radius:12px;box-shadow:0 1px 2px rgba(20,30,50,.05),0 8px 22px rgba(20,30,50,.06);padding:18px;margin-bottom:16px}.real-controls{display:flex;align-items:center;gap:13px;flex-wrap:wrap}.real-btn{height:42px;border-radius:9px;border:1px solid #e3e8f0;background:#fff;color:#ef9aa5;font-weight:900;padding:0 18px}.real-btn.primary{background:var(--brand);color:#fff;border-color:var(--brand)}.real-check{display:flex;align-items:center;gap:6px;font-weight:800;color:#2e3746}.real-check i{width:15px;height:15px;border:2px solid #a2aabb;border-radius:3px;display:inline-block}
+  .real-stages{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}.real-stage{height:44px;border:1px solid #bdebdc;background:#eafaf4;color:#128468;border-radius:8px;display:grid;place-items:center;font-weight:900}.real-stage.hot{background:#fff0f3;border-color:#ffc1ca;color:var(--brand)}
+  .real-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}.real-metric{background:#f8fafc;border-radius:8px;padding:11px 12px;min-height:76px}.real-metric b{display:block;color:#606a79;font-size:12px}.real-metric strong{font-size:24px;line-height:1.3}.real-metric .red{color:var(--brand)}
+  .real-log{height:164px;border:1px solid #e0e6ef;border-radius:10px;background:#fff;padding:12px;color:#596578;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap}.real-wait{height:64px;display:flex;align-items:center;justify-content:space-between}.real-small{font-size:12px;color:#687386}
+  .real-table{background:#fff;border:1px solid #e0e6ef;border-radius:10px;overflow:hidden}.real-row{display:grid;grid-template-columns:1.25fr .85fr .85fr .9fr;border-top:1px solid #eef2f7;font-size:12px}.real-row:first-child{border-top:none;background:#f8fafc;color:#667085;font-weight:900}.real-row>div{padding:10px 11px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.real-row .tag{display:inline-flex;border-radius:999px;background:#fff0f3;color:var(--brand);border:1px solid #ffc1ca;padding:2px 8px;font-weight:900}
+  .real-xhs{position:relative;min-width:0;background:#fff;overflow:hidden}.real-xhs-head{height:58px;border-bottom:1px solid #edf0f4;display:flex;align-items:center;justify-content:center;padding:0 20px}.real-search{height:42px;width:78%;border-radius:999px;background:#f7f7f8;color:#b5bbc5;display:flex;align-items:center;justify-content:space-between;padding:0 18px;font-size:16px}.real-search .lens{width:32px;height:32px;border-radius:50%;background:#2f3137;color:#fff;display:grid;place-items:center}
+  .xhs-feed-real{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;padding:22px 24px 72px}.xhs-post{min-width:0}.xhs-pic{height:128px;border-radius:10px;background:linear-gradient(135deg,#f7d8df,#d7e9ff);margin-bottom:8px;display:grid;place-items:center;color:#667085;font-weight:900}.xhs-pic.tall{height:230px}.xhs-pic.green{background:linear-gradient(135deg,#d9f6e9,#f5f1ce)}.xhs-pic.gray{background:linear-gradient(135deg,#eceff4,#d9dde6)}.xhs-title{font-weight:900;line-height:1.35}.xhs-meta{display:flex;justify-content:space-between;color:#717b8b;font-size:12px;margin-top:5px}
+  .xhs-tabs{height:58px;display:flex;align-items:center;gap:24px;padding:0 32px;border-bottom:1px solid #edf0f4;font-weight:900}.xhs-tabs .on{background:#f7f7f8;border-radius:999px;padding:9px 18px;color:#111827}.xhs-notice{padding:16px 28px 70px}.xhs-notice-row{display:grid;grid-template-columns:54px 1fr 48px;gap:12px;padding:20px 0;border-bottom:1px solid #edf0f4}.avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#c8d7e8,#8ca3b9)}.xhs-notice-row b{display:block}.xhs-notice-row p{margin:3px 0 10px;color:#1f2937}.replybtn{height:30px;border:1px solid #e5e7eb;border-radius:999px;background:#fff;padding:0 14px;font-weight:800;color:#4b5563}.ghostbox{border:1px solid #f0f2f5;border-radius:8px}
+  .xhs-bottom-real{position:absolute;left:0;right:0;bottom:0;height:54px;background:#fff;border-top:1px solid #edf0f4;display:grid;grid-template-columns:repeat(7,1fr);place-items:center;color:#6b7280;font-size:13px}.xhs-bottom-real b{color:#1f2937}.red-pulse{position:absolute;width:30px;height:30px;border-radius:50%;background:var(--brand);border:5px solid #fff;box-shadow:0 0 0 4px rgba(255,39,66,.35),0 0 24px rgba(255,39,66,.6);z-index:5}
+  .xhs-note-page{display:grid;grid-template-columns:1fr .85fr;height:100%;padding-bottom:54px}.xhs-note-img{background:linear-gradient(135deg,#f7e0e5,#d6e8ff);display:grid;place-items:center;font-weight:900;color:#64748b}.xhs-note-side{padding:24px;border-left:1px solid #edf0f4;overflow:hidden}.xhs-comment{display:flex;gap:10px;border-top:1px solid #edf0f4;padding:13px 0;font-size:12px}.xhs-comment b{display:block}.comment-box{position:absolute;right:18px;bottom:68px;left:calc(55% + 18px);height:42px;border:1px solid #e4e8ef;border-radius:999px;background:#fff;display:flex;align-items:center;padding:0 14px;color:#9aa3b1}
+  .xhs-dm{display:grid;grid-template-columns:320px 1fr;height:602px;padding-bottom:54px}.xhs-dm-list{border-right:1px solid #edf0f4;background:#fff}.xhs-dm-title{height:58px;display:grid;place-items:center;font-size:20px;font-weight:900;border-bottom:1px solid #edf0f4}.xhs-dm-user{height:78px;display:grid;grid-template-columns:46px 1fr auto;gap:10px;align-items:center;padding:0 18px;border-bottom:1px solid #f0f2f5}.xhs-dm-user.on{background:#f7f7f8}.xhs-dm-user span{display:block;color:#6b7280;font-size:12px}.xhs-chat-head{height:58px;border-bottom:1px solid #edf0f4;display:flex;align-items:center;gap:10px;padding:0 22px;font-weight:900}.xhs-chat-body{position:relative;padding:28px;background:#fff;height:490px}.chat-bubble{max-width:58%;border-radius:14px;padding:10px 13px;margin:14px 0;background:#f5f5f5}.chat-bubble.out{margin-left:auto;background:#3478f6;color:#fff}.xhs-dm-input{position:absolute;left:20px;right:20px;bottom:16px;height:44px;background:#f5f5f5;border-radius:12px;color:#a0a7b3;display:flex;align-items:center;padding:0 14px}
+  .note-card{background:#fff;border-radius:8px;overflow:hidden;min-height:118px}
+  .note-img{height:70px;background:linear-gradient(135deg,#f6d7dd,#dbeafe)}
+  .note-body{padding:7px}.note-title{height:10px;background:#dfe5ee;border-radius:4px;margin-bottom:5px}.note-line{height:8px;background:#eef2f7;border-radius:4px;width:72%}
+  .cursor{position:absolute;width:30px;height:30px;border-radius:50%;background:var(--brand);border:4px solid #fff;box-shadow:0 0 0 3px rgba(255,39,66,.42),0 0 20px rgba(255,39,66,.86);left:58%;top:52%}
+  .log{background:#fff;border:1px solid var(--line);border-radius:8px;min-height:226px;padding:11px;font-family:var(--mono);font-size:11.5px;line-height:1.65;color:#4d5b70;white-space:pre-wrap;box-shadow:var(--shadow-soft)}
+  .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .field{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;box-shadow:var(--shadow-soft)}
+  .field label{display:block;font-size:11.5px;font-weight:900;color:var(--muted);margin-bottom:6px}
+  .input{height:32px;border:1px solid var(--line-2);border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 10px;color:var(--ink);font-size:12.5px;min-width:0}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}.chip{height:24px;border-radius:7px;background:#eef1f6;color:var(--muted);font-size:12px;font-weight:800;padding:0 8px;display:inline-flex;align-items:center}.chip.hot{background:var(--brand-soft);color:var(--brand)}.chip.green{background:var(--green-soft);color:var(--green)}.chip.blue{background:var(--blue-soft);color:var(--blue)}
+  .schedule{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px;box-shadow:var(--shadow-soft)}
+  .sch-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border-top:1px solid #eef1f6;font-size:12.5px}
+  .sch-row:first-child{border-top:none;background:#f8fafc;color:var(--muted);font-weight:900}
+  .sch-row div{padding:9px 10px;min-width:0}
+  .table{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:var(--shadow-soft)}
+  .trow{display:grid;grid-template-columns:1.2fr .95fr .9fr .85fr .75fr;border-top:1px solid #eef1f6;font-size:12.5px}
+  .trow:first-child{border-top:none;background:#f8fafc;color:var(--muted);font-weight:900}
+  .trow div{padding:9px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .drawer{position:absolute;right:18px;top:88px;bottom:18px;width:360px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 20px 60px rgba(20,30,50,.24);overflow:hidden;z-index:4}
+  .drawer-head{padding:13px 14px;border-bottom:1px solid var(--line);font-weight:900}.drawer-body{padding:13px 14px;font-size:12.5px;color:var(--muted)}
+  .pin{position:absolute;z-index:8;width:25px;height:25px;border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:900;box-shadow:0 0 0 4px rgba(255,39,66,.18)}
+  .spot{box-shadow:0 0 0 3px rgba(255,39,66,.28),0 0 0 8px rgba(255,39,66,.12)!important}
+  .fig{font-size:12px;color:var(--faint);margin:8px 0 0}.fig b{color:var(--brand)}
+  .cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .key-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+  .key-card{background:#fff;border:1px solid var(--brand-line);border-left:4px solid var(--brand);border-radius:8px;padding:13px 14px;box-shadow:var(--shadow-soft)}
+  .key-card b{display:block;color:var(--brand);font-size:13.5px;margin-bottom:4px}.key-card span{display:block;color:var(--muted);font-size:12.5px;line-height:1.55}
+  .house{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:var(--shadow-soft)}
+  .house-img{height:94px;background:linear-gradient(135deg,#ffe4e9,#d9ebff);display:grid;place-items:center;color:#596577;font-weight:900}
+  .house-body{padding:10px}.house-body b{display:block}.house-body span{font-size:12px;color:var(--muted)}
+  .phone{width:260px;margin:auto;border:1px solid var(--line-2);border-radius:24px;background:#fff;box-shadow:var(--shadow);padding:12px}
+  .phone-head{text-align:center;color:var(--faint);font-size:11px;height:24px}.phone-screen{background:#f6f7fb;border-radius:16px;padding:12px;min-height:280px;display:grid;gap:9px}
+  .bubble{max-width:88%;border-radius:13px;padding:8px 10px;font-size:12px;line-height:1.5}.bubble.in{background:#fff;border:1px solid var(--line);justify-self:start}.bubble.out{background:var(--brand);color:#fff;justify-self:end}
+  .logic-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .logic-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:var(--shadow-soft)}
+  .logic-card h4{margin:0 0 9px;font-size:14px}.logic-card ol{margin:0;padding-left:18px;color:var(--muted);font-size:12.5px}
+  .api-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  pre{margin:0;background:#111827;color:#d1d5db;border-radius:8px;padding:12px;font-size:11.5px;overflow:auto}
+  footer{margin-top:48px;border-top:1px solid var(--line);padding-top:18px;text-align:center;color:var(--faint);font-size:12px}
+  .mbr{display:none}
+  @media(max-width:980px){
+    body{overflow-x:hidden}
+    .sidebar{position:static;width:100%;max-width:100vw;height:auto;overflow:hidden}.brand{padding:14px 16px 12px}.brand-sub{display:none}.search{display:none}
+    .nav{display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding:10px 12px 14px;flex:none;width:100%;max-width:100vw}.grp{display:none}.nav a{flex:0 0 auto;white-space:nowrap;background:#2b313c}
+    .main{margin-left:0;width:100%;max-width:100vw;overflow:hidden}.topbar{height:auto;min-height:54px;padding:10px 16px;gap:8px;align-items:flex-start;flex-wrap:wrap;width:100%;max-width:100vw;overflow:hidden}.topbar>span:first-child{min-width:0}.topbar .pill{display:none}
+    .wrap{padding:28px 18px 70px;width:100%;max-width:100vw;overflow:hidden}header,section{max-width:100%;overflow:hidden}.product,.real-app{grid-template-columns:1fr}.pside,.real-side{display:none}.metrics,.field-grid,.cards3,.key-grid,.logic-grid,.api-grid,.split,.run-grid,.xhs-feed,.note-preview,.dm-shell,.xhs-feed-real,.xhs-note-page,.xhs-dm{grid-template-columns:1fr}.pipe{grid-template-columns:1fr 1fr}.dm-list{border-right:none;border-bottom:1px solid var(--line)}
+    h1{font-size:29px;width:calc(100vw - 36px);max-width:calc(100vw - 36px);word-break:break-all;overflow-wrap:anywhere}.mbr{display:block}
+    .lead,.status-row,.callout,.fig,.flow,.shot,table{width:calc(100vw - 36px);max-width:calc(100vw - 36px);word-break:break-all;overflow-wrap:anywhere}
+    .callout>div{max-width:calc(100% - 37px);word-break:break-all;overflow-wrap:anywhere}
+    .sub,.path{margin-left:0;width:calc(100vw - 36px);max-width:calc(100vw - 36px);word-break:break-all;overflow-wrap:anywhere}
+    .badge{white-space:normal}.flow{display:grid;grid-template-columns:1fr;gap:8px}.flow-card{min-width:0}.phone{width:100%;max-width:260px}
+    .drawer{position:static;width:auto;margin:12px 0 0}.arr{display:none}.sch-row,.trow{grid-template-columns:1fr}.shot{overflow:hidden}
+  }
+</style>
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand"><div class="brand-row"><span class="brand-mark">X</span>产品功能手册</div><div class="brand-sub">小红书自动化获客工具 · 高保真版</div></div>
+  <div class="search"><input id="q" type="text" placeholder="搜索章节 / 功能 / 关键词"></div>
+  <nav class="nav" id="nav">
+    <div class="grp">导读</div>
+    <a href="#intro" class="active"><span class="ix">0</span>手册导读</a>
+    <a href="#overview"><span class="ix">1</span>产品全景</a>
+    <div class="grp">初次使用</div>
+    <a href="#login"><span class="ix">2.1</span>登录与接入</a>
+    <a href="#settings"><span class="ix">2.2</span>任务设置</a>
+    <a href="#lead-model"><span class="ix">2.3</span>获客模型</a>
+    <a href="#safety"><span class="ix">2.4</span>安全与拟人</a>
+    <div class="grp">日常流程</div>
+    <a href="#publish"><span class="ix">3.1</span>笔记生产与发布</a>
+    <a href="#auto-comment"><span class="ix">3.2</span>浏览检索与评论</a>
+    <a href="#auto-reply"><span class="ix">3.3</span>自动回复评论</a>
+    <a href="#dm-reply"><span class="ix">3.4</span>自动回复私信</a>
+    <div class="grp">核心逻辑</div>
+    <a href="#logic-browse"><span class="ix">4.1</span>浏览与匹配</a>
+    <a href="#logic-reply"><span class="ix">4.2</span>生成与回复</a>
+    <div class="grp">管理与对接</div>
+    <a href="#manage"><span class="ix">5</span>管理视角</a>
+    <a href="#api"><span class="ix">6</span>API 对接</a>
+  </nav>
+</aside>
+
+<main class="main">
+  <div class="topbar"><span>产品功能手册 / <b>高保真运营版</b></span><span class="pill">控制台采用当前系统实际页面截图</span></div>
+  <div class="wrap">
+    <header id="intro" data-search="手册导读 高保真 初次使用 日常使用 管理 API">
+      <div class="kicker">Product Function Manual</div>
+      <h1>小红书自动化获客工具 <br class="mbr">产品功能手册</h1>
+      <p class="lead">这份手册按运营真实顺序组织：先把账号、房源和规则配置好，再生产并查看待发布笔记，然后跑自动浏览检索、自动评论、自动回复评论、自动回复私信，最后从管理视角复盘笔记、评论、回复和线索。</p>
+      <div class="status-row">
+        <span class="badge b-done">已实现：当前客户端可用</span>
+        <span class="badge b-plan">规划中：产品闭环需要</span>
+        <span class="badge b-api">未来 API：外部系统对接</span>
+        <span class="badge b-risk">红线：不发明文联系方式</span>
+      </div>
+      <div class="callout red"><span class="cic">!</span><div><b>本版重点调整。</b>控制台相关图直接采用当前客户端实际页面截图；未落地模块保留高保真规划图。<br>手册继续覆盖侧边栏、顶部操作、数据表、抽屉、手机私信页、浏览器监控区和步骤标注。</div></div>
+    </header>
+
+    <section id="overview" data-search="产品全景 角色 状态 总览 链路">
+      <div class="sec-title"><span class="num">1</span><h2>产品全景</h2></div>
+      <p class="sub">一个桌面客户端驱动一个真实小红书账号，围绕“找人、触达、承接、沉淀”形成闭环。</p>
+      <div class="flow">
+        <div class="flow-card"><b>配置</b><span>关键词 · 模型 · 房源 · 限频</span></div><span class="arr">→</span>
+        <div class="flow-card"><b>生产发布</b><span>选亮点房源 · 生成草稿 · 去发布</span></div><span class="arr">→</span>
+        <div class="flow-card"><b>浏览检索</b><span>搜索页筛选 · 滚动采集</span></div><span class="arr">→</span>
+        <div class="flow-card"><b>匹配</b><span>地区 · 意向 · 预算 · 诉求</span></div><span class="arr">→</span>
+        <div class="flow-card"><b>触达</b><span>评论 · 回复评论 · 私信</span></div><span class="arr">→</span>
+        <div class="flow-card"><b>线索</b><span>联系方式 · 转人工 · API 输出</span></div>
+      </div>
+      <div class="shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">产品总览 · 运营工作台</span><span class="meta">目标界面</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav on">控制台</div><div class="pnav">评论记录</div><div class="pnav">采集记录</div><div class="pnav">线索·承接 <span class="pbadge">3</span></div><div class="pgrp">配置</div><div class="pnav">任务设置</div><div class="pnav">获客模型</div><div class="pnav">模型设置</div><div class="pnav">防封控制</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">今日获客总览</div><div class="s">账号：成都租房号 A · 演练模式</div></div><button class="btn primary">开始</button></div>
+            <div class="pcontent">
+              <div class="metrics"><div class="metric"><div class="ml">浏览笔记</div><div class="mv">128</div></div><div class="metric"><div class="ml">待评论</div><div class="mv" style="color:var(--brand)">12</div></div><div class="metric"><div class="ml">已承接</div><div class="mv">18</div></div><div class="metric"><div class="ml">高意向</div><div class="mv" style="color:var(--green)">5</div></div></div>
+              <div class="table">
+                <div class="trow"><div>链路</div><div>当前状态</div><div>主要配置</div><div>产出</div><div>状态</div></div>
+                <div class="trow"><div>浏览检索与评论</div><div>检索中</div><div>最新 / 一周内</div><div>待评论 12</div><div><span class="badge b-done">已实现</span></div></div>
+                <div class="trow"><div>评论承接</div><div>在线</div><div>近 7 天</div><div>待处理 3</div><div><span class="badge b-done">增强中</span></div></div>
+                <div class="trow"><div>私信承接</div><div>设计中</div><div>转人工阈值</div><div>待接入</div><div><span class="badge b-plan">规划中</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="fig"><b>图 1-1</b> 总览图采用完整桌面端布局，明确“当前可用、增强中、规划中”的能力边界。</p>
+    </section>
+
+    <section id="login" data-search="登录 接入 启动 客户端 小红书 扫码">
+      <div class="sec-title"><span class="num">2.1</span><h2>初次使用 · 登录与接入</h2></div>
+      <p class="path">路径：根目录双击 <code>启动小红书获客.command</code> 或命令行 <code>cd client && npm run app</code></p>
+      <div class="shot actual-shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">控制台 · 当前客户端实际页面</span><span class="meta">真实截图</span></div>
+        <img src="../assets/product-manual/console-current.png" alt="当前客户端控制台实际页面截图">
+      </div>
+      <p class="fig"><b>图 2-1</b> 当前控制台实际页面：未登录时顶部提示登录，小红书动作被拦截；登录后在同页点击开始、切换真发，并观察任务阶段、实时监控、实时日志和待发送评论。</p>
+      <div class="steps"><div class="step"><span class="sno">1</span><div><h4>打开客户端</h4><p>进入控制台，确认右侧真实小红书页面可见。</p></div></div><div class="step"><span class="sno">2</span><div><h4>扫码或手动登录</h4><p>未登录时点“点我登录”，在右侧页面完成登录。</p></div></div><div class="step"><span class="sno">3</span><div><h4>先演练后真发</h4><p>首次运行保持真发关闭，确认规则和话术都正常再打开。</p></div></div></div>
+    </section>
+
+    <section id="settings" data-search="任务设置 关键词 筛选 排班 采集 评论配额">
+      <div class="sec-title"><span class="num">2.2</span><h2>初次使用 · 任务设置</h2></div>
+      <p class="path">路径：设置 › <code>任务设置</code></p>
+      <div class="shot">
+        <span class="pin" style="left:258px;top:104px">1</span><span class="pin" style="right:260px;top:136px">2</span><span class="pin" style="right:72px;bottom:34px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">任务设置 · 检索条件 + 排班</span><span class="meta">高保真表单</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav">控制台</div><div class="pnav">评论记录</div><div class="pgrp">设置</div><div class="pnav on spot">任务设置</div><div class="pnav">获客模型</div><div class="pnav">模型设置</div><div class="pnav">防封控制</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">任务设置</div><div class="s">保存后，控制台开始即按这套规则运行</div></div><button class="btn primary spot">保存任务设置 + 排班</button></div>
+            <div class="pcontent">
+              <div class="field-grid">
+                <div class="field"><label>检索关键词</label><div class="input">朝阳 租房，望京 一居</div></div>
+                <div class="field"><label>重新检索间隔</label><div class="input">15 分钟</div></div>
+                <div class="field" style="grid-column:1/-1"><label>评论主方向</label><div class="input">结合对方诉求友好回应，引导看主页/私聊，绝不留联系方式</div></div>
+                <div class="field"><label>小红书筛选</label><div class="chips"><span class="chip hot">最新</span><span class="chip hot">一周内</span><span class="chip">图文</span><span class="chip blue">未看过</span></div></div>
+                <div class="field"><label>时段内节奏</label><div class="input">匀速摊开</div></div>
+              </div>
+              <div class="schedule">
+                <div class="sch-row"><div>时间段</div><div>适用星期</div><div>采集篇数</div><div>评论配额</div></div>
+                <div class="sch-row"><div>09:30–12:00</div><div>周一至周五</div><div>40 篇</div><div>3 条</div></div>
+                <div class="sch-row"><div>14:00–18:00</div><div>周一至周五</div><div>60 篇</div><div>4 条</div></div>
+                <div class="sch-row"><div>20:00–23:00</div><div>每天</div><div>40 篇</div><div>3 条</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="fig"><b>图 2-2</b> 任务设置图把关键词、筛选、评论方向、排班与保存按钮放在同一真实页面里。</p>
+    </section>
+
+    <section id="lead-model" data-search="获客模型 分类 关键信息 求租 房源 中介 匹配">
+      <div class="sec-title"><span class="num">2.3</span><h2>初次使用 · 获客模型</h2></div>
+      <p class="path">路径：设置 › <code>获客模型</code></p>
+      <div class="callout red"><span class="cic">重</span><div><b>重点：获客模型采用“规则 + 大模型”的混合判断。</b><br>管理者不用把所有关键词写死，只要描述每个分类的判断口径。系统先用规则做边界和排除，再让大模型结合笔记标题、正文、图片一起分析，判断它属于哪类以及应该执行什么动作。</div></div>
+      <div class="key-grid">
+        <div class="key-card"><b>1. 分类按业务定义</b><span>可按管理诉求定义求租笔记、房源笔记、中介/同行、高意向互动、无关内容、不明等分类。</span></div>
+        <div class="key-card"><b>2. 规则 + 大模型判断</b><span>规则负责边界、排除和兜底；大模型负责理解语义、上下文和模糊表达，不要求穷举所有词。</span></div>
+        <div class="key-card"><b>3. 标题正文图片一起看</b><span>判断基于笔记标题、正文、图片和必要的作者线索，再给出分类、把握程度和建议动作。</span></div>
+      </div>
+      <div class="shot">
+        <span class="pin" style="left:256px;top:104px">1</span><span class="pin" style="left:575px;top:188px">2</span><span class="pin" style="right:92px;bottom:48px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">获客模型 · 规则 + 大模型综合判断</span><span class="meta">高保真配置页</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav">控制台</div><div class="pgrp">设置</div><div class="pnav">任务设置</div><div class="pnav on spot">获客模型</div><div class="pnav">模型设置</div><div class="pnav">评论承接</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">获客模型 · 租房获客</div><div class="s">用分类描述给模型判断，动作由管理者定义</div></div><button class="btn primary">保存获客模型</button></div>
+            <div class="pcontent">
+              <div class="split">
+                <div>
+                  <div class="table">
+                    <div class="trow"><div>分类</div><div>判断描述</div><div>会看什么</div><div>动作</div><div>状态</div></div>
+                    <div class="trow"><div>求租笔记</div><div>正在找房/咨询租房</div><div>标题+正文+图片</div><div>评论</div><div><span class="badge b-done">启用</span></div></div>
+                    <div class="trow"><div>高意向求租</div><div>需求明确/想看房</div><div>正文+图片线索</div><div>评论+复核</div><div><span class="badge b-risk">重点</span></div></div>
+                    <div class="trow"><div>房源笔记</div><div>对方在发布房源</div><div>标题+图片</div><div>只记录</div><div><span class="badge b-done">启用</span></div></div>
+                    <div class="trow"><div>中介/同行</div><div>疑似营销/同行号</div><div>作者+正文</div><div>跳过</div><div><span class="badge b-risk">保护</span></div></div>
+                    <div class="trow"><div>不明内容</div><div>判断不确定</div><div>整体内容</div><div>人工确认</div><div><span class="badge b-plan">需确认</span></div></div>
+                  </div>
+                  <div class="field" style="margin-top:12px"><label>会参考哪些内容</label><div class="chips"><span class="chip hot">标题</span><span class="chip hot">正文</span><span class="chip hot">图片</span><span class="chip">作者线索</span><span class="chip">评论区片段</span></div></div>
+                  <div class="field" style="margin-top:10px"><label>提取关键信息</label><div class="chips"><span class="chip hot">位置</span><span class="chip hot">预算</span><span class="chip hot">户型</span><span class="chip">入住时间</span><span class="chip">近地铁</span><span class="chip">可养宠</span></div></div>
+                </div>
+                <div class="log">判断过程预览
+
+会参考：
+  标题：求租望京附近一居
+  正文：预算 4500，最好近地铁
+  图片：地铁站截图 / 小区环境图
+
+怎么判断：
+  规则：符合租房获客范围
+  大模型：综合标题、正文、图片，判断为正在求租
+  把握程度：较高
+
+结果：
+  分类 = 求租笔记
+  动作 = 评论
+  位置 = 望京
+  预算 = 4500
+  户型 = 一居
+  关注点 = 近地铁</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="fig"><b>图 2-3</b> 获客模型图强调“规则 + 大模型综合判断”：标题、正文、图片一起进入分析，给出分类、把握程度和建议动作。</p>
+      <div class="callout info"><span class="cic">配</span><div><b>分类判断口径。</b>一个分类不需要穷举所有词，只需要配置业务描述和少量边界规则。系统先用规则排除明显不该处理的内容，再由大模型基于标题、正文、图片做综合判断。例如“求租笔记”可以描述为：对方正在找房、询问位置/预算/户型/入住时间，且不是在发布自己的房源。</div></div>
+      <table><thead><tr><th>建议分类</th><th>管理诉求</th><th>判断描述</th><th>建议动作</th></tr></thead><tbody><tr><td><b>求租笔记</b></td><td>核心获客对象，优先处理。</td><td>标题、正文或图片表达“正在找房、咨询租房、描述预算户型区域”等意图。</td><td><span class="badge b-done">评论</span> 进入待评论队列。</td></tr><tr><td><b>高意向求租</b></td><td>已经表达强需求或看房意愿。</td><td>内容里已经出现明确预算、入住时间、想看房、想继续沟通等信号。</td><td><span class="badge b-risk">重点</span> 评论后进入人工确认/线索观察。</td></tr><tr><td><b>房源笔记</b></td><td>对方是在发房，不是客户。</td><td>标题、正文或图片呈现房源发布、转租、招租、房间展示等内容。</td><td><span class="badge b-plan">只记录</span> 或跳过，避免误触达。</td></tr><tr><td><b>中介/同行</b></td><td>保护账号，避免同行互评。</td><td>作者身份、文案风格或图片物料像房产营销、门店号、批量房源号。</td><td><span class="badge b-risk">跳过</span> 并记录原因。</td></tr><tr><td><b>无关/不明</b></td><td>判断不确定，避免误发。</td><td>标题、正文、图片无法形成稳定判断，或分类之间存在冲突。</td><td><span class="badge b-plan">人工确认</span> 或只记录。</td></tr></tbody></table>
+      <table><thead><tr><th>动作</th><th>适用对象</th><th>含义</th><th>管理建议</th></tr></thead><tbody><tr><td>评论</td><td>求租笔记 / 高意向求租</td><td>生成评论草稿，过合规和限频后进入演练或真发。</td><td>只给高价值分类开启，避免评论泛滥。</td></tr><tr><td>回复</td><td>评论承接 / 私信承接</td><td>对方已经互动后，按承接规则生成回复。</td><td>与“评论承接”规则联动，优先处理高意向。</td></tr><tr><td>跳过</td><td>同行、中介、无关、风险内容</td><td>不生成触达动作，只保留跳过原因。</td><td>用于风控保护和降低无效触达。</td></tr><tr><td>只记录</td><td>房源笔记、竞品样本、不确定内容</td><td>记录到采集/管理视角，不进入待评论。</td><td>方便复盘分类质量和市场样本。</td></tr><tr><td>人工确认</td><td>判断不确定、高价值、信息冲突</td><td>进入人工确认队列，再决定是否评论/回复/转线索。</td><td>适合新规则上线初期和高风险账号。</td></tr></tbody></table>
+      <div class="callout info"><span class="cic">顺</span><div><b>匹配顺序。</b>系统先看城市/时间，再按获客模型判断分类，然后提取位置、预算、户型等关键信息，最后按用户诉求选房和写话术。房源精确匹配将在房源库/API 完整接入后展开。</div></div>
+    </section>
+
+    <section id="safety" data-search="模型设置 防封 限频 养号 承接规则 AI 防风控 拟人操作 贝塞尔 鼠标抖动">
+      <div class="sec-title"><span class="num">2.4</span><h2>初次使用 · 安全、模型与拟人</h2></div>
+      <p class="sub">“模型与防封”和“防风控与拟人”本质是同一组运行保护能力：文案生成、真发限频、合规红线、拟人动作和异常刹车统一在这里配置。</p>
+      <div class="shot">
+        <span class="pin" style="left:260px;top:104px">1</span><span class="pin" style="right:330px;top:206px">2</span><span class="pin" style="right:118px;bottom:82px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">安全、模型与拟人 · 运行保护页</span><span class="meta">整合后高保真页</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav">模型设置</div><div class="pnav on spot">安全与拟人</div><div class="pnav">评论承接</div><div class="pnav">任务设置</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">安全与拟人控制</div><div class="s">所有搜索、浏览、评论、回复和私信动作都先过保护层</div></div><button class="btn primary">保存安全配置</button></div>
+            <div class="pcontent">
+              <div class="field-grid">
+                <div class="field"><label>AI 文案服务商</label><div class="input">火山方舟 / 阿里百炼</div></div>
+                <div class="field"><label>评论每日上限</label><div class="input">新号 3 条 · 老号 30 条</div></div>
+                <div class="field"><label>回复限频</label><div class="input">每日 30 · 每小时 10 · 间隔 1–4 分钟</div></div>
+                <div class="field"><label>承接范围</label><div class="chips"><span class="chip hot">评论我笔记</span><span class="chip hot">回复我评论</span><span class="chip"> @我 </span></div></div>
+                <div class="field"><label>拟人动作</label><div class="chips"><span class="chip hot">贝塞尔轨迹</span><span class="chip hot">鼠标抖动</span><span class="chip">真实滚轮</span><span class="chip">逐字输入</span></div></div>
+                <div class="field"><label>安全红线</label><div class="chips"><span class="chip hot">不留联系方式</span><span class="chip hot">不发外链</span><span class="chip hot">异常刹车</span></div></div>
+              </div>
+              <div class="flow">
+                <div class="flow-card"><b>真实浏览器</b><span>用已登录页面执行</span></div><span class="arr">→</span>
+                <div class="flow-card"><b>真人路径</b><span>搜索、筛选、点卡片、看详情</span></div><span class="arr">→</span>
+                <div class="flow-card"><b>拟人动作</b><span>轨迹、滚动、停留、逐字输入</span></div><span class="arr">→</span>
+                <div class="flow-card"><b>安全闸门</b><span>演练、限频、排班、合规</span></div><span class="arr">→</span>
+                <div class="flow-card"><b>异常刹车</b><span>未登录、风控、失败率异常即停</span></div>
+              </div>
+              <table><thead><tr><th>拟人技术方法</th><th>系统怎么做</th><th>用户能感知到什么</th></tr></thead><tbody><tr><td>贝塞尔鼠标轨迹</td><td>从上一次鼠标位置到目标点生成曲线，随机控制点，拆成多步移动。</td><td>页面上能看到红点沿曲线移动，不是瞬间跳到按钮。</td></tr><tr><td>鼠标轻微抖动</td><td>点击前后在目标中心附近做小范围偏移，避免每次点击同一像素。</td><td>点击动作更像真人落点，有短暂停顿和反馈。</td></tr><tr><td>真实滚轮滚动</td><td>列表、正文、评论区用滚轮事件分段滚动，并加入停留时间。</td><td>右侧页面会像人一样一屏一屏看，不是瞬间跳屏。</td></tr><tr><td>逐字输入</td><td>评论和回复先定位输入框，再按字输入，字间隔有随机范围。</td><td>演练时能看到内容逐字出现，方便人工检查。</td></tr><tr><td>随机阅读节奏</td><td>列表停留、看图停留、评论区停留、偶发长停顿都按范围随机。</td><td>每轮运行节奏不同，避免固定频率批量操作。</td></tr><tr><td>异常刹车</td><td>未登录、验证码、风控提示、发送失败率异常时停止真发。</td><td>先保护账号，再让人工处理，不硬跑。</td></tr></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="fig"><b>图 2-4</b> 安全与拟人页把模型、防封、承接红线和拟人技术合并表达；后续不再单独拆一个“防风控与拟人”章节重复讲。</p>
+      <div class="callout red"><span class="cic">!</span><div><b>红线。</b>评论、回复、私信都不发送明文微信、电话、二维码、外链。系统生成后会检查，真发前再过限频、排班、登录校验和异常刹车。</div></div>
+    </section>
+
+    <section id="publish" data-search="笔记生产 笔记发布 房源笔记 发布 素材 房源库 待发布 去发布">
+      <div class="sec-title"><span class="num">3.1</span><h2>日常使用 · 笔记生产与发布</h2></div>
+      <p class="sub">第一步不是直接发布，而是从房源库/API 里选择“亮点房源”，先生产笔记草稿，再进入待发布清单。运营打开草稿就是查看和修改，内容没问题后，直接点击「去发布」。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:258px;top:106px">1</span><span class="pin" style="right:510px;top:182px">2</span><span class="pin" style="right:120px;top:120px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">笔记生产 · 选择亮点房源</span><span class="meta">全页面规划图</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav on spot">笔记生产</div><div class="pnav">待发布</div><div class="pnav">发布记录</div><div class="pgrp">素材</div><div class="pnav">房源库</div><div class="pnav">亮点标签</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">今日主推房源</div><div class="s">勾选可推荐房源和卖点，生成小红书笔记草稿</div></div><button class="btn primary spot">生成笔记草稿</button></div>
+            <div class="pcontent">
+              <div class="toolbar"><span class="badge b-done">可用房源 36 套</span><span class="badge b-risk">已选 3 套</span><button class="btn ghost">城市：北京</button><button class="btn ghost">商圈：望京</button><button class="btn ghost">预算 4000-5000</button></div>
+              <div class="cards3">
+                <div class="house spot"><div class="house-img">客厅实拍</div><div class="house-body"><b>望京一居 · 4300</b><span>近地铁 · 采光好 · 可短租</span><div class="chips" style="margin-top:8px"><span class="chip hot">主推</span><span class="chip">一居</span><span class="chip">近地铁</span></div></div></div>
+                <div class="house"><div class="house-img">卧室实拍</div><div class="house-body"><b>望京开间 · 3900</b><span>通勤方便 · 拎包入住 · 电梯房</span><div class="chips" style="margin-top:8px"><span class="chip hot">备选</span><span class="chip">开间</span></div></div></div>
+                <div class="house"><div class="house-img">小区环境</div><div class="house-body"><b>望京两居 · 5200</b><span>整租 · 小区安静 · 近商圈</span><div class="chips" style="margin-top:8px"><span class="chip">两居</span><span class="chip">家庭</span></div></div></div>
+              </div>
+              <div class="callout info"><span class="cic">生</span><div><b>生产逻辑。</b>系统读取房源标题、价格、位置、户型、图片和亮点标签，生成更像小红书笔记的标题、正文、话题标签和配图顺序。</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-1A</b> 先从房源库选择亮点房源，不直接发；房源可来自本地房源库，也可在未来由房源 API 输入。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:258px;top:106px">1</span><span class="pin" style="right:420px;top:178px">2</span><span class="pin" style="right:88px;top:118px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">笔记生产 · AI 草稿预览</span><span class="meta">全页面规划图</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav on spot">笔记生产</div><div class="pnav">待发布</div><div class="pnav">发布记录</div><div class="pgrp">素材</div><div class="pnav">房源库</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">AI 生成笔记草稿</div><div class="s">运营打开草稿就是查看，可改标题、正文、图片顺序和话题标签</div></div><div><button class="btn">重新生成</button><button class="btn primary">去发布</button></div></div>
+            <div class="pcontent">
+              <div class="split">
+                <div>
+                  <div class="field-grid">
+                    <div class="field" style="grid-column:1/-1"><label>标题</label><div class="input">望京地铁边一居，4k+ 预算可以重点看这套</div></div>
+                    <div class="field" style="grid-column:1/-1"><label>正文草稿</label><div class="log" style="min-height:168px">这套适合想住望京、通勤地铁、预算 4300 左右的朋友。房间采光不错，家具齐，图片都是实拍。适合一个人住，也适合刚入职想先稳定下来的租客。</div></div>
+                    <div class="field"><label>图片顺序</label><div class="chips"><span class="chip hot">封面</span><span class="chip">客厅</span><span class="chip">卧室</span><span class="chip">地铁距离</span></div></div>
+                    <div class="field"><label>话题标签</label><div class="chips"><span class="chip hot">望京租房</span><span class="chip hot">北京租房</span><span class="chip">一居</span><span class="chip">近地铁</span></div></div>
+                  </div>
+                </div>
+                <div class="phone"><div class="phone-head">小红书笔记预览</div><div class="phone-screen"><div class="house-img" style="height:126px;border-radius:12px">封面实拍</div><b>望京地铁边一居，4k+ 预算可以重点看这套</b><span style="font-size:12px;color:var(--muted)">采光不错，家具齐，图片都是实拍。适合刚入职想先稳定下来的租客。</span><div class="chips"><span class="chip hot">#望京租房</span><span class="chip">#一居</span></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-1B</b> 笔记生产页重点让运营“看得见、能修改、能去发布”；打开草稿本身就是查看确认。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:258px;top:106px">1</span><span class="pin" style="right:386px;top:190px">2</span><span class="pin" style="right:92px;top:118px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">笔记发布 · 待发布清单</span><span class="meta">全页面规划图</span></div>
+        <div class="product" style="position:relative">
+          <div class="pside"><div class="plogo"><span class="ld"></span>小红书获客</div><div class="pnav">笔记生产</div><div class="pnav on spot">待发布 <span class="pbadge">6</span></div><div class="pnav">发布记录</div><div class="pgrp">素材</div><div class="pnav">房源库</div></div>
+          <div class="pbody">
+            <div class="ptop"><div><div class="t">待发布清单</div><div class="s">打开草稿就是查看；内容没问题，直接去发布</div></div><button class="btn primary spot">去发布</button></div>
+            <div class="pcontent">
+              <div class="toolbar"><span class="badge b-plan">待发布 6</span><span class="badge b-done">今日已发 3</span><button class="btn ghost">只看望京</button><button class="btn ghost">合规检查</button></div>
+              <table><thead><tr><th>笔记草稿</th><th>关联房源</th><th>状态</th><th>检查结果</th><th>操作</th></tr></thead><tbody><tr><td><b>望京地铁边一居，4k+ 预算可以重点看</b><br><span style="color:var(--faint)">图片 4 张 · 话题 4 个</span></td><td>望京一居 · 4300</td><td><span class="badge b-plan">待发布</span></td><td>无联系方式 / 无外链</td><td><button class="btn primary">去发布</button></td></tr><tr><td><b>通勤天府三街，独卫单间可以短租</b><br><span style="color:var(--faint)">图片 5 张 · 话题 3 个</span></td><td>天府三街单间 · 1800</td><td><span class="badge b-plan">待发布</span></td><td>合规通过</td><td><button class="btn primary">去发布</button></td></tr><tr><td><b>观音桥两居整租，采光好的这套</b></td><td>观音桥两居 · 3600</td><td><span class="badge b-done">已发布</span></td><td>已回填链接</td><td><button class="btn">记录</button></td></tr></tbody></table>
+            </div>
+          </div>
+          <div class="drawer"><div class="drawer-head">正在查看草稿 · 望京一居</div><div class="drawer-body"><p><b>发布前检查：</b>标题、正文、图片、话题、合规红线。</p><p><b>运营动作：</b>打开草稿就是查看和确认；如果内容没问题，只需要点击「去发布」。</p><p><b>发布后：</b>回填小红书笔记链接，后续评论/私信可引用主页内容承接。</p><button class="btn primary">去发布</button></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-1C</b> 待发布清单只保留发布动作：运营打开草稿就是查看，没问题直接点「去发布」，系统发布并回填链接。</p>
+    </section>
+
+    <section id="auto-comment" data-search="自动浏览 自动检索 自动评论 检索 匹配 浏览 生成 合规 真发">
+      <div class="sec-title"><span class="num">3.2</span><h2>日常使用 · 自动浏览检索与评论</h2></div>
+      <p class="path">路径：控制台 › <code>开始</code></p>
+      <div class="shot actual-shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">自动评论运行台 · 当前控制台实际页面</span><span class="meta">真实截图</span></div>
+        <img src="../assets/product-manual/console-current.png" alt="当前客户端控制台自动评论页面截图">
+      </div>
+      <p class="fig"><b>图 3-2</b> 当前控制台承载的是完整链路：左侧是客户端菜单，中间是本地控制台，右侧是真实小红书页面。</p>
+      <div class="callout info"><span class="cic">图</span><div><b>以下动作图统一以当前客户端页面为基底。</b>每张图都包含左侧深色菜单、中间控制台卡片、右侧小红书页面，不再使用抽象后台页来表达控制台、采集、评论和回复。</div></div>
+
+      <div class="shot">
+        <span class="pin" style="left:300px;top:120px">1</span><span class="pin" style="right:92px;top:104px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 1 · 自动输入关键词搜索</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div><div class="item">🛡 防封控制</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>本地界面 · 引擎 M1-M5</span></div><div class="real-main"><div class="real-card"><div class="real-controls"><button class="real-btn primary">▶ 开始</button><button class="real-btn">■ 停止</button><span class="real-check"><i></i>真发(总开关)</span><span class="real-small">本次任务: 关键词「望京 一居」 · 任务设置</span></div><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div><div class="real-metrics"><div class="real-metric"><b>检索到</b><strong>--</strong></div><div class="real-metric"><b>目标笔记</b><strong>--</strong></div><div class="real-metric"><b>其他分类</b><strong>--</strong></div><div class="real-metric"><b>待评论</b><strong class="red">--</strong></div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:31:02] 打开小红书搜索页
+[10:31:03] 输入关键词：望京 一居 求租
+[10:31:05] 等待搜索结果加载</div></div><div class="real-card real-wait"><b>待发送评论</b><span class="real-small">发送=真发到对方笔记，用小号，看清内容再发</span></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">望京 一居 求租 <span class="lens">⌕</span></div></div><div class="xhs-feed-real"><div class="xhs-post"><div class="xhs-pic">求租封面</div><div class="xhs-title">求租望京附近一居</div><div class="xhs-meta"><span>小林</span><span>♡ 35</span></div></div><div class="xhs-post"><div class="xhs-pic gray">房源图</div><div class="xhs-title">房东直租精装一居</div><div class="xhs-meta"><span>某公寓</span><span>♡ 12</span></div></div><div class="xhs-post"><div class="xhs-pic green">通勤图</div><div class="xhs-title">下周入职想找房</div><div class="xhs-meta"><span>阿敏</span><span>♡ 58</span></div></div></div><div class="red-pulse" style="right:76px;top:84px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-3</b> 动作 1：关键词输入发生在右侧小红书搜索框，中间控制台只显示任务阶段、日志和待发送区。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:300px;top:180px">1</span><span class="pin" style="right:350px;top:170px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 2 · 自动设定筛选条件</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>本地界面 · 引擎 M1-M5</span></div><div class="real-main"><div class="real-card"><div class="real-controls"><button class="real-btn primary">▶ 开始</button><button class="real-btn">■ 停止</button><span class="real-check"><i></i>真发(总开关)</span></div><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:31:06] 打开筛选面板
+[10:31:07] 选择「最新」
+[10:31:08] 选择「一周内」
+[10:31:09] 选择「图文」
+[10:31:10] 选择「未看过」</div></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">望京 一居 求租 <span class="lens">⌕</span></div></div><div style="padding:22px 28px"><div class="field-grid"><div class="field"><label>排序</label><div class="chips"><span class="chip hot">最新</span><span class="chip">综合</span></div></div><div class="field"><label>发布时间</label><div class="chips"><span class="chip hot">一周内</span><span class="chip">一天内</span></div></div><div class="field"><label>内容形式</label><div class="chips"><span class="chip hot">图文</span><span class="chip">视频</span></div></div><div class="field"><label>搜索范围</label><div class="chips"><span class="chip hot">未看过</span><span class="chip">已看过</span></div></div></div></div><div class="red-pulse" style="right:318px;top:236px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-4</b> 动作 2：筛选在右侧小红书页面完成，控制台日志记录每个筛选点击是否成功。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:430px;top:254px">1</span><span class="pin" style="right:365px;top:354px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 3 · 自动浏览搜索页并采集候选笔记</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>本地界面 · 引擎 M1-M5</span></div><div class="real-main"><div class="real-card"><div class="real-controls"><button class="real-btn primary">▶ 开始</button><button class="real-btn">■ 停止</button><span class="real-check"><i></i>真发(总开关)</span></div><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div><div class="real-metrics"><div class="real-metric"><b>检索到</b><strong>42</strong></div><div class="real-metric"><b>目标笔记</b><strong>9</strong></div><div class="real-metric"><b>其他分类</b><strong>33</strong></div><div class="real-metric"><b>待评论</b><strong class="red">9</strong></div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:31:12] 本屏新增 12 条笔记
+[10:31:14] 滚动到下一屏，新增 10 条
+[10:31:17] 采集标题、作者、赞评和链接</div></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">望京 一居 求租 <span class="lens">⌕</span></div></div><div class="xhs-feed-real"><div class="xhs-post"><div class="xhs-pic">求租截图</div><div class="xhs-title">求租望京附近一居</div><div class="xhs-meta"><span>小林</span><span>♡ 35</span></div></div><div class="xhs-post"><div class="xhs-pic tall green">租房攻略图</div><div class="xhs-title">刚来北京怎么租房</div><div class="xhs-meta"><span>阿敏</span><span>♡ 58</span></div></div><div class="xhs-post"><div class="xhs-pic gray">纸质公告</div><div class="xhs-title">昌平一大早发了</div><div class="xhs-meta"><span>等天黑</span><span>♡ 8</span></div></div></div><div class="red-pulse" style="left:18px;top:386px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-5</b> 动作 3：机器在右侧真实信息流里滚动浏览，中间指标同步增长。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:262px;top:180px">1</span><span class="pin" style="right:245px;top:190px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 4 · 自动判断哪个笔记值得点开看</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item on">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>采集记录</b><span>候选笔记判断</span></div><div class="real-main"><div class="real-card"><b>候选笔记</b><div class="real-table" style="margin-top:10px"><div class="real-row"><div>笔记</div><div>分类</div><div>动作</div><div>原因</div></div><div class="real-row"><div>求租望京附近一居</div><div>求租</div><div><span class="tag">点开</span></div><div>预算明确</div></div><div class="real-row"><div>房东直租精装一居</div><div>房源</div><div>只记录</div><div>发房</div></div><div class="real-row"><div>下周入职想找房</div><div>高意向</div><div><span class="tag">优先</span></div><div>入住明确</div></div></div></div><div class="real-card"><b>判断详情</b><div class="real-log">标题、正文、图片一起判断：
+分类 = 求租笔记
+动作 = 评论
+提取 = 望京 / 4500 / 一居 / 近地铁</div></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">望京 一居 求租 <span class="lens">⌕</span></div></div><div class="xhs-feed-real"><div class="xhs-post"><div class="xhs-pic">求租截图</div><div class="xhs-title">求租望京附近一居</div><div class="xhs-meta"><span>小林</span><span>♡ 35</span></div></div><div class="xhs-post"><div class="xhs-pic green">通勤图</div><div class="xhs-title">下周入职想找房</div><div class="xhs-meta"><span>阿敏</span><span>♡ 58</span></div></div><div class="xhs-post"><div class="xhs-pic gray">房东直租精装一居</div><div class="xhs-title">房东直租精装一居</div><div class="xhs-meta"><span>公寓管家</span><span>♡ 12</span></div></div></div><div class="red-pulse" style="right:295px;top:202px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-6</b> 动作 4：采集记录页沿用真实客户端菜单和本地页面，只把判断结果增强展示出来。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:306px;top:188px">1</span><span class="pin" style="right:368px;top:230px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 5 · 自动切换图文笔记里的图片</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>正在读正文+生成</span></div><div class="real-main"><div class="real-card"><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:32:01] 打开笔记详情：求租望京附近一居
+[10:32:03] 查看第 1 张图片
+[10:32:05] 切换到第 2 张图片
+[10:32:07] 切换到第 3 张图片</div></div><div class="real-card real-wait"><b>待发送评论</b><span class="real-small">还未生成</span></div></div></div>
+          <div class="real-xhs"><div class="xhs-note-page"><div class="xhs-note-img">图文笔记 · 第 3/4 张</div><div class="xhs-note-side"><b>求租望京附近一居，预算 4500</b><p class="real-small">最好近地铁，下周能入住。图片里有地铁站截图和小区环境。</p><div class="kv-tags"><span class="hot">望京</span><span class="hot">4500</span><span>一居</span><span>近地铁</span></div></div></div><div class="red-pulse" style="right:410px;top:290px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-7</b> 动作 5：图文详情页在右侧真实小红书区域里浏览和切图。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:306px;top:188px">1</span><span class="pin" style="right:88px;top:282px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 6 · 自动浏览评论区</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>正在读评论区</span></div><div class="real-main"><div class="real-card"><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:32:12] 正文停留 3.2 秒
+[10:32:15] 往下读评论 1/3
+[10:32:20] 往下读评论 2/3
+[10:32:26] 评论区补充：预算、通勤、近地铁</div></div></div></div>
+          <div class="real-xhs"><div class="xhs-note-page"><div class="xhs-note-img">笔记正文区域</div><div class="xhs-note-side"><b>评论区</b><div class="xhs-comment"><div class="avatar"></div><div><b>用户A</b><span>预算多少？</span></div></div><div class="xhs-comment"><div class="avatar"></div><div><b>作者</b><span>4500 左右，可以接受稍微远一点。</span></div></div><div class="xhs-comment"><div class="avatar"></div><div><b>用户B</b><span>离望京 SOHO 通勤多久？</span></div></div></div></div><div class="red-pulse" style="right:142px;top:332px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-8</b> 动作 6：评论区也在右侧真实小红书区域里滚动，补充后续评论依据。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:262px;top:178px">1</span><span class="pin" style="left:622px;top:282px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 7 · 自动采集后进入采集记录列表</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item on">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>采集记录</b><span>看过哪些笔记</span></div><div class="real-main"><div class="real-card"><b>采集记录 · 今日</b><div class="real-table" style="margin-top:10px"><div class="real-row"><div>笔记</div><div>分类</div><div>关键信息</div><div>结果</div></div><div class="real-row"><div>求租望京附近一居</div><div>求租</div><div>望京/4500</div><div><span class="tag">待评论</span></div></div><div class="real-row"><div>房东直租精装一居</div><div>房源</div><div>公寓/发房</div><div>只记录</div></div><div class="real-row"><div>下周入职想找房</div><div>高意向</div><div>下周入住</div><div><span class="tag">复核</span></div></div></div></div><div class="real-card"><b>判断详情</b><div class="real-log">采集到的信息：标题、作者、链接、赞评数、来源关键词、采集时间
+提取关键信息：位置=望京，预算=4500，户型=一居，关注点=近地铁
+动作：进入待评论队列</div></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">望京 一居 求租 <span class="lens">⌕</span></div></div><div class="xhs-feed-real"><div class="xhs-post"><div class="xhs-pic">已采集</div><div class="xhs-title">求租望京附近一居</div><div class="xhs-meta"><span>小林</span><span>♡ 35</span></div></div><div class="xhs-post"><div class="xhs-pic gray">已跳过</div><div class="xhs-title">房东直租精装一居</div><div class="xhs-meta"><span>公寓</span><span>♡ 12</span></div></div><div class="xhs-post"><div class="xhs-pic green">复核</div><div class="xhs-title">下周入职想找房</div><div class="xhs-meta"><span>阿敏</span><span>♡ 58</span></div></div></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-9</b> 动作 7：采集记录图改为真实客户端采集入口，不再用抽象后台列表。</p>
+
+      <div class="shot">
+        <span class="pin" style="left:300px;top:478px">1</span><span class="pin" style="right:92px;bottom:88px">2</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">动作 8 · 自动判断要评论什么内容</span><span class="meta">当前客户端基底</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>待发送评论</span></div><div class="real-main"><div class="real-card"><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div><div class="real-metrics"><div class="real-metric"><b>检索到</b><strong>42</strong></div><div class="real-metric"><b>目标笔记</b><strong>9</strong></div><div class="real-metric"><b>其他分类</b><strong>33</strong></div><div class="real-metric"><b>待评论</b><strong class="red">1</strong></div></div></div><div class="real-card"><b>待发送评论</b><div class="real-log" style="height:132px">求租望京附近一居
+评论草稿：看你在找望京附近一居，预算 4500 左右、想近地铁的话，我主页有几套实拍可以参考，合适可以私聊我说下入住时间～
+合规：通过；限频：等待发送</div></div></div></div>
+          <div class="real-xhs"><div class="xhs-note-page"><div class="xhs-note-img">求租笔记图片</div><div class="xhs-note-side"><b>求租望京附近一居，预算 4500</b><p class="real-small">最好近地铁，下周能入住。</p><div class="xhs-comment"><div class="avatar"></div><div><b>用户A</b><span>预算多少？</span></div></div><div class="xhs-comment"><div class="avatar"></div><div><b>作者</b><span>4500 左右。</span></div></div></div></div><div class="comment-box">输入评论：回应望京、一居、近地铁诉求</div><div class="red-pulse" style="right:54px;bottom:73px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-10</b> 动作 8：评论判断仍发生在当前控制台和右侧真实笔记页面之间，草稿进入中间“待发送评论”。</p>
+    </section>
+
+    <section id="auto-reply" data-search="自动回复评论 评论承接 收件箱 通知 回复 评论和@ 红点 未读 定时检测">
+      <div class="sec-title"><span class="num">3.3</span><h2>日常使用 · 自动回复评论</h2></div>
+      <p class="path">路径：控制台右侧小红书页面 › <code>通知</code> › <code>评论和@</code></p>
+      <div class="shot">
+        <span class="pin" style="left:300px;top:178px">1</span><span class="pin" style="right:412px;top:132px">2</span><span class="pin" style="right:320px;top:372px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">评论承接 · 以当前控制台 + 评论和@ 页面为基底</span><span class="meta">当前页面基底图</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div><div class="item">💬 评论承接</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>本地界面 · 引擎 M1-M5</span></div><div class="real-main"><div class="real-card"><div class="real-controls"><button class="real-btn primary">▶ 开始</button><button class="real-btn">■ 停止</button><span class="real-check"><i></i>真发(总开关)</span><span class="real-small">本次任务: 评论承接</span></div><div class="real-stages"><div class="real-stage">① 检索</div><div class="real-stage">② 匹配</div><div class="real-stage">③ 读正文+生成</div><div class="real-stage hot">④ 待发送</div></div><div class="real-metrics"><div class="real-metric"><b>检测到</b><strong>5</strong></div><div class="real-metric"><b>目标评论</b><strong>3</strong></div><div class="real-metric"><b>其他互动</b><strong>2</strong></div><div class="real-metric"><b>待回复</b><strong class="red">1</strong></div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:40:00] 定时检测通知页
+[10:40:01] 进入「评论和@」
+[10:40:03] 读取近 7 天评论
+[10:40:05] 判断“这个房子在哪呀”为有意向
+[10:40:08] 生成回复草稿，等待限频</div></div><div class="real-card real-wait"><b>待发送评论</b><span class="real-small">回复=发到该评论下方，看清内容再发</span></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">英伟达北京公司介绍 <span>⌕</span></div></div><div class="xhs-tabs"><span class="on">评论和@</span><span>赞和收藏</span><span>新增关注</span></div><div class="xhs-notice"><div class="xhs-notice-row"><div class="avatar"></div><div><b>流风流 <span class="real-small">你的关注</span></b><span class="real-small">评论了你的笔记 1天前</span><p>这个房子在哪呀</p><button class="replybtn">💬 回复</button> <button class="replybtn">♡</button></div><div class="ghostbox"></div></div><div class="xhs-notice-row"><div class="avatar"></div><div><b>流风流 <span class="real-small">你的关注</span></b><span class="real-small">评论了你的笔记 5天前</span><p>你好，这在哪呢</p><button class="replybtn">💬 回复</button> <button class="replybtn">♡</button></div><div class="ghostbox"></div></div><div class="xhs-notice-row"><div class="avatar"></div><div><b>流风流 <span class="real-small">你的关注</span></b><span class="real-small">评论了你的笔记 6天前</span><p>多少钱呢</p><button class="replybtn">💬 回复</button> <button class="replybtn">♡</button></div><div class="ghostbox"></div></div></div><div class="red-pulse" style="left:438px;top:352px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><b>通知</b><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-11</b> 自动回复评论已改成当前实际页面基底：中间仍是控制台，右侧进入小红书“评论和@”列表，系统定时检测并点击未读/回复入口。</p>
+      <div class="callout info"><span class="cic">红</span><div><b>重点。</b>回复评论不是独立后台表格，而是在当前控制台右侧真实小红书通知页里处理；系统只在检测到新互动时进入“评论和@”，再做意向判断和回复。</div></div>
+    </section>
+
+    <section id="dm-reply" data-search="自动回复私信 私信 联系方式 线索 多轮沟通 聊天框 用户列表 红点 未读">
+      <div class="sec-title"><span class="num">3.4</span><h2>日常使用 · 自动回复私信</h2></div>
+      <p class="sub">私信属于更高风险动作，当前作为后续模块规划。页面必须基于当前控制台右侧的小红书消息页：左侧用户会话列表，右侧聊天框。</p>
+      <div class="shot">
+        <span class="pin" style="left:300px;top:178px">1</span><span class="pin" style="right:414px;top:146px">2</span><span class="pin" style="right:266px;top:380px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">私信承接 · 以当前控制台 + 小红书消息页为基底</span><span class="meta">规划中高保真</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item on">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div><div class="item">💬 评论承接</div></div></div>
+          <div class="real-local"><div class="real-head"><b>控制台</b><span>本地界面 · 引擎 M1-M5</span></div><div class="real-main"><div class="real-card"><div class="real-controls"><button class="real-btn primary">▶ 开始</button><button class="real-btn">■ 停止</button><span class="real-check"><i></i>真发(总开关)</span><span class="real-small">本次任务: 私信承接</span></div><div class="real-stages"><div class="real-stage">① 检测</div><div class="real-stage">② 读会话</div><div class="real-stage">③ 生成回复</div><div class="real-stage hot">④ 转人工</div></div><div class="real-metrics"><div class="real-metric"><b>未读会话</b><strong>2</strong></div><div class="real-metric"><b>目标私信</b><strong>1</strong></div><div class="real-metric"><b>已转人工</b><strong>1</strong></div><div class="real-metric"><b>待回复</b><strong class="red">1</strong></div></div></div><div class="real-card"><b>实时日志 · 引擎在干什么</b><div class="real-log">[10:45:00] 定时检测底部消息红点
+[10:45:02] 进入消息页
+[10:45:04] 读取左侧未读会话
+[10:45:06] 识别到联系方式/高意向
+[10:45:08] 标记转人工，停止自动继续追问</div></div><div class="real-card real-wait"><b>待发送回复</b><span class="real-small">私信只处理主动来找我的用户</span></div></div></div>
+          <div class="real-xhs"><div class="xhs-dm"><div class="xhs-dm-list"><div class="xhs-dm-title">消息</div><div class="xhs-dm-user on"><div class="avatar"></div><div><b>流风流</b><span>1831007241</span></div><span>星期日</span></div><div class="xhs-dm-user"><div class="avatar" style="background:#ff5f75"></div><div><b>陌生人消息</b><span>您好，注...</span></div><span>2025年7月17日</span></div><div class="xhs-dm-user"><div class="avatar" style="background:#ffe08a"></div><div><b>北京新房租寓记</b><span>18513007241 可以加我喔</span></div><span>2024年7月2日</span></div></div><div><div class="xhs-chat-head"><div class="avatar"></div>流风流</div><div class="xhs-chat-body"><div class="chat-bubble">你好呀</div><div class="chat-bubble out">你好</div><div class="chat-bubble out">方便留个联系方式吗</div><div class="chat-bubble">1831007241</div><div class="real-card" style="position:absolute;left:28px;right:28px;bottom:74px;margin:0"><b>系统识别</b><div class="chips" style="margin-top:8px"><span class="chip hot">联系方式</span><span class="chip green">高意向</span><span class="chip blue">转人工</span></div></div><div class="xhs-dm-input">发消息...</div></div></div></div><div class="red-pulse" style="right:350px;top:382px"></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><b>消息</b></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 3-12</b> 私信承接已按实际小红书消息页重画：左侧用户会话列表，右侧聊天框，系统在聊天内容里识别联系方式、高意向和转人工。</p>
+      <div class="callout warn"><span class="cic">R</span><div><b>私信策略。</b>优先自动回复“已经主动来找我的用户”；识别到联系方式或约看房，立即沉淀线索并转人工，不继续高频自动追问。</div></div>
+    </section>
+
+    <section id="logic-browse" data-search="浏览逻辑 匹配逻辑 设置 房源库 API 选房">
+      <div class="sec-title"><span class="num">4.1</span><h2>核心逻辑 · 浏览与匹配</h2></div>
+      <p class="sub">系统浏览笔记不是只看标题，而是按配置模拟“搜索、筛选、翻页、进详情、看图、读正文、翻评论”。</p>
+      <div class="shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">浏览与匹配逻辑 · 可视化漏斗</span><span class="meta">逻辑高保真</span></div>
+        <div class="pcontent">
+          <div class="logic-grid"><div class="logic-card"><h4>浏览笔记</h4><ol><li>进入搜索页并点筛选。</li><li>滚动采集候选卡片。</li><li>打开目标详情页。</li><li>看图片、读正文、翻评论。</li><li>关闭详情回列表。</li></ol></div><div class="logic-card"><h4>分层匹配</h4><ol><li>L1：城市/商圈/时间。</li><li>L2：求租/房源/同行。</li><li>L3：预算、户型、入住时间。</li><li>L4：近地铁、可养宠等软诉求。</li></ol></div><div class="logic-card"><h4>房源匹配</h4><ol><li>当前：话术方向承接。</li><li>规划：房源库选房。</li><li>未来：房源 API 返回图文。</li><li>按诉求选卖点和图片。</li></ol></div></div>
+          <div class="flow"><div class="flow-card"><b>对方笔记</b><span>望京一居 · 4500 · 近地铁</span></div><span class="arr">→</span><div class="flow-card"><b>提取关键信息</b><span>位置 / 户型 / 预算 / 关注点</span></div><span class="arr">→</span><div class="flow-card"><b>房源筛选</b><span>望京 · 一居 · ≤4500 · 地铁</span></div><span class="arr">→</span><div class="flow-card"><b>生成回复</b><span>回应具体诉求，引导主页/私聊</span></div></div>
+          <table><thead><tr><th>自动动作</th><th>系统怎么做</th><th>沉淀什么结果</th></tr></thead><tbody><tr><td>自动输入关键词</td><td>读取任务设置里的关键词，进入小红书搜索结果页。</td><td>记录本轮来源关键词，后续可复盘哪组词带来有效笔记。</td></tr><tr><td>自动设定筛选</td><td>按页面可见选项点选排序、发布时间、笔记类型、搜索范围。</td><td>日志记录筛选是否生效，后续可按筛选上下文复盘。</td></tr><tr><td>自动浏览页面</td><td>滚动搜索结果页，鼠标移到可见笔记卡片附近，按上限采集候选。</td><td>采集标题、作者、互动数、笔记链接、初次/最近采集时间。</td></tr><tr><td>判断值得点开</td><td>基于获客模型给候选笔记分类，再按动作、热度、去重结果排序。</td><td>形成“求租/高意向/房源/同行/不明”等分类和处理动作。</td></tr><tr><td>浏览图文详情</td><td>打开目标笔记，切换多张图片，停留读正文，再滚动浏览评论区。</td><td>补充正文、标签、评论区片段等判断依据，用于生成更贴合的评论。</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="logic-reply" data-search="评论逻辑 回复逻辑 生成 合规 限频 去重">
+      <div class="sec-title"><span class="num">4.2</span><h2>核心逻辑 · 生成与回复</h2></div>
+      <div class="shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">生成与回复 · 安全闸门</span><span class="meta">链路状态图</span></div>
+        <div class="pcontent">
+          <div class="flow"><div class="flow-card"><b>生成输入</b><span>正文 · 标签 · 分类证据 · 房源匹配</span></div><span class="arr">→</span><div class="flow-card"><b>合规检查</b><span>不含联系方式 / 外链 / 二维码</span></div><span class="arr">→</span><div class="flow-card"><b>限频闸门</b><span>排班 · 每日 · 每小时 · 间隔</span></div><span class="arr">→</span><div class="flow-card"><b>结果留痕</b><span>评论记录 · 收件箱 · 线索</span></div></div>
+          <table><thead><tr><th>状态</th><th>含义</th><th>管理动作</th></tr></thead><tbody><tr><td>待处理</td><td>已采集或已入收件箱，尚未处理</td><td>继续运行或人工复核</td></tr><tr><td>已回复 / 已发送</td><td>真发成功并确认</td><td>观察后续私信和线索</td></tr><tr><td>跳过</td><td>命中黑词、重复、超出时间窗、同行等</td><td>复盘规则是否过严</td></tr><tr><td>失败</td><td>定位失败、发送失败、未确认成功</td><td>查看失败原因，必要时人工接管</td></tr><tr><td>演练</td><td>只定位/生成，不真发</td><td>用于上线前检查</td></tr></tbody></table>
+          <div class="callout info"><span class="cic">评</span><div><b>评论判断分两步。</b>第一步判断“这条笔记能不能评论”：分类动作为评论、没有评论过、没有命中同行/房源/黑词、仍在限频和排班内。第二步判断“评论什么内容”：围绕对方已经表达的位置、预算、户型、入住时间和关注点回应，不泛泛打招呼。</div></div>
+          <table><thead><tr><th>判断点</th><th>系统看什么</th><th>输出结果</th></tr></thead><tbody><tr><td>能不能评论</td><td>获客模型动作、去重记录、合规红线、账号限频、是否已登录。</td><td>进入待评论 / 跳过 / 人工确认 / 演练。</td></tr><tr><td>是否值得评论</td><td>分类是否为求租或高意向、评论热度、对方诉求是否明确。</td><td>优先处理高价值笔记，房源笔记和同行只记录或跳过。</td></tr><tr><td>评论说什么</td><td>标题、正文、图片、标签、评论区片段中提到的位置、预算、户型和关注点。</td><td>生成一句具体回应，例如“望京一居、近地铁、主页有实拍，合适可私聊”。</td></tr><tr><td>发不发出去</td><td>真发开关、演练模式、评论合规检查、发送定位是否成功。</td><td>演练定位 / 真发成功 / 失败留痕 / 停止保护。</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="manage" data-search="管理 浏览笔记 评论内容 回复内容 线索管理 管理视角">
+      <div class="sec-title"><span class="num">5</span><h2>管理视角</h2></div>
+      <p class="sub">管理者不关心机器内部细节，关心“看了什么、发了什么、回了什么、沉淀了什么线索”。</p>
+      <div class="shot">
+        <span class="pin" style="left:262px;top:178px">1</span><span class="pin" style="left:612px;top:262px">2</span><span class="pin" style="right:290px;top:210px">3</span>
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">采集记录 · 以当前客户端采集入口为基底</span><span class="meta">当前页面交互增强版</span></div>
+        <div class="real-app">
+          <div class="real-side"><div class="real-logo">小红书获客</div><div class="real-nav"><div class="item">🏠 控制台</div><div class="item">📋 评论记录</div><div class="item on">🔍 采集记录</div><div class="item">📥 线索·承接</div><div class="grp">配置</div><div class="item">🎯 任务设置</div><div class="item">🧭 获客模型</div><div class="item">🛡 防封控制</div></div></div>
+          <div class="real-local"><div class="real-head"><b>采集记录</b><span>看过哪些笔记</span></div><div class="real-main"><div class="real-card"><div class="real-controls"><span class="badge b-done">今日 128 篇</span><span class="badge b-risk">待评论 12</span><span class="badge b-plan">只记录 46</span><button class="btn ghost">求租笔记</button><button class="btn ghost">导出</button></div></div><div class="real-card"><b>笔记列表</b><div class="real-table" style="margin-top:10px"><div class="real-row"><div>笔记</div><div>分类</div><div>关键信息</div><div>动作</div></div><div class="real-row"><div>求租望京附近一居</div><div>求租笔记</div><div>望京/4500/一居</div><div><span class="tag">待评论</span></div></div><div class="real-row"><div>房东直租精装一居</div><div>房源笔记</div><div>公寓/发房</div><div>只记录</div></div><div class="real-row"><div>下周入职想找房</div><div>高意向</div><div>下周入住/通勤</div><div><span class="tag">复核</span></div></div></div></div><div class="real-card"><b>判断详情 · 求租望京附近一居</b><div class="real-log">采集到的信息：标题、作者、链接、赞评数、来源关键词、采集时间
+分类依据：内容表达求租、预算、一居、近地铁
+提取关键信息：位置=望京，预算=4500，户型=一居，关注点=近地铁
+评论建议：回应望京一居和近地铁诉求，引导看主页或私聊</div></div></div></div>
+          <div class="real-xhs"><div class="real-xhs-head"><div class="real-search">望京 一居 求租 <span class="lens">⌕</span></div></div><div class="xhs-feed-real"><div class="xhs-post"><div class="xhs-pic">已打开</div><div class="xhs-title">求租望京附近一居</div><div class="xhs-meta"><span>小林</span><span>♡ 35</span></div></div><div class="xhs-post"><div class="xhs-pic gray">只记录</div><div class="xhs-title">房东直租精装一居</div><div class="xhs-meta"><span>某公寓</span><span>♡ 12</span></div></div><div class="xhs-post"><div class="xhs-pic green">复核</div><div class="xhs-title">下周入职想找房</div><div class="xhs-meta"><span>阿敏</span><span>♡ 58</span></div></div></div><div class="xhs-bottom-real"><b>首页</b><span>世界标</span><span>点点</span><span>直播</span><span>发布</span><span>通知</span><span>消息</span></div></div>
+        </div>
+      </div>
+      <p class="fig"><b>图 5-1</b> 采集记录页已改为当前客户端基底：左侧真实菜单，中间本地采集记录，右侧保留小红书页面上下文。</p>
+      <div class="shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">管理看板 · 高保真目标页</span><span class="meta">规划目标</span></div>
+        <div class="product">
+          <div class="pside"><div class="plogo"><span class="ld"></span>中央后台</div><div class="pnav on">账号看板</div><div class="pnav">线索汇总</div><div class="pnav">评论/回复</div><div class="pnav">房源对接</div></div>
+          <div class="pbody"><div class="ptop"><div><div class="t">账号运行与线索总览</div><div class="s">按账号、日期、关键词、状态复盘获客质量</div></div><button class="btn">导出</button></div><div class="pcontent"><div class="metrics"><div class="metric"><div class="ml">浏览笔记</div><div class="mv">128</div></div><div class="metric"><div class="ml">已发评论</div><div class="mv" style="color:var(--brand)">12</div></div><div class="metric"><div class="ml">承接回复</div><div class="mv">18</div></div><div class="metric"><div class="ml">高意向线索</div><div class="mv" style="color:var(--green)">5</div></div></div><div class="table"><div class="trow"><div>来源</div><div>用户/笔记</div><div>动作</div><div>结果</div><div>线索</div></div><div class="trow"><div>自动评论</div><div>求租望京一居</div><div>评论</div><div>已发送</div><div>待观察</div></div><div class="trow"><div>评论承接</div><div>阿敏：怎么联系</div><div>回复</div><div>已回复</div><div>高意向</div></div><div class="trow"><div>私信承接</div><div>小林：预算4000</div><div>私信</div><div>规划中</div><div>待接入</div></div></div></div></div>
+        </div>
+      </div>
+      <table><thead><tr><th>管理对象</th><th>当前入口</th><th>应看字段</th></tr></thead><tbody><tr><td>浏览的笔记</td><td>采集记录</td><td>关键词、分类、证据、是否评论、原链接、浏览时间。</td></tr><tr><td>评论内容</td><td>评论记录</td><td>原笔记、评论全文、发送状态、失败原因、是否合规。</td></tr><tr><td>回复内容</td><td>线索·承接</td><td>用户、互动内容、意向、回复草稿/已发内容、状态。</td></tr><tr><td>线索</td><td>线索管理（规划）</td><td>联系方式、需求结构化、来源上下文、跟进状态、API 推送状态。</td></tr></tbody></table>
+    </section>
+
+    <section id="api" data-search="API 对接 房源 API 线索 API 输出 外部系统">
+      <div class="sec-title"><span class="num">6</span><h2>未来 API 对接</h2></div>
+      <p class="sub">未来房源由 API 输入，线索由 API 输出；客户端本地仍要保留失败重试和断网留痕。</p>
+      <div class="shot">
+        <div class="shotbar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">API 对接控制台 · 高保真规划页</span><span class="meta">未来 API</span></div>
+        <div class="pcontent">
+          <div class="api-grid"><div><h3>房源 API 输入</h3><pre>{
+  "house_id": "house_001",
+  "city": "成都",
+  "area": "天府三街",
+  "price": 3200,
+  "room_type": "一居",
+  "tags": ["近地铁", "押一付一"],
+  "images": ["cover.jpg", "room.jpg"],
+  "status": "available"
+}</pre></div><div><h3>线索 API 输出</h3><pre>{
+  "lead_id": "lead_001",
+  "source_account": "xhs_account_a",
+  "xhs_user": "小林",
+  "intent_level": "high",
+  "need": {"area":"望京","budget":4500},
+  "contact": "对方主动提供的联系方式",
+  "source_url": "https://www.xiaohongshu.com/...",
+  "push_status": "pending"
+}</pre></div></div>
+          <div class="callout info"><span class="cic">A</span><div><b>对接原则。</b>房源 API 负责“可推荐什么”，线索 API 负责“把谁交出去”。API 失败不丢线索，本地记录待重试；同一用户/同一联系方式需要去重。</div></div>
+        </div>
+      </div>
+    </section>
+
+    <footer>小红书自动化获客工具 · 产品功能手册 v0.5 ｜ 2026-07-07 ｜ 文本源：产品功能手册.md</footer>
+  </div>
+</main>
+<script>
+  const navLinks = Array.from(document.querySelectorAll('#nav a'));
+  const sections = Array.from(document.querySelectorAll('[id]')).filter(function(el){return el.tagName === 'SECTION' || el.tagName === 'HEADER';});
+  const q = document.getElementById('q');
+  function setActive(){
+    let cur = sections[0];
+    for (const s of sections) if (s.getBoundingClientRect().top <= 86) cur = s;
+    navLinks.forEach(function(a){ a.classList.toggle('active', a.getAttribute('href') === '#' + cur.id); });
+  }
+  window.addEventListener('scroll', setActive, {passive:true});
+  q.addEventListener('input', function(){
+    const key = q.value.trim().toLowerCase();
+    sections.forEach(function(s){
+      const text = ((s.dataset.search || '') + ' ' + s.innerText).toLowerCase();
+      s.style.display = !key || text.indexOf(key) >= 0 ? '' : 'none';
+    });
+  });
+</script>
+</body>
+</html>
