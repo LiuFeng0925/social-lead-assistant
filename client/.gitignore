@@ -3,3 +3,4 @@ tmp/
 data/
 *.log
 .DS_Store
+.xhs-chrome-profile/

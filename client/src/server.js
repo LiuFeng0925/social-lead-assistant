@@ -14,10 +14,13 @@ const inboxUtils = require('./inbox-utils');
 const dateFilter = require('./date-filter');
 const { readLoginStatus } = require('./login-status');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
+const { parseKeywords, limitNotes, keywordScanPlan } = require('./keyword-utils');
+const { launchChromeForCdp } = require('./browser-launch');
 
 const PORT = Number(process.env.XHS_UI_PORT || 3000);
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const TMP = path.join(__dirname, '..', 'tmp');
+const CHROME_PROFILE = path.join(__dirname, '..', '.xhs-chrome-profile');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
@@ -25,6 +28,35 @@ const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
 function formatCategoryCounts(byIntent) {
   const rows = Object.entries(byIntent || {}).filter(([, v]) => Number(v) > 0);
   return rows.length ? rows.map(([k, v]) => `${k} ${v}`).join(' / ') : '无分类';
+}
+
+function formatClassificationFacts(decision) {
+  const rows = [];
+  if (decision.city) rows.push('城市=' + decision.city);
+  if (decision.district) rows.push('区县=' + decision.district);
+  if (decision.location) rows.push('位置=' + decision.location);
+  for (const [key, value] of Object.entries(decision.slotValues || {})) {
+    if (value && !rows.some((row) => row.endsWith('=' + value))) rows.push(key + '=' + value);
+  }
+  if (decision.matchedServiceArea) rows.push('对应服务区=' + decision.matchedServiceArea);
+  if (decision.locationEvidence) rows.push('地点依据=' + decision.locationEvidence);
+  return rows.length ? rows.join('；') : '正文未提取到明确地区/预算/位置等信息';
+}
+
+async function scanKeywords({ client, target, keywordText, filters, maxNotes, onLog, shouldStop }) {
+  const keywords = parseKeywords(keywordText);
+  const eachMax = Math.max(1, Math.ceil(maxNotes / keywords.length));
+  const collected = [];
+  for (let index = 0; index < keywords.length; index++) {
+    if (shouldStop()) break;
+    const keyword = keywords[index];
+    onLog(`关键词 ${index + 1}/${keywords.length}: ${keyword}`);
+    const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: eachMax, onLog, shouldStop });
+    collected.push(...notes);
+  }
+  const notes = limitNotes(collected, maxNotes);
+  if (keywords.length > 1) onLog(`多关键词合并：${collected.length} 条 → 去重后 ${notes.length} 条`);
+  return notes;
 }
 
 // 评论框 / 发送按钮定位(同 m4)
@@ -69,14 +101,13 @@ async function handleRun(req, res, q) {
     const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
     send('log', '已接管:' + (target.title || target.url));
     send('phase', { phase: 'search' });
-    const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: max, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled });
+    const notes = await scanKeywords({ client, target, keywordText: keyword, filters, maxNotes: max, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled });
     if (runState.cancelled) { send('log', '⏹ 任务已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
     send('phase', { phase: 'match' });
-    const { tagged, targets, byIntent } = engine.matchNotes(notes, cfg);
+    const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} }); // 存采集历史(看过哪些笔记,带意向/地区)
-    const fresh = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } }); // 评过的跳过
-    const skipped = targets.length - fresh.length;
-    send('log', `分类:${notes.length} 条 → ${formatCategoryCounts(byIntent)};待评论 ${targets.length} 条${skipped ? `(已评过 ${skipped} 条自动跳过,剩 ${fresh.length})` : ''}`);
+    const fresh = targets;
+    send('log', `采集:${notes.length} 条 → ${formatCategoryCounts(byIntent)};全部先读标题+正文再分类`);
     send('stats', { total: notes.length, byIntent, targetCount: fresh.length });
     send('phase', { phase: 'generate' });
     const results = [];
@@ -96,15 +127,30 @@ async function handleRun(req, res, q) {
         }
         throw e;
       }
-      const merged = { ...t, tags: d.tags || [], desc: d.desc || '' };
-      const comment = await engine.makeComment(merged, direction, cfg);
-      const comp = engine.check(comment);
+      const merged = { ...t, title: d.title || t.title, author: d.author || t.author, tags: d.tags || [], desc: d.desc || '' };
+      const publisher = await engine.classifyDetailedNote(merged, cfg);
+      send('log', `${publisher.classificationMethodLabel}分类:${publisher.label} / 地区${publisher.locationMatch} / 置信度${Math.round(publisher.confidence * 100)}% —— ${publisher.decisionReason}`);
+      send('log', '正文提取:' + formatClassificationFacts(publisher));
+      const classifiedNote = Object.assign({}, merged, {
+        category_id: publisher.categoryId,
+        category_name: publisher.categoryName,
+        category_action: publisher.categoryAction,
+        category_reply_strategy: publisher.categoryReplyStrategy,
+        intent: publisher.categoryName
+      });
+      const comment = publisher.eligible ? await engine.makeComment(classifiedNote, direction, cfg) : '';
+      const comp = comment ? engine.check(comment) : { ok: false, violations: ['当前分类不允许评论作者或地区不匹配'] };
       const agentReject = engine.rejectsAgent((d.title || '') + (d.desc || ''));
       const r = {
         index: i, id: t.id, url: t.url, title: t.title || '(无标题)', author: t.author, region: t.region,
         searchUrl: t.searchUrl,
-        likes: t.likes, collects: t.collects, comments: t.comments, intent: t.intent, category_name: t.category_name, category_action: t.category_action, category_confidence: t.category_confidence, classify_reason: t.classify_reason, tags: d.tags || [],
+        likes: t.likes, collects: t.collects, comments: t.comments, intent: publisher.categoryName, category_confidence: publisher.confidence, classify_reason: publisher.decisionReason, tags: d.tags || [],
         descSample: (d.desc || '').replace(/#[^#]*\[话题\]#/g, '').replace(/\s+/g, ' ').trim().slice(0, 80),
+        category_name: publisher.categoryName, category_action: publisher.categoryAction,
+        classification_method: publisher.classificationMethod,
+        publisher_role: publisher.role, publisher_label: publisher.label, location_match: publisher.locationMatch,
+        classification_confidence: publisher.confidence, classification_reason: publisher.decisionReason,
+        extracted_slots: publisher.slotValues, extracted_city: publisher.city, extracted_district: publisher.district, extracted_location: publisher.location,
         comment, compliant: comp.ok, violations: comp.violations, agentReject
       };
       results.push(r);
@@ -313,9 +359,8 @@ async function handleSaveConfig(req, res, q) {
 async function handleLoginStatus(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
-    let client, target;
-    if (lastRun && lastRun.target) { client = lastRun.client; target = lastRun.target; }
-    else { const c = await engine.connect(ENDPOINT, broadcastPointer); client = c.client; target = c.target; lastRun = { client, target, results: [] }; }
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    lastRun = { client, target, results: (lastRun && lastRun.results) || [] };
     const st = await readLoginStatus(client, target);
     res.end(JSON.stringify({ ok: true, loggedIn: st.loggedIn }));
   } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
@@ -324,9 +369,16 @@ async function handleLoginStatus(req, res) {
 async function handleTriggerLogin(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
-    let client, target;
-    if (lastRun && lastRun.target) { client = lastRun.client; target = lastRun.target; }
-    else { const c = await engine.connect(ENDPOINT, broadcastPointer); client = c.client; target = c.target; lastRun = { client, target, results: [] }; }
+    let connection;
+    try {
+      connection = await engine.connect(ENDPOINT, broadcastPointer);
+    } catch (error) {
+      if (!/ECONNREFUSED|cdp_list_targets|cdp_socket/i.test(String(error && error.message || error))) throw error;
+      await launchChromeForCdp({ endpoint: ENDPOINT, profileDir: CHROME_PROFILE });
+      connection = await engine.connect(ENDPOINT, broadcastPointer);
+    }
+    const { client, target } = connection;
+    lastRun = { client, target, results: (lastRun && lastRun.results) || [] };
     const before = await readLoginStatus(client, target);
     if (before.loggedIn) {
       res.end(JSON.stringify({ ok: true, loggedIn: true, msg: '已检测到右侧浏览器已登录,不用扫码' }));
@@ -359,18 +411,21 @@ async function handleCursorInstall(req, res) {
 
 // 打开一篇笔记 → 定位评论框 →(真发:输入+点发送+验证成功+入库)→ 关闭。dry=true 只定位不发。
 // 在「已打开且已浏览到评论区」的笔记上评论:定位评论框 →(真发:输入+点发送+验证+入库)。不开不关(由 readDetail 管)。
-async function commentOnOpenNote({ client, target, note, comment, dry, onLog = () => {} }) {
+async function commentOnOpenNote({ client, target, note, comment, dry, onLog = () => {}, shouldStop = () => false }) {
   try {
+    if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
     let probe = { inputs: [], sendBtns: [] };
     try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
     if (!probe.inputs[0]) { await client.wheelScroll({ target, x: 600, y: 500, totalDeltaY: 420 }).catch(() => {}); await sleep(rand(700, 1300)); try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {} }
     if (!probe.inputs[0]) return { ok: false, msg: '没定位到评论框' };
     if (dry) return { ok: true, msg: '演练:已定位评论框(未发送)' };
+    if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
     try { const st = await readLoginStatus(client, target); if (!st.loggedIn) return { ok: false, msg: '未登录,跳过(绝不假发)' }; } catch (e) {}
     await client.click({ target, x: probe.inputs[0].x, y: probe.inputs[0].y });
     await sleep(rand(700, 1300));
     await client.typeText({ target, text: comment });
     await sleep(rand(1200, 2000));
+    if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped_before_send' };
     let probe2 = { sendBtns: [] };
     try { probe2 = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
     const btn = (probe2.sendBtns || [])[0] || (probe.sendBtns || [])[0];
@@ -398,7 +453,7 @@ async function drainInbox({ client, target, cfg, dry, send }) {
   send('log', '📥 发现通知,暂停外呼,先去回复…');
   let beforeInboxUrl = '';
   try { beforeInboxUrl = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
-  const returnUrl = inboxUtils.resolvePostInboxReturnUrl(beforeInboxUrl) || engine.buildSearchUrl(cfg.task_keyword || '朝阳 租房');
+  const returnUrl = inboxUtils.resolvePostInboxReturnUrl(beforeInboxUrl) || engine.buildSearchUrl(parseKeywords(cfg.task_keyword)[0]);
   const items = await engine.scanInbox({ client, target, max: 40, recentDays: Number(cfg.reply_recent_days) || 0, onLog: (m) => send('log', '  ' + m) });
   let replied = 0;
   const seenThisRun = new Set();
@@ -468,16 +523,19 @@ function emitLog(msg) {
 function emitEvent(type, data) { for (const res of logBus.clients) { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'); } catch (e) {} } }
 function busSend(type, data) { if (type === 'log') emitLog(data); else emitEvent(type, data); }
 
-const machine = { running: false, phase: 'idle', client: null, target: null, targets: [], lastScan: 0, lastInboxCheck: 0, sent: 0, replied: 0, done: 0 };
-function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done }; }
-function startMachine() { if (machine.running) return false; machine.running = true; machine.phase = 'starting'; machine.targets = []; machine.lastScan = 0; machine.lastInboxCheck = 0; emitEvent('status', machineStatus()); machineLoop(); return true; }
+const machine = { running: false, phase: 'idle', client: null, target: null, targets: [], lastScan: 0, lastInboxCheck: 0, sent: 0, replied: 0, done: 0, keywordIndex: 0, keywordTotal: 0, keywordSignature: '', scanCycleActive: false, scanSeen: new Set(), scanCollected: 0 };
+const processedOutboundLeads = new Set();
+function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done, keywordIndex: machine.keywordIndex, keywordTotal: machine.keywordTotal }; }
+function resetMachineConnection() { machine.client = null; machine.target = null; }
+function isCdpConnectionError(error) { return /cdp_|no_page_target/i.test(String(error && error.message || error || '')); }
+function startMachine() { if (machine.running) return false; resetMachineConnection(); machine.running = true; machine.phase = 'starting'; machine.targets = []; machine.lastScan = 0; machine.lastInboxCheck = 0; machine.keywordIndex = 0; machine.keywordTotal = 0; machine.keywordSignature = ''; machine.scanCycleActive = false; machine.scanSeen = new Set(); machine.scanCollected = 0; emitEvent('status', machineStatus()); machineLoop(); return true; }
 function stopMachine() { if (!machine.running) return; machine.running = false; emitLog('⏹ 收到停止,机器即将停下'); emitEvent('status', machineStatus()); }
 async function _sleepI(ms) { const step = 1500; let w = 0; while (w < ms && machine.running) { await sleep(Math.min(step, ms - w)); w += step; } }
 
 async function machineLoop() {
   emitLog('▶ 机器已启动' + (db.getConfig().live_send === true ? '(🔴 真发)' : '(🟡 演练)'));
   while (machine.running) {
-    try { await machineCycle(); } catch (e) { emitLog('⚠ 循环出错(自动继续):' + e.message); await sleep(8000); }
+    try { await machineCycle(); } catch (e) { if (isCdpConnectionError(e)) resetMachineConnection(); emitLog('⚠ 循环出错(自动继续):' + e.message); await sleep(8000); }
   }
   emitLog('■ 机器已停止'); machine.phase = 'idle'; emitEvent('status', machineStatus());
 }
@@ -512,43 +570,164 @@ async function machineCycle() {
     machine.phase = 'idle'; emitEvent('status', machineStatus());
     await _sleepI(/上限|配额|休息日|时段/.test(gate.reason) ? rand(60000, 120000) : rand(20000, 40000)); return;
   }
-  if (!machine.targets.length || (Date.now() - machine.lastScan) > (Number(cfg.rescan_minutes) || 15) * 60000) {
+  if (!machine.targets.length) {
+    const rescanMs = (Number(cfg.rescan_minutes) || 15) * 60000;
+    const sinceScan = Date.now() - machine.lastScan;
+    if (!machine.scanCycleActive && machine.lastScan && sinceScan < rescanMs) {
+      machine.phase = 'idle'; emitEvent('status', machineStatus());
+      await _sleepI(Math.min(rescanMs - sinceScan, 30000));
+      return;
+    }
     machine.phase = 'search'; emitEvent('status', machineStatus());
-    try { await _rescanTargets(cfg); } catch (e) { emitLog('检索出错:' + e.message); await _sleepI(rand(20000, 40000)); return; }
+    try { await _scanNextKeywordTargets(cfg); } catch (e) { if (isCdpConnectionError(e)) { resetMachineConnection(); emitLog('浏览器连接已失效,下一轮自动重连'); } emitLog('检索出错:' + e.message); await _sleepI(rand(20000, 40000)); return; }
   }
   const t = machine.targets.shift();
-  if (!t) { emitLog('外呼:暂无新目标,等下一轮检索'); machine.phase = 'idle'; emitEvent('status', machineStatus()); await _sleepI(rand(30000, 60000)); return; }
+  if (!t) {
+    emitLog(machine.scanCycleActive ? '本关键词暂无合适目标,继续下一个关键词' : '本轮关键词已扫完,等待下一轮');
+    machine.phase = 'idle'; emitEvent('status', machineStatus()); await _sleepI(rand(1200, 2600)); return;
+  }
   machine.phase = 'comment'; emitEvent('status', machineStatus());
   await _processOutbound(cfg, t, dry);
   await _sleepI(rand(1500, 4000));
 }
-async function _rescanTargets(cfg) {
+async function _scanNextKeywordTargets(cfg) {
   const client = machine.client, target = machine.target;
+  const signature = parseKeywords(cfg.task_keyword).join('\u0000');
+  if (!machine.scanCycleActive || machine.keywordSignature !== signature) {
+    machine.keywordIndex = 0;
+    machine.keywordSignature = signature;
+    machine.scanCycleActive = true;
+    machine.scanSeen = new Set();
+    machine.scanCollected = 0;
+  }
+  const plan = keywordScanPlan(cfg.task_keyword, throttle.currentScanLimit(cfg), machine.keywordIndex);
+  machine.keywordTotal = plan.keywords.length;
+  emitLog(`关键词 ${plan.index + 1}/${plan.keywords.length}: ${plan.keyword}`);
   const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
-  const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => emitLog(m), shouldStop: () => !machine.running, filters });
-  const { tagged, targets, byIntent } = engine.matchNotes(notes, cfg);
+  const scanned = plan.quota > 0
+    ? await engine.scanClean({ client, target, keyword: plan.keyword, maxNotes: plan.quota, onLog: (m) => emitLog(m), shouldStop: () => !machine.running, filters })
+    : [];
+  const notes = scanned.filter((note) => {
+    const key = note && (note.id || note.url);
+    if (!key || machine.scanSeen.has(key)) return false;
+    machine.scanSeen.add(key);
+    return true;
+  });
+  machine.scanCollected += notes.length;
+  const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
   tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
-  machine.targets = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } });
-  machine.lastScan = Date.now();
+  // 检索页只有标题；不能再按标题或评论数提前过滤。每篇都打开详情读取正文后分类。
+  machine.targets = targets.map((t) => Object.assign({}, t, { classificationPending: true }));
+  machine.keywordIndex = plan.index + 1;
+  if (machine.keywordIndex >= plan.keywords.length) {
+    machine.keywordIndex = 0;
+    machine.scanCycleActive = false;
+    machine.lastScan = Date.now();
+    emitLog(`本轮 ${plan.keywords.length} 个关键词已扫完,共采集 ${machine.scanCollected} 篇`);
+  }
   emitEvent('stats', { total: notes.length, byIntent, targetCount: machine.targets.length });
-  emitLog('检索 ' + notes.length + ' 篇,' + formatCategoryCounts(byIntent) + ',去重后待评 ' + machine.targets.length + ' 条');
+  emitLog('本关键词检索 ' + notes.length + ' 篇,' + formatCategoryCounts(byIntent) + ',全部打开详情读取标题+正文');
 }
+
+async function engageOpenNote({ client, target, note, detail, cfg, dry, log, result, shouldStop = () => false }) {
+  let sent = 0, done = 0;
+  if (shouldStop()) return { sent, done, stopped: true };
+  const merged = Object.assign({}, note, {
+    title: (detail && detail.title) || note.title || '',
+    author: (detail && detail.author) || note.author || '',
+    tags: (detail && detail.tags) || [],
+    desc: (detail && detail.desc) || ''
+  });
+  const authorDecision = await engine.classifyDetailedNote(merged, cfg);
+  log(`${authorDecision.classificationMethodLabel}分类:${authorDecision.label} / 地区${authorDecision.locationMatch} / 置信度${Math.round(authorDecision.confidence * 100)}% —— ${authorDecision.decisionReason}`);
+  log('正文提取:' + formatClassificationFacts(authorDecision));
+  if (authorDecision.evidence) log('分类依据:' + authorDecision.evidence);
+  if (authorDecision.error) log('模型调用异常:' + authorDecision.error + '；为避免误评，作者不会评论');
+  const classifiedNote = Object.assign({}, merged, {
+    intent: authorDecision.categoryName,
+    category_id: authorDecision.categoryId,
+    category_name: authorDecision.categoryName,
+    category_action: authorDecision.categoryAction,
+    category_reply_strategy: authorDecision.categoryReplyStrategy
+  });
+  try { db.upsertNote(classifiedNote); } catch (e) {}
+  if (authorDecision.locationMatch === 'mismatch') {
+    log('整篇跳过:分类器及地区安全校验判定不属于当前房源服务区');
+    return { sent, done };
+  }
+  if (authorDecision.eligible) {
+    let already = false; try { already = db.hasCommented(note.id); } catch (e) {}
+    if (!already) {
+      const text = String(cfg.outreach_fixed_text || '').trim() || await engine.makeComment(classifiedNote, cfg.task_direction || '', cfg);
+      if (engine.check(text).ok) {
+        log((dry ? '[草稿] ' : '') + '作者有需求，顶层评论:' + text);
+        if (shouldStop()) return { sent, done, stopped: true };
+        const response = await commentOnOpenNote({ client, target, note, comment: text, dry, onLog: (m) => log('  ' + m), shouldStop });
+        result({ targetType: 'author', nick: merged.author || '', content: merged.desc || merged.title, text, response });
+        log((response.ok ? '✓ ' : '✗ ') + response.msg);
+        done++;
+        if (response.ok && !dry) sent++;
+      }
+    }
+  } else {
+    log('作者跳过:' + authorDecision.decisionReason);
+  }
+
+  if (authorDecision.categoryFallback) {
+    log('评论区跳过:笔记进入兜底分类，信息不足以安全触达');
+    return { sent, done };
+  }
+
+  const leads = ((detail && detail.commentsList) || [])
+    .map((item) => {
+      const decision = engine.leadActorDecision(item.content, item.nick, cfg);
+      const area = engine.serviceAreaDecision(item.content, cfg);
+      if (decision.eligible && authorDecision.locationMatch === 'unknown' && area.locationMatch !== 'match') {
+        return Object.assign({}, item, { decision: { eligible: false, reason: '笔记及留言均未确认服务区域' } });
+      }
+      return Object.assign({}, item, { decision });
+    })
+    .filter((item) => item.decision.eligible && item.can_auto_reply !== false)
+    .slice(0, Number(cfg.comment_leads_per_note) || 3);
+  log('评论区识别到明确需求 ' + leads.length + ' 条');
+  for (const item of leads) {
+    if (shouldStop()) break;
+    const key = [note.id, item.user_link || item.nick, item.content].join('|');
+    if (processedOutboundLeads.has(key)) { log('评论者跳过(本次已处理):' + item.nick); continue; }
+    processedOutboundLeads.add(key);
+    const prepared = { type: 'comment', nick: item.nick, content: item.content, basis_text: '来自《' + (note.title || '无标题') + '》评论区', can_auto_reply: true };
+    const text = String(cfg.outreach_fixed_text || '').trim() || await engine.makeReply(prepared, cfg);
+    if (!engine.check(text).ok) { log('评论者跳过(文案合规不过):' + item.nick); continue; }
+    if (!dry) {
+      const gate = throttle.canComment({ ignoreGap: true });
+      if (!gate.ok) { log('评论区回复停止:' + gate.reason); break; }
+    }
+    log((dry ? '[草稿] ' : '') + '回复评论者 ' + item.nick + ':' + text);
+    const response = await engine.replyOpenNoteComment({ client, target, item, text, dry, shouldStop });
+    result({ targetType: 'commenter', nick: item.nick, content: item.content, text, response });
+    log((response.ok ? '✓ ' : '✗ ') + response.msg);
+    done++;
+    if (response.ok && !dry) {
+      sent++;
+      try { db.insertComment({ noteId: note.id + ':reply:' + (item.user_link || item.nick) + ':' + item.content.slice(0, 16), noteTitle: note.title, noteUrl: note.url, content: text, status: 'sent' }); } catch (e) {}
+    }
+  }
+  return { sent, done };
+}
+
 async function _processOutbound(cfg, t, dry) {
+  if (!machine.running) return;
   const client = machine.client, target = machine.target;
   const browse = { imagesMin: cfg.browse_images_min, imagesMax: cfg.browse_images_max, bodyMin: cfg.browse_body_dwell_min, bodyMax: cfg.browse_body_dwell_max, cScrollMin: cfg.browse_comment_scrolls_min, cScrollMax: cfg.browse_comment_scrolls_max, cDwellMin: cfg.browse_comment_dwell_min, cDwellMax: cfg.browse_comment_dwell_max };
   try {
-    await engine.readDetail({ client, target, note: t, browse, onLog: (m) => emitLog('  ' + m), onBeforeClose: async ({ detail }) => {
-      const merged = Object.assign({}, t, { tags: (detail && detail.tags) || [], desc: (detail && detail.desc) || '' });
-      const comment = await engine.makeComment(merged, cfg.task_direction || '', cfg);
-      if (!engine.check(comment).ok) { emitLog('  跳过(合规不过)'); return; }
-      emitLog((dry ? '  [演练] ' : '  ') + '评论 → 《' + (t.title || '无标题') + '》:' + comment);
-      const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => emitLog('    ' + m) });
-      emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, category_name: t.category_name, category_action: t.category_action, category_confidence: t.category_confidence, region: t.region, ok: r.ok, dry: dry });
-      emitLog('  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
-      machine.done++;
-      if (r.ok && !dry) { machine.sent++; emitEvent('status', machineStatus()); }
+    await engine.readDetail({ client, target, note: t, browse, onLog: (m) => emitLog('  ' + m), shouldStop: () => !machine.running, onBeforeClose: async ({ detail }) => {
+      if (!machine.running) return;
+      const totals = await engageOpenNote({ client, target, note: t, detail, cfg, dry, shouldStop: () => !machine.running, log: (m) => emitLog('  ' + m), result: (lead) => emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', target_type: lead.targetType, nickname: lead.nick, source_content: lead.content, comment: lead.text, ok: lead.response.ok, dry }) });
+      machine.done += totals.done;
+      machine.sent += totals.sent;
+      emitEvent('status', machineStatus());
     } });
-  } catch (e) { emitLog('  跳过:' + e.message); }
+  } catch (e) { if (isCdpConnectionError(e)) resetMachineConnection(); emitLog('  跳过:' + e.message); }
 }
 
 async function handleAutoRun(req, res, q) {
@@ -566,14 +745,14 @@ async function handleAutoRun(req, res, q) {
     let loggedIn = true; try { loggedIn = (await readLoginStatus(client, target)).loggedIn; } catch (e) {}
     if (!loggedIn && !dry) { send('log', '⚠ 浏览器未登录小红书,真发模式已停止(先扫码登录)'); send('done', { error: 'not_logged_in' }); res.end(); runState.running = false; return; }
     const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
-    const notes = await engine.scanClean({ client, target, keyword: cfg.task_keyword || '朝阳 租房', maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
+    const notes = await scanKeywords({ client, target, keywordText: cfg.task_keyword, maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
     if (runState.cancelled) { send('log', '⏹ 已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
     send('phase', { phase: 'match' });
-    const { tagged, targets, byIntent } = engine.matchNotes(notes, cfg);
+    const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
-    const fresh = targets.filter((t) => { try { return !db.hasCommented(t.id); } catch (e) { return true; } });
+    const fresh = targets.map((t) => Object.assign({}, t, { classificationPending: true }));
     send('stats', { total: notes.length, byIntent, targetCount: fresh.length });
-    send('log', '目标分类 ' + targets.length + ',去重后待评 ' + fresh.length + ' 条');
+    send('log', '全部 ' + fresh.length + ' 篇先读取标题+正文，再按获客模型开关使用' + (engine.isLlmNoteClassificationEnabled(cfg) ? '大模型' : '关键词') + '分类');
     send('phase', { phase: 'generate' });
     let sent = 0, done = 0, lastInboxCheck = 0;
     for (const t of fresh) {
@@ -595,17 +774,14 @@ async function handleAutoRun(req, res, q) {
       }
       const browse = { imagesMin: cfg.browse_images_min, imagesMax: cfg.browse_images_max, bodyMin: cfg.browse_body_dwell_min, bodyMax: cfg.browse_body_dwell_max, cScrollMin: cfg.browse_comment_scrolls_min, cScrollMax: cfg.browse_comment_scrolls_max, cDwellMin: cfg.browse_comment_dwell_min, cDwellMax: cfg.browse_comment_dwell_max };
       try {
-        // 一次访问:打开 → 正常浏览(看图/读评论/正文停留)→ 浏览完遇匹配就评论 → 关闭
+        // 一次访问：正文作者与评论区留言分别判断、分别触达。
         await engine.readDetail({ client, target, note: t, browse, onLog: (m) => send('log', '  ' + m), onBeforeClose: async ({ detail }) => {
-          const merged = Object.assign({}, t, { tags: (detail && detail.tags) || [], desc: (detail && detail.desc) || '' });
-          const comment = await engine.makeComment(merged, cfg.task_direction || '', cfg);
-          if (!engine.check(comment).ok) { send('log', '  跳过(合规不过)'); return; }
-          send('log', (dry ? '  [演练] ' : '  ') + '评论:' + comment);
-          const r = await commentOnOpenNote({ client, target, note: t, comment, dry, onLog: (m) => send('log', '    ' + m) });
-          send('result', { id: t.id, url: t.url, title: t.title || '无标题', comment, intent: t.intent, category_name: t.category_name, category_action: t.category_action, category_confidence: t.category_confidence, region: t.region, ok: r.ok, dry: dry });
-          send('log', '  ' + (r.ok ? '✓ ' : '✗ ') + r.msg);
-          done++;
-          if (r.ok && !dry) sent++;
+          const totals = await engageOpenNote({ client, target, note: t, detail, cfg, dry,
+            log: (m) => send('log', '  ' + m),
+            result: (lead) => send('result', { id: t.id, url: t.url, title: t.title || '无标题', target_type: lead.targetType, nickname: lead.nick, source_content: lead.content, comment: lead.text, ok: lead.response.ok, dry })
+          });
+          done += totals.done;
+          sent += totals.sent;
         } });
       } catch (e) { send('log', '  跳过:' + e.message); }
       await sleep(rand(1200, 3500)); // 去下一篇前的自然小停(不再强制几分钟)

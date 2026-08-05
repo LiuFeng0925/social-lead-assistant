@@ -78,8 +78,10 @@ function upsertNote(n) {
     insert into notes (id, title, author, region, intent, likes, collects, comments, tags, url, first_seen_at, last_seen_at)
     values (?,?,?,?,?,?,?,?,?,?,?,?)
     on conflict(id) do update set
-      title=excluded.title, likes=excluded.likes, collects=excluded.collects,
-      comments=excluded.comments, last_seen_at=excluded.last_seen_at
+      title=excluded.title, author=excluded.author, region=excluded.region,
+      intent=excluded.intent, likes=excluded.likes, collects=excluded.collects,
+      comments=excluded.comments, tags=excluded.tags, url=excluded.url,
+      last_seen_at=excluded.last_seen_at
   `).run(n.id, n.title || '', n.author || '', n.region || '', n.intent || '',
     String(n.likes || ''), String(n.collects || ''), String(n.comments || ''),
     JSON.stringify(n.tags || []), n.url || '', now(), now());
@@ -296,6 +298,8 @@ const DEFAULT_CONFIG = {
   // ── 任务设置(在「任务设置」页改)──
   task_keyword: '朝阳 租房',
   task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
+  outreach_fixed_text: '',           // 外呼固定短句；留空才使用 AI/模板生成
+  lead_local_words: [],              // 可服务区域；命中明确外地城市时整篇跳过
   task_max: 40,
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
   // ── 评论生成 LLM(可切换 provider:ark 火山方舟 / dashscope 阿里百炼)。默认关=用内置话术模板;填 key 并启用后,评论改由大模型按对方正文+方向生成 ──

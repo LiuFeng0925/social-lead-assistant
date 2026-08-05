@@ -127,11 +127,12 @@ function status() {
   };
 }
 
-// 当前时段的采集量(逛多少篇);不在时段则用全局 task_max 兜底
+// 当前时段的采集量(逛多少篇)。排班里的 notes 是唯一上限，不再受旧 task_max=40 隐藏值限制。
+// 只有旧配置没有 notes 时，才读取 task_max 作兼容兜底。
 function currentScanLimit(cfg) {
   cfg = cfg || db.getConfig();
   const w = currentWindow(cfg);
-  if (w && w.notes != null && Number(w.notes) > 0) return Number(w.notes);
-  return Number(cfg.task_max) || 40;
+  if (w && w.notes != null && Number(w.notes) > 0) return Math.max(1, Math.floor(Number(w.notes)));
+  return Math.max(1, Math.floor(Number(cfg.task_max) || Number(cfg.collect_daily) || 40));
 }
 module.exports = { canComment, status, inWorkWindow, inReplyWindow, currentWindow, currentScanLimit, commentDailyLimit, accountDays };

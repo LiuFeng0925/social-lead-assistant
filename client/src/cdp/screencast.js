@@ -5,7 +5,10 @@
 
 const { cdpConnectWebSocket, alignCdpWebSocketUrl } = require('./cdp-fetch');
 
-async function startScreencast({ target, endpoint, onFrame, quality = 55, maxWidth = 960, maxHeight = 640 }) {
+// The monitor image is displayed at the full width of the dashboard.  Keep its
+// source dimensions above the usual dashboard width so browser text does not
+// become blurry after CSS scales it up.
+async function startScreencast({ target, endpoint, onFrame, quality = 90, maxWidth = 1600, maxHeight = 1440 }) {
   const wsUrl = alignCdpWebSocketUrl(target.webSocketDebuggerUrl, endpoint);
   const conn = await cdpConnectWebSocket(wsUrl);
   let mid = 1;

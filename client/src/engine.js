@@ -62,12 +62,306 @@ const DETAIL_EXTRACT = `(function(){
   }catch(e){ return JSON.stringify({ok:false,error:String((e&&e.message)||e)}); }
 })()`;
 
+// 当前详情页里已经加载出来的评论。只读取 DOM，不调用或逆向平台接口。
+function _commentScanFn() {
+  function directReplyControl(root) {
+    var controls = root.querySelectorAll('.reply.icon-container,[class~="reply"][class*="icon-container"],button,span,div');
+    for (var i = 0; i < controls.length; i++) {
+      var el = controls[i];
+      if (el.offsetParent === null || (el.closest && el.closest('.comment-item') !== root)) continue;
+      var classes = String(el.className || '');
+      if (/(^|\s)reply(\s|$)/.test(classes) || (el.childElementCount === 0 && (el.textContent || '').trim() === '回复')) return el;
+    }
+    return null;
+  }
+  function rowFor(link) {
+    var row = link && link.closest ? link.closest('.comment-item') : null;
+    return row && directReplyControl(row) ? row : null;
+  }
+  function contentOf(row, nick) {
+    var lines = String(row.innerText || '').split(/\n+/).map(function (line) { return line.replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+    var ignored = { '回复':1, '赞':1, '作者':1, '置顶':1 };
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line === nick || ignored[line]) continue;
+      if (/^(\d+天前|\d+小时前|\d+分钟前|刚刚|昨天|前天)(\s+\S+)?$/.test(line)) continue;
+      if (/^\d+$/.test(line)) continue;
+      if (/^(展开|收起)\s*\d*\s*条?回复$/.test(line)) continue;
+      if (/^回复\s+[^:：]+[:：]?\s*$/.test(line)) continue;
+      return line.replace(/^回复\s+[^:：]+[:：]\s*/, '').trim();
+    }
+    return '';
+  }
+  var links = document.querySelectorAll('a[href*="/user/profile"]');
+  var out = [], seen = {};
+  for (var i = 0; i < links.length; i++) {
+    var user = links[i], box = rowFor(user);
+    if (!box || box.offsetParent === null) continue;
+    var nick = (user.innerText || user.textContent || '').trim();
+    var content = contentOf(box, nick);
+    if (!nick || !content || content === nick || content.length > 500) continue;
+    var key = (user && user.getAttribute('href') || nick) + '|' + content;
+    if (seen[key]) continue;
+    seen[key] = 1;
+    out.push({ nick: nick, content: content, user_link: user.getAttribute('href') || '', is_author: /(^|\s)作者(\s|$)/.test(box.innerText || ''), can_auto_reply: !!directReplyControl(box) });
+  }
+  return JSON.stringify(out.slice(0, 80));
+}
+const SCAN_OPEN_NOTE_COMMENTS = '(' + _commentScanFn.toString() + ')()';
+
+async function scanOpenNoteComments({ client, target }) {
+  const r = await client.evaluate({ target, expression: SCAN_OPEN_NOTE_COMMENTS });
+  return JSON.parse((r && r.value) || '[]');
+}
+
 function classify(note, model) {
   return leadModel.classifyNote(note, model);
 }
 
 function matchNotes(notes, cfg = {}) {
   return leadModel.classifyNotes(notes, cfg.lead_model || cfg.leadModel || cfg);
+}
+
+// 检索页只有标题，任何分类模式都不能在这里决定发布者身份。
+// 本轮采集到的每一篇都进入详情页，读取标题 + 完整正文后再选择关键词或大模型分类器。
+function prepareNotesForDetailClassification(notes) {
+  const pending = (notes || []).map((note) => Object.assign({}, note, {
+    intent: '待读取正文',
+    category_name: '待读取正文',
+    category_action: 'classify_detail',
+    classify_reason: '检索页信息不完整，等待读取标题和正文'
+  }));
+  return {
+    tagged: pending,
+    targets: pending.slice(),
+    byIntent: { '待读取正文': pending.length }
+  };
+}
+
+// 兼容已接入的调用方；新代码使用更准确的函数名。
+const prepareNotesForLlmClassification = prepareNotesForDetailClassification;
+
+const NOTE_ROLE_LABELS = {
+  tenant: '租户/求租者',
+  supply: '房源方/转租方',
+  agent: '同行/中介',
+  irrelevant: '无关内容',
+  uncertain: '不确定'
+};
+
+function noteClassificationDecision(classification, minConfidence = 0.65) {
+  const c = llm.normalizeNoteClassification(classification);
+  const label = NOTE_ROLE_LABELS[c.role] || NOTE_ROLE_LABELS.uncertain;
+  let reason = c.reason || '模型未提供理由';
+  let eligible = true;
+  if (c.role !== 'tenant') { eligible = false; reason = `${label}：${reason}`; }
+  else if (c.locationMatch === 'mismatch') { eligible = false; reason = `明确不在服务区：${reason}`; }
+  else if (c.locationMatch !== 'match') { eligible = false; reason = `地点未确认属于服务区：${reason}`; }
+  else if (c.confidence < minConfidence) { eligible = false; reason = `模型置信度不足：${reason}`; }
+  return Object.assign({}, c, { label, eligible, decisionReason: reason });
+}
+
+async function classifyNotePublisher(note, cfg = {}) {
+  if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim()) {
+    return noteClassificationDecision({
+      role: 'uncertain', locationMatch: 'unknown', confidence: 0,
+      reason: '未启用大模型或未配置 API Key', evidence: ''
+    });
+  }
+  let classification;
+  try {
+    classification = await llm.classifyNotePublisher({
+      note,
+      localWords: cfg.lead_local_words,
+      provider: cfg.llm_provider,
+      model: cfg.llm_model,
+      apiKey: cfg.llm_api_key
+    });
+  } catch (e) {
+    return Object.assign(noteClassificationDecision({
+      role: 'uncertain', locationMatch: 'unknown', confidence: 0,
+      reason: '大模型分类失败', evidence: ''
+    }), { error: e && e.message ? e.message : String(e) });
+  }
+
+  // 明确的同行昵称是发送前的安全兜底，避免模型偶发误判后直接触达同行。
+  const nick = String((note && note.author) || '').replace(/\s+/g, ' ').trim();
+  if (/(贝壳找房|链家|我爱我家|麦田房产|房产|地产|置业|经纪|租房管家|公寓管家|好房推荐|好房安利)/.test(nick)) {
+    classification = Object.assign({}, classification, {
+      role: 'agent', confidence: Math.max(0.95, Number(classification.confidence) || 0),
+      reason: `发布者昵称“${nick}”具有明确房产从业者特征`
+    });
+  }
+
+  const area = serviceAreaDecision([note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' '), cfg);
+  if (area.locationMatch === 'mismatch') {
+    classification = Object.assign({}, classification, { locationMatch: 'mismatch', reason: area.reason });
+  } else if (area.locationMatch === 'match' && classification.locationMatch === 'unknown') {
+    classification = Object.assign({}, classification, { locationMatch: 'match' });
+  }
+  return noteClassificationDecision(classification);
+}
+
+function isLlmNoteClassificationEnabled(cfg = {}) {
+  const model = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
+  return model.llmClassificationEnabled === true;
+}
+
+function roleFromCategory(category) {
+  const id = String((category && category.id) || '').toLowerCase();
+  const name = String((category && category.name) || '');
+  if (/seek|tenant|demand/.test(id) || /求租|租户|需求方/.test(name)) return 'tenant';
+  if (/supply|landlord|owner/.test(id) || /房源|房东|转租方/.test(name)) return 'supply';
+  if (/agent|peer|broker/.test(id) || /中介|同行|经纪/.test(name)) return 'agent';
+  if (category && category.fallback) return 'uncertain';
+  return 'other';
+}
+
+function categoryClassificationDecision({ category, confidence, reason, evidence, locationMatch, demandLocation, city, district, location, matchedServiceArea, locationConfidence, locationEvidence, slotValues, method, cfg, error }) {
+  const c = category || { id: 'unknown', name: '不明', action: 'record', fallback: true };
+  const conf = Number.isFinite(Number(confidence)) ? Math.max(0, Math.min(1, Number(confidence))) : 0;
+  const hasServiceAreas = Array.isArray(cfg && cfg.lead_local_words) && cfg.lead_local_words.some(Boolean);
+  let eligible = String(c.action || 'skip') === 'comment';
+  let decisionReason = String(reason || '未提供分类理由');
+  if (!eligible) decisionReason = `${c.name || c.id}：${decisionReason}`;
+  else if (locationMatch === 'mismatch') { eligible = false; decisionReason = `明确不在服务区：${decisionReason}`; }
+  else if (hasServiceAreas && locationMatch !== 'match') { eligible = false; decisionReason = `地点未确认属于服务区：${decisionReason}`; }
+  else if (method === 'llm' && conf < 0.65) { eligible = false; decisionReason = `模型置信度不足：${decisionReason}`; }
+  return {
+    categoryId: String(c.id || 'unknown'),
+    categoryName: String(c.name || c.id || '不明'),
+    categoryAction: String(c.action || 'skip'),
+    categoryFallback: !!c.fallback,
+    categoryReplyStrategy: String(c.replyStrategy || ''),
+    label: String(c.name || c.id || '不明'),
+    role: roleFromCategory(c),
+    classificationMethod: method,
+    classificationMethodLabel: method === 'llm' ? '大模型' : '关键词',
+    confidence: conf,
+    locationMatch: locationMatch || 'unknown',
+    demandLocation: String(demandLocation || ''),
+    city: String(city || ''),
+    district: String(district || ''),
+    location: String(location || demandLocation || ''),
+    matchedServiceArea: String(matchedServiceArea || ''),
+    locationConfidence: Number.isFinite(Number(locationConfidence)) ? Number(locationConfidence) : 0,
+    locationEvidence: String(locationEvidence || ''),
+    slotValues: slotValues && typeof slotValues === 'object' ? slotValues : {},
+    reason: String(reason || ''),
+    decisionReason,
+    evidence: Array.isArray(evidence) ? evidence.join('、') : String(evidence || ''),
+    eligible,
+    error: error || ''
+  };
+}
+
+function classifyDetailedNoteByKeywords(note, cfg = {}) {
+  const model = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
+  const tagged = leadModel.classifyNote(note, model);
+  const category = model.categories.find((item) => item.id === tagged.category_id)
+    || model.categories.find((item) => item.fallback)
+    || model.categories[model.categories.length - 1];
+  const area = serviceAreaDecision([note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' '), cfg);
+  return categoryClassificationDecision({
+    category,
+    confidence: tagged.category_confidence,
+    reason: tagged.classify_reason,
+    evidence: tagged.evidence,
+    locationMatch: area.locationMatch,
+    method: 'keyword',
+    cfg
+  });
+}
+
+function validateLlmLocation(raw, note, cfg = {}) {
+  const sourceText = [note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' ').replace(/\s+/g, ' ').trim();
+  const area = serviceAreaDecision(sourceText, cfg);
+  let locationMatch = raw.locationMatch;
+  let reason = raw.reason;
+  let matchedServiceArea = raw.matchedServiceArea;
+  let locationConfidence = raw.locationConfidence;
+  let locationEvidence = raw.locationEvidence;
+  const serviceAreas = Array.isArray(cfg.lead_local_words) ? cfg.lead_local_words.map((word) => String(word || '').trim()).filter(Boolean) : [];
+  const cityNames = ['北京', '上海', '天津', '重庆', '广州', '深圳', '杭州', '南京', '成都', '武汉', '西安', '郑州', '长沙', '苏州', '济南', '青岛', '沈阳', '大连', '合肥'];
+  const serviceCities = cityNames.filter((city) => serviceAreas.some((areaName) => areaName.includes(city)));
+  const extractedCity = cityNames.find((city) => String(raw.city || '').includes(city));
+  const cityMismatch = extractedCity && serviceCities.length && !serviceCities.includes(extractedCity);
+  if (cityMismatch) {
+    locationMatch = 'mismatch';
+    reason = `正文地点识别为“${raw.city}”，不属于服务城市 ${serviceCities.join('、')}`;
+  } else if (area.locationMatch === 'mismatch') {
+    locationMatch = 'mismatch'; reason = area.reason;
+  } else if (area.locationMatch === 'match') {
+    const directArea = serviceAreas.find((areaName) => sourceText.includes(areaName));
+    if (locationMatch === 'unknown' && directArea) {
+      locationMatch = 'match';
+      matchedServiceArea = directArea;
+      locationConfidence = 1;
+      locationEvidence = directArea;
+    }
+  }
+  if (locationMatch === 'match') {
+    const matchedAreaIsConfigured = serviceAreas.includes(String(matchedServiceArea || '').trim());
+    const normalizedEvidence = String(locationEvidence || '').replace(/\s+/g, ' ').trim();
+    const evidenceExistsInBody = normalizedEvidence.length >= 2 && sourceText.includes(normalizedEvidence);
+    if (!matchedAreaIsConfigured || Number(locationConfidence) < 0.75 || !evidenceExistsInBody) {
+      locationMatch = 'unknown';
+      reason = `地区匹配证据不足：${reason || '未能从正文确认服务区域'}`;
+    }
+  }
+  return { locationMatch, reason, matchedServiceArea, locationConfidence, locationEvidence };
+}
+
+async function classifyDetailedNoteByLlm(note, cfg = {}) {
+  const model = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
+  const fallback = model.categories.find((item) => item.fallback) || model.categories[model.categories.length - 1];
+  if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim()) {
+    return categoryClassificationDecision({
+      category: fallback, confidence: 0, reason: '获客模型已开启大模型分类，但模型服务未启用或未配置 API Key',
+      locationMatch: 'unknown', method: 'llm', cfg
+    });
+  }
+  let raw;
+  try {
+    raw = await llm.classifyNoteCategory({
+      note,
+      localWords: cfg.lead_local_words,
+      leadModel: model,
+      provider: cfg.llm_provider,
+      model: cfg.llm_model,
+      apiKey: cfg.llm_api_key
+    });
+  } catch (e) {
+    return categoryClassificationDecision({
+      category: fallback, confidence: 0, reason: '大模型分类失败', locationMatch: 'unknown',
+      method: 'llm', cfg, error: e && e.message ? e.message : String(e)
+    });
+  }
+  const category = model.categories.find((item) => item.id === raw.categoryId) || fallback;
+  const locationDecision = validateLlmLocation(raw, note, cfg);
+  return categoryClassificationDecision({
+    category,
+    confidence: raw.confidence,
+    reason: locationDecision.reason,
+    evidence: raw.evidence,
+    locationMatch: locationDecision.locationMatch,
+    demandLocation: raw.demandLocation,
+    city: raw.city,
+    district: raw.district,
+    location: raw.location,
+    matchedServiceArea: locationDecision.matchedServiceArea,
+    locationConfidence: locationDecision.locationConfidence,
+    locationEvidence: locationDecision.locationEvidence,
+    slotValues: raw.slotValues,
+    method: 'llm',
+    cfg
+  });
+}
+
+async function classifyDetailedNote(note, cfg = {}) {
+  return isLlmNoteClassificationEnabled(cfg)
+    ? classifyDetailedNoteByLlm(note, cfg)
+    : classifyDetailedNoteByKeywords(note, cfg);
 }
 
 // ── CDP 连接 ──
@@ -92,6 +386,7 @@ const PICK_VISIBLE_CARD = `(function(){
 })()`;
 
 async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {}, shouldStop = () => false, filters = {} }) {
+  const noteLimit = Math.max(1, Number(maxNotes) || 1);
   const url = buildSearchUrl(keyword);
   onLog(`导航到搜索页:${keyword}`);
   await client.navigate({ target, url });
@@ -104,17 +399,26 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
   try { await client.installCursor({ target }); } catch (e) {} // 先注入红点,保证后面点筛选时看得到鼠标
 
   try { await applyFilters({ client, target, filters, onLog }); } catch (e) { onLog('筛选应用失败(忽略):' + e.message); }
+  let activeSearchUrl = url;
+  try {
+    const current = await client.evaluate({ target, expression: 'location.href' });
+    if (current && /\/search_result/.test(String(current.value || ''))) activeSearchUrl = String(current.value);
+  } catch (e) {}
   const all = new Map();
   let stale = 0;
-  for (let round = 0; round < maxRounds && stale < 4 && all.size < maxNotes; round++) {
+  for (let round = 0; round < maxRounds && stale < 4 && all.size < noteLimit; round++) {
     if (shouldStop()) { onLog('⏹ 收到停止,中断检索'); break; }
     let res = { notes: [] };
     try { const r = await client.evaluate({ target, expression: EXPR_EXTRACT }); res = JSON.parse(r.value); } catch (e) {}
     const before = all.size;
-    for (const n of (res.notes || [])) { if (n.id && !all.has(n.id)) all.set(n.id, { ...n, searchUrl: url }); }
+    for (const n of (res.notes || [])) {
+      if (all.size >= noteLimit) break;
+      if (n.id && !all.has(n.id)) all.set(n.id, { ...n, searchUrl: activeSearchUrl, searchKeyword: keyword });
+    }
     const added = all.size - before;
     onLog(`第 ${round + 1} 轮:本屏 ${res.count || 0},新增 ${added},累计 ${all.size}`);
     if (added === 0) stale++; else stale = 0;
+    if (all.size >= noteLimit) break;
     // 拟人:移到当前可见的一条笔记上看一眼(有目的的鼠标移动,红点随之移动),再翻页
     if (Math.random() < 0.75) {
       try {
@@ -126,16 +430,16 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
     await client.wheelScroll({ target, x: rand(400, 800), y: rand(300, 520), totalDeltaY: rand(700, 1100) }).catch(() => {}); // trusted 滚轮(拟人)
     await sleep(rand(700, 1700) + (Math.random() < 0.14 ? rand(800, 1600) : 0)); // 拟人停顿:随机 + 14% 概率长停
   }
-  return [...all.values()];
+  return [...all.values()].slice(0, noteLimit);
 }
 
 // ── 进详情读正文 ──
-async function readDetail({ client, target, note, onLog = () => {}, browse = {}, onBeforeClose = null }) {
+async function readDetail({ client, target, note, onLog = () => {}, browse = {}, onBeforeClose = null, shouldStop = () => false }) {
   if (!note || !note.id) throw new Error('read_detail_note_required');
   const b = Object.assign({ imagesMin: 2, imagesMax: 5, bodyMin: 1500, bodyMax: 5000, cScrollMin: 2, cScrollMax: 5, cDwellMin: 1800, cDwellMax: 4500 }, browse || {});
-  await openNoteFromList({ client, target, note, onLog });
+  const openState = await openNoteFromList({ client, target, note, onLog });
   try {
-    for (let k = 0; k < 12; k++) { await sleep(800); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
+    for (let k = 0; k < 12; k++) { if (shouldStop()) break; await sleep(800); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
     await sleep(rand(900, 1800));
     let detail; try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); detail = JSON.parse(r.value); } catch (e) { detail = { ok: false, error: e.message }; }
     // ③ 图文按实际张数看图:点右箭头切图,直到轮播 transform 不再变化(已是最后一张)就停,绝不超过实际图片数
@@ -147,6 +451,7 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
         await sleep(rand(700, 1500)); // 看第 1 张
         let seen = 1;
         for (let k = 1; k < want; k++) {
+          if (shouldStop()) break;
           let st1; try { st1 = JSON.parse((await client.evaluate({ target, expression: EXPR_SW })).value); } catch (e) { break; }
           if (!st1 || !st1.arrow) break; // 无轮播/无右箭头(单图或视频)
           await client.click({ target, x: st1.arrow.x, y: st1.arrow.y });
@@ -165,6 +470,7 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
     try {
       const cs = rand(b.cScrollMin, b.cScrollMax + 1);
       for (let k = 0; k < cs; k++) {
+        if (shouldStop()) break;
         await client.humanMove({ target, toX: rand(180, 560), toY: rand(340, 680) }).catch(() => {}); // 滚前鼠标先滑到评论区(有目的)
         await sleep(rand(300, 700));
         await client.wheelScroll({ target, x: rand(380, 640), y: rand(360, 620), totalDeltaY: rand(300, 700) }).catch(() => {});
@@ -173,10 +479,15 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
         if (Math.random() < 0.6) { await client.humanMove({ target, toX: rand(160, 520), toY: rand(320, 720) }).catch(() => {}); await sleep(rand(500, 1200)); } // 偶尔鼠标再滑,像在看某条评论
       }
     } catch (e) {}
-    if (onBeforeClose) { try { await onBeforeClose({ client, target, note, detail }); } catch (e) {} } // 浏览完、关闭前:自动评论在这里评
+    try {
+      if (shouldStop()) return detail;
+      detail.commentsList = await scanOpenNoteComments({ client, target });
+      onLog(`  读取到评论区留言 ${detail.commentsList.length} 条`);
+    } catch (e) { detail.commentsList = []; }
+    if (onBeforeClose && !shouldStop()) { try { await onBeforeClose({ client, target, note, detail }); } catch (e) {} } // 浏览完、关闭前:自动评论在这里评
     return detail;
   } finally {
-    await closeCurrentNote({ client, target, note, onLog });
+    await closeCurrentNote({ client, target, note, onLog, openedDirectly: !!(openState && openState.openedDirectly) });
   }
 }
 
@@ -638,4 +949,187 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   return okSent ? { ok: true, msg: '已回复✓' } : { ok: false, msg: '点了发送但没确认成功' };
 }
 
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, readDetail, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem };
+function serviceAreaDecision(content, cfg = {}) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  const localWords = Array.isArray(cfg.lead_local_words) ? cfg.lead_local_words.filter(Boolean) : [];
+  const otherCities = ['合肥', '上海', '广州', '深圳', '杭州', '南京', '成都', '重庆', '武汉', '西安', '天津', '郑州', '长沙', '苏州', '济南', '青岛', '沈阳', '大连'];
+  const beijingDistricts = ['东城', '西城', '朝阳', '海淀', '丰台', '石景山', '门头沟', '房山', '通州', '顺义', '昌平', '大兴', '怀柔', '平谷', '密云', '延庆'];
+  if (!text || !localWords.length) return { locationMatch: 'unknown', reason: '未配置或未识别服务区域' };
+  const preciseLocalWords = localWords.filter((word) => !/^(北京|北京市)$/.test(String(word)));
+  const hasPreciseLocal = preciseLocalWords.some((word) => text.includes(String(word)));
+  if (hasPreciseLocal) return { locationMatch: 'match', reason: '正文命中服务区域' };
+  const explicitAreas = otherCities.concat(beijingDistricts);
+  const unsupported = explicitAreas.find((area) => text.includes(area) && !localWords.some((word) => String(word).includes(area) || area.includes(String(word)) && !/^(北京|北京市)$/.test(String(word))));
+  if (unsupported) {
+    return { locationMatch: 'mismatch', reason: `明确地点“${unsupported}”不在当前服务区域` };
+  }
+  return { locationMatch: 'unknown', reason: '正文没有足够的服务区域信息' };
+}
+
+function leadTextDecision(content, cfg = {}) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length < 2) return { eligible: false, reason: '内容为空' };
+  const area = serviceAreaDecision(text, cfg);
+  if (area.locationMatch === 'mismatch') return { eligible: false, reason: '异地内容' };
+  if ((cfg.reply_black_words || []).some((word) => word && text.includes(word))) return { eligible: false, reason: '命中黑词' };
+  if (/(中介|经纪人|房产销售|公寓管家|招租|出租|转租|房源发布|佣金|合作|房东直租|可带看|随时带看|我.{0,4}有房|我.{0,6}有.{0,4}(一居|两居|三居)|手上有|主页.{0,6}(房源|房子|实拍)|私你了|已私|我私你|私信你了)/.test(text)) return { eligible: false, reason: '供给方/同行信息' };
+  const strong = /(求租|找房|想租|要租|租房需求|蹲房|有没有.{0,8}(房|一居|两居|合租|整租)|还在吗|还有吗|多少钱|价格多少|预算.{0,10}(元|千|万)|(想|求|找|要|蹲).{0,8}(一居|两居|三居|合租|整租|短租|入住)|(一居|两居|三居|合租|整租|短租).{0,8}(求租|找房|想租|要租))/.test(text);
+  return strong ? { eligible: true, reason: '明确租房需求' } : { eligible: false, reason: '未识别到明确需求' };
+}
+
+function leadActorDecision(content, nickname, cfg = {}) {
+  const nick = String(nickname || '').replace(/\s+/g, ' ').trim();
+  if (/(贝壳找房|链家|我爱我家|麦田房产|房产|地产|置业|经纪|租房管家|公寓管家|好房推荐|好房安利)/.test(nick)) {
+    return { eligible: false, reason: '同行/经纪人昵称' };
+  }
+  return leadTextDecision(content, cfg);
+}
+
+function _openNoteReplyFindFn(nick, head, userLink) {
+  function profilePath(href) {
+    return String(href || '').split('?')[0].replace(/^https?:\/\/[^/]+/, '');
+  }
+  function visible(el) {
+    if (!el || el.offsetParent === null) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
+  }
+  var expectedProfile = profilePath(userLink);
+  var links = document.querySelectorAll('a[href*="/user/profile"]');
+  for (var i = 0; i < links.length; i++) {
+    var link = links[i];
+    if ((link.textContent || '').trim() !== nick) continue;
+    if (expectedProfile && profilePath(link.getAttribute('href')) !== expectedProfile) continue;
+    var box = link.closest ? link.closest('.comment-item') : null;
+    if (!box || !visible(box)) continue;
+    var body = (box.innerText || '').trim();
+    if (head && body.indexOf(head) < 0) continue;
+    var controls = box.querySelectorAll('.reply.icon-container,[class~="reply"][class*="icon-container"],button,span,div');
+    var best = null;
+    for (var j = 0; j < controls.length; j++) {
+      var el = controls[j];
+      if (!visible(el) || (el.closest && el.closest('.comment-item') !== box)) continue;
+      var classes = String(el.className || '');
+      if (/(^|\s)reply(\s|$)/.test(classes) || (el.childElementCount === 0 && (el.textContent || '').trim() === '回复')) { best = el; break; }
+    }
+    if (!best) continue;
+    var token = 'sla-reply-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    best.setAttribute('data-sla-reply-target', token);
+    box.setAttribute('data-sla-reply-row', token);
+    var r = best.getBoundingClientRect();
+    return JSON.stringify({
+      x: Math.round(r.left + r.width / 2),
+      y: Math.round(r.top + r.height / 2),
+      token: token,
+      profilePath: profilePath(link.getAttribute('href'))
+    });
+  }
+  return 'notfound';
+}
+
+function _openNoteReplyComposerFn(nick, token) {
+  function visible(el) {
+    if (!el || el.offsetParent === null) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 80 && r.height > 15;
+  }
+  function replyContext(el) {
+    var attrs = [el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.getAttribute('data-placeholder')]
+      .filter(Boolean).join(' ');
+    var box = el;
+    var nearby = '';
+    for (var k = 0; k < 5 && box; k++, box = box.parentElement) {
+      var body = String(box.innerText || '').replace(/\s+/g, ' ').trim();
+      if (body.length <= 400) nearby = body;
+      if (body.indexOf(nick) >= 0 && body.indexOf('回复') >= 0) break;
+    }
+    return { attrs: attrs, nearby: nearby };
+  }
+  var nodes = document.querySelectorAll('textarea,[contenteditable=true]');
+  var matches = [], seen = [];
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (!visible(el)) continue;
+    var ctx = replyContext(el);
+    seen.push((ctx.attrs || '(无提示)').slice(0, 80));
+    var targetNamed = ctx.attrs.indexOf(nick) >= 0 ||
+      (ctx.nearby.indexOf(nick) >= 0 && ctx.nearby.indexOf('回复') >= 0);
+    if (targetNamed) matches.push({ el: el, ctx: ctx });
+  }
+  if (matches.length !== 1) {
+    return JSON.stringify({ verified: false, count: matches.length, visibleInputs: seen.slice(0, 5) });
+  }
+  var input = matches[0].el;
+  input.setAttribute('data-sla-reply-input', token);
+  var r = input.getBoundingClientRect();
+  return JSON.stringify({
+    verified: true,
+    x: Math.round(r.left + r.width / 2),
+    y: Math.round(r.top + r.height / 2),
+    context: (matches[0].ctx.attrs || matches[0].ctx.nearby).slice(0, 120)
+  });
+}
+
+function _openNoteReplySendFn(nick, token, expectedText) {
+  function visible(el) {
+    if (!el || el.offsetParent === null) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
+  }
+  var nodes = document.querySelectorAll('textarea,[contenteditable=true]');
+  var input = null;
+  for (var i = 0; i < nodes.length; i++) {
+    if (nodes[i].getAttribute('data-sla-reply-input') === token) { input = nodes[i]; break; }
+  }
+  if (!input || !visible(input)) return JSON.stringify({ verified: false, reason: 'reply_input_lost' });
+  var typed = input.tagName === 'TEXTAREA' || input.tagName === 'INPUT' ? String(input.value || '') : String(input.innerText || input.textContent || '');
+  if (typed.indexOf(expectedText) < 0) return JSON.stringify({ verified: false, reason: 'reply_text_not_in_target_input' });
+  var attrs = [input.getAttribute('placeholder'), input.getAttribute('aria-label'), input.getAttribute('data-placeholder')]
+    .filter(Boolean).join(' ');
+  var box = input;
+  for (var k = 0; k < 6 && box; k++, box = box.parentElement) {
+    var nearby = String(box.innerText || '').replace(/\s+/g, ' ').trim();
+    var targetNamed = attrs.indexOf(nick) >= 0 || (nearby.indexOf(nick) >= 0 && nearby.indexOf('回复') >= 0);
+    if (!targetNamed) continue;
+    var controls = box.querySelectorAll('button,span,div');
+    for (var j = 0; j < controls.length; j++) {
+      var el = controls[j];
+      if (el.childElementCount !== 0 || (el.textContent || '').trim() !== '发送' || !visible(el)) continue;
+      var r = el.getBoundingClientRect();
+      return JSON.stringify({ verified: true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
+    }
+  }
+  return JSON.stringify({ verified: false, reason: 'scoped_reply_send_not_found' });
+}
+
+async function replyOpenNoteComment({ client, target, item, text, dry = true, shouldStop = () => false }) {
+  if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
+  const head = String(item.content || '').slice(0, 12);
+  const expr = '(' + _openNoteReplyFindFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(head) + ',' + JSON.stringify(item.user_link || '') + ')';
+  let raw = ''; try { raw = String((await client.evaluate({ target, expression: expr })).value || ''); } catch (e) {}
+  let point = null; try { point = JSON.parse(raw); } catch (e) {}
+  if (!point || !Number.isFinite(point.x)) return { ok: false, msg: '没找到评论区这条留言的回复按钮' };
+  await client.humanMove({ target, toX: point.x, toY: point.y }).catch(() => {});
+  await sleep(rand(350, 750));
+  if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
+  await client.click({ target, x: point.x, y: point.y });
+  await sleep(rand(800, 1300));
+  let input = null;
+  const inputExpr = '(' + _openNoteReplyComposerFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(point.token || '') + ')';
+  try { input = JSON.parse((await client.evaluate({ target, expression: inputExpr })).value || ''); } catch (e) {}
+  if (!input || !input.verified) return { ok: false, msg: '未确认当前输入框正在回复“' + (item.nick || '目标用户') + '”，已中止发送' };
+  if (dry) return { ok: true, dry: true, msg: '草稿:已确认正在回复“' + (item.nick || '目标用户') + '”(未输入、未发送)' };
+  await client.click({ target, x: input.x, y: input.y });
+  await client.typeText({ target, text });
+  await sleep(rand(800, 1400));
+  if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped_before_send' };
+  let send = null;
+  const sendExpr = '(' + _openNoteReplySendFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(point.token || '') + ',' + JSON.stringify(text) + ')';
+  try { send = JSON.parse((await client.evaluate({ target, expression: sendExpr })).value || ''); } catch (e) {}
+  if (!send || !send.verified) return { ok: false, msg: '回复对象或发送按钮校验失败，已中止发送' };
+  await client.click({ target, x: send.x, y: send.y });
+  await sleep(1600);
+  return { ok: true, dry: false, msg: '评论区回复已发送' };
+}
+
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, categoryClassificationDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment };

@@ -15,6 +15,9 @@ const {
 test('default lead model classifies rental notes with configured categories', () => {
   const model = defaultLeadModel();
 
+  assert.equal(model.llmClassificationEnabled, false, 'keyword classification should remain the default');
+  assert.match(model.categories.find((c) => c.id === 'seek_rent').llmPrompt, /发布者本人/);
+
   const seek = classifyNote({ title: '朝阳求租一居 预算5000 近地铁', author: '安安' }, model);
   assert.equal(seek.categoryName, '求租笔记');
   assert.equal(seek.action, 'comment');
@@ -28,6 +31,28 @@ test('default lead model classifies rental notes with configured categories', ()
   const unknown = classifyNote({ title: '北京生活碎片', author: '普通用户' }, model);
   assert.equal(unknown.categoryName, '不明');
   assert.equal(unknown.action, 'record');
+});
+
+test('lead model normalization preserves the llm classification switch and category prompts', () => {
+  const model = normalizeLeadModel({
+    name: '自定义获客',
+    llmClassificationEnabled: true,
+    categories: [
+      { id: 'buyer', name: '买家', action: 'comment', keywords: ['求购'], llmPrompt: '正文明确表达本人求购' },
+      { id: 'unknown', name: '不明', action: 'record', fallback: true, llmPrompt: '不能可靠判断时使用' }
+    ]
+  });
+
+  assert.equal(model.llmClassificationEnabled, true);
+  assert.equal(model.categories[0].llmPrompt, '正文明确表达本人求购');
+  assert.equal(model.categories[1].llmPrompt, '不能可靠判断时使用');
+});
+
+test('rental demand category does not use room type alone as intent', () => {
+  const model = normalizeLeadModel({
+    categories: [{ id: '求租笔记', name: '求租笔记', action: 'comment', keywords: ['求租', '一居', '两居'] }]
+  });
+  assert.deepEqual(model.categories[0].keywords, ['求租']);
 });
 
 test('default rental comment strategy handles weak note information explicitly', () => {

@@ -18,6 +18,13 @@ test('left navigation is fixed while content scrolls', () => {
   assert.match(html, /\.main\{[^}]*margin-left:174px[^}]*\}/, 'main content should leave space for fixed menu');
 });
 
+test('task settings expose fixed outreach copy and clarify pending analysis count', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="outreach_fixed_text"'));
+  assert.ok(html.includes('待分析笔记'));
+  assert.equal(html.includes('<div class="l">待评论</div>'), false);
+});
+
 test('record pages expose compact date filters with custom seconds', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   for (const id of ['comments-filter', 'notes-filter', 'inbox-filter']) {
@@ -50,6 +57,7 @@ test('task schedule is edited as time slots defaulting to every day', () => {
   assert.ok(html.includes('class="sch-slot"'), 'schedule rows should be slots');
   assert.ok(html.includes('sch-days'), 'each slot should expose day selection');
   assert.ok(html.includes('每天'), 'default day scope should be every day');
+  assert.ok(html.includes('不再另有隐藏的40篇上限'), 'schedule should explain that its note amount is no longer capped by a hidden value');
   assert.equal(html.includes('class="sch-day"'), false, 'old weekday-row editor should be removed');
 });
 
@@ -92,14 +100,25 @@ test('lead model slots use a visual information-item editor instead of json', ()
   assert.equal(html.includes('下一步会做成可视化'), false, 'temporary visualisation copy should be removed');
 });
 
-test('lead model page hides unused goal and llm fallback fields', () => {
+test('lead model page exposes an independent llm classification switch', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
 
   assert.equal(html.includes('id="lm_goal"'), false, 'unused goal field should be removed from the visible config');
   assert.equal(html.includes('id="lm_prompt"'), false, 'unused llm fallback prompt should be removed from the visible config');
   assert.equal(html.includes('模型目标/要找的人'), false, 'goal wording should not appear until it is wired to behavior');
-  assert.equal(html.includes('LLM 兜底说明'), false, 'llm fallback wording should not appear until it is wired to behavior');
+  assert.ok(html.includes('id="lm_llm_classification_enabled"'), 'lead model should have its own llm classification switch');
+  assert.ok(html.includes('每篇笔记都会先打开并读取标题＋完整正文'), 'both classification modes should promise full-body reading');
+  assert.ok(html.includes("llmClassificationEnabled: $('lm_llm_classification_enabled').checked"), 'the switch should be persisted in the lead model');
   assert.equal(html.includes('class="lm-advanced"'), false, 'advanced section should be removed while it has no active controls');
+});
+
+test('lead model page edits and saves service areas with the model', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  assert.ok(html.includes('id="lm_service_areas"'), 'service-area input should be visible in the lead model page');
+  assert.ok(html.includes("setVal('lm_service_areas'"), 'saved service areas should load into the editor');
+  assert.ok(html.includes("lead_local_words: serviceAreas"), 'saving the lead model should persist service areas');
+  assert.ok(html.includes('关键词分类和大模型分类都会使用'), 'the UI should explain that both classifiers share the same areas');
 });
 
 test('lead model category wording explains deterministic rules', () => {
@@ -107,7 +126,8 @@ test('lead model category wording explains deterministic rules', () => {
 
   assert.ok(html.includes('命中关键词（任一命中即归类）'), 'keyword label should explain hard-match behavior');
   assert.ok(html.includes('排除关键词（命中则不归此类）'), 'exclude label should explain blocking behavior');
-  assert.ok(html.includes('LLM 判断说明（预留，暂未启用）'), 'llm category prompt should be marked as inactive');
+  assert.ok(html.includes('LLM 判断说明（开启大模型分类时使用）'), 'each category should expose an active llm prompt');
+  assert.ok(html.includes('模型会同时看到标题和完整正文'), 'category prompt should explain its input context');
   assert.equal(html.includes('低置信兜底时使用'), false, 'old wording should not imply llm fallback is already active');
 });
 

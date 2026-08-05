@@ -275,7 +275,7 @@
           <div class="metric"><div class="l">检索到</div><div class="v" id="m-total">–</div></div>
           <div class="metric"><div class="l">目标笔记</div><div class="v" id="m-seek">–</div></div>
           <div class="metric"><div class="l">其他分类</div><div class="v" id="m-supply">–</div></div>
-          <div class="metric"><div class="l">待评论</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
+          <div class="metric"><div class="l">待分析笔记</div><div class="v" id="m-target" style="color:var(--brand)">–</div></div>
         </div>
       </div>
 
@@ -355,11 +355,14 @@
           <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎯 任务设置</div>
           <div class="hint" style="margin-bottom:14px">检索条件 + 筛选 + 评论方向。控制台「▶ 开始」会按这里保存的设置跑;改完记得点保存。</div>
           <div class="row">
-            <div class="fld" style="flex:2"><label>检索关键词</label><input id="kw" value="朝阳 租房" style="width:100%"></div>
+            <div class="fld" style="flex:2"><label>检索关键词（支持多个）</label><input id="kw" value="朝阳 租房" placeholder="例如：长阳租房，房山租房，良乡租房" style="width:100%"><div class="hint" style="margin-top:4px">用中文逗号、英文逗号、分号或换行分隔；按词依次搜索并自动去重。</div></div>
             <div class="fld"><label>重新检索间隔(分钟)</label><input id="rescan" type="number" min="1" style="width:90px" title="外呼把当前一批逛完后,隔多久重新检索一批新笔记"></div>
           </div>
           <div class="row">
             <div class="fld" style="flex:1"><label>评论主方向(喂给生成)</label><input id="dir" value="结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式" style="width:100%"></div>
+          </div>
+          <div class="row">
+            <div class="fld" style="flex:1"><label>外呼固定短句（留空才使用 AI）</label><input id="outreach_fixed_text" placeholder="例如：有房，私" style="width:100%"></div>
           </div>
           <div class="row">
             <div class="fld"><label>排序</label><select id="f_sort"><option>综合</option><option>最新</option><option>最多点赞</option><option>最多评论</option><option>最多收藏</option></select></div>
@@ -368,7 +371,7 @@
             <div class="fld"><label>搜索范围</label><select id="f_range"><option>不限</option><option>已看过</option><option>未看过</option><option>已关注</option></select></div>
           </div>
           <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 时间段「采集多少篇 / 评多少条」</div>
-            <div class="hint" style="margin-bottom:8px">默认每个时间段每天生效。需要错峰时,新增多个时间段;需要区分工作日/周末时,在该时间段里勾选适用星期。养号阶梯 / 限频仍是安全天花板。</div>
+            <div class="hint" style="margin-bottom:8px">默认每个时间段每天生效。需要错峰时,新增多个时间段;需要区分工作日/周末时,在该时间段里勾选适用星期。“采集”数量就是当前时段所有关键词合计的采集量，不再另有隐藏的40篇上限。养号阶梯 / 限频仍是安全天花板。</div>
             <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="sch_enabled"> 启用排班(关掉 = 不限时段,只受防封限频约束)</label>
             <div class="fld" style="margin-bottom:10px"><label>时段内节奏</label><select id="slot_pacing"><option value="even">匀速摊开(整段均匀发)</option><option value="burst">开头集中(到点先发完再歇)</option></select></div>
             <div id="schedule-form"></div>
@@ -386,6 +389,17 @@
         <div class="hint" style="margin-bottom:14px">这里定义“什么样的笔记值得处理”。采集会按这些分类区分笔记,动作=评论的分类会进入待评论队列。租房只是默认模板,可以改成教育、装修、二手车等行业。</div>
         <div class="row">
           <div class="fld" style="flex:1"><label>模型名称</label><input id="lm_name" style="width:100%"></div>
+        </div>
+        <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:6px 0 14px">
+          <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="lm_llm_classification_enabled"> 调用大模型判断笔记分类</label>
+          <div class="hint" style="margin-top:6px">无论开关状态，每篇笔记都会先打开并读取标题＋完整正文。关闭时按下面的命中/排除关键词分类；打开时按每个分类的“LLM 判断说明”分类。模型服务商和 API Key 在“模型设置”中配置。</div>
+        </div>
+        <div class="row">
+          <div class="fld" style="flex:1">
+            <label>服务区域（逗号、顿号或换行分隔）</label>
+            <textarea id="lm_service_areas" placeholder="例如：房山、长阳、朱岗子、大宁村、稻田、篱笆房" style="width:100%"></textarea>
+            <div class="hint">填写实际有房源、愿意承接的区域，尽量写到行政区、商圈、地铁站或村/小区。明确在服务区外的笔记会整篇跳过；关键词分类和大模型分类都会使用。</div>
+          </div>
         </div>
         <div style="font-size:13px;font-weight:700;margin:12px 0 6px">笔记分类</div>
         <div id="lm_categories"></div>
@@ -412,11 +426,11 @@
       <div class="page" id="page-modelsettings">
       <div class="card">
         <div style="font-size:14px;font-weight:700;margin-bottom:4px">🤖 模型设置</div>
-        <div class="hint" style="margin-bottom:14px">这套模型配置会同时影响评论生成、评论承接回复等 AI 文案能力。不开 AI 时会继续使用内置话术模板。Key 只保存在本机。</div>
-        <label style="cursor:pointer;display:inline-block;margin-bottom:12px"><input type="checkbox" id="llm_enabled"> 启用 AI 生成文案</label>
+        <div class="hint" style="margin-bottom:14px">这里提供统一的 AI 服务商、模型和 API Key，供文案生成及获客模型调用。笔记分类是否调用大模型，请在“获客模型”里单独开启。Key 只保存在本机。</div>
+        <label style="cursor:pointer;display:inline-block;margin-bottom:12px"><input type="checkbox" id="llm_enabled"> 启用 AI 服务</label>
         <div class="row">
-          <div class="fld"><label>服务商</label><select id="llm_provider"><option value="ark">火山方舟(豆包)</option><option value="dashscope">阿里百炼(通义)</option></select></div>
-          <div class="fld" style="flex:1"><label>模型 ID</label><input id="llm_model" placeholder="如 doubao-pro-32k / qwen-plus" style="width:100%"></div>
+          <div class="fld"><label>服务商</label><select id="llm_provider"><option value="ark">火山方舟(豆包)</option><option value="dashscope">阿里百炼(通义)</option><option value="deepseek">DeepSeek</option></select></div>
+          <div class="fld" style="flex:1"><label>模型 ID</label><input id="llm_model" placeholder="如 deepseek-v4-flash / doubao-pro-32k / qwen-plus" style="width:100%"></div>
         </div>
         <div class="row">
           <div class="fld" style="flex:1"><label>API Key(只存本机)</label><input id="llm_api_key" type="password" placeholder="粘贴 API Key" style="width:100%"></div>
@@ -489,7 +503,7 @@ async function getCfg() {
 function setVal(id, v) { const el = $(id); if (el != null && v != null) el.value = v; }
 async function loadTaskSettings() {
   const c = await getCfg();
-  setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('max', c.task_max);
+  setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('outreach_fixed_text', c.outreach_fixed_text); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
   setVal('rescan', c.rescan_minutes);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
@@ -510,7 +524,7 @@ function saveModelSettings() {
     llm_api_key: $('llm_api_key').value
   };
   $('modelsavehint').textContent = '保存中…';
-  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('modelsavehint').textContent = d.ok ? '✓ 已保存,评论和承接回复都会使用这套模型' : ('✗ ' + d.msg); });
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('modelsavehint').textContent = d.ok ? '✓ 已保存,需要 AI 的分类和文案功能将使用这套模型' : ('✗ ' + d.msg); });
 }
 function attr(s) { return esc(s).replace(/"/g, '&quot;'); }
 function wordsText(v) { return Array.isArray(v) ? v.join('，') : String(v || ''); }
@@ -582,7 +596,7 @@ function leadCategoryHtml(cat, i) {
     '<div class="row"><div class="fld" style="flex:1"><label>分类说明</label><input class="lm-c-desc" value="' + attr(cat.description || '') + '" style="width:100%"></div></div>' +
     '<div class="row"><div class="fld" style="flex:1"><label>命中关键词（任一命中即归类）</label><textarea class="lm-c-keywords" style="width:100%">' + esc(wordsText(cat.keywords)) + '</textarea></div>' +
     '<div class="fld" style="flex:1"><label>排除关键词（命中则不归此类）</label><textarea class="lm-c-exclude" style="width:100%">' + esc(wordsText(cat.excludeKeywords)) + '</textarea></div></div>' +
-    '<div class="row"><div class="fld" style="flex:1"><label>LLM 判断说明（预留，暂未启用）</label><textarea class="lm-c-prompt" style="width:100%">' + esc(cat.llmPrompt || '') + '</textarea></div>' +
+    '<div class="row"><div class="fld" style="flex:1"><label>LLM 判断说明（开启大模型分类时使用）</label><textarea class="lm-c-prompt" placeholder="说明什么情况下应归入这个分类；模型会同时看到标题和完整正文" style="width:100%">' + esc(cat.llmPrompt || '') + '</textarea></div>' +
     '<div class="fld" style="flex:1"><label>评论策略 ' + helpTip(COMMENT_STRATEGY_TIP) + '</label><textarea class="lm-c-reply" style="width:100%">' + esc(cat.replyStrategy || '') + '</textarea></div></div>' +
     '</div>';
 }
@@ -593,6 +607,8 @@ async function loadLeadModelSettings() {
   const c = await getCfg();
   const m = c.lead_model || {};
   setVal('lm_name', m.name || '租房获客');
+  if ($('lm_llm_classification_enabled')) $('lm_llm_classification_enabled').checked = m.llmClassificationEnabled === true;
+  setVal('lm_service_areas', (Array.isArray(c.lead_local_words) ? c.lead_local_words : []).join('，'));
   renderLeadSlots(m.slots || []);
   renderLeadCategories(m.categories || []);
 }
@@ -613,7 +629,7 @@ function gatherLeadModel() {
       fallback: row.querySelector('.lm-c-fallback').checked
     };
   });
-  return { name: $('lm_name').value || '获客模型', categories: categories, slots: slots };
+  return { name: $('lm_name').value || '获客模型', llmClassificationEnabled: $('lm_llm_classification_enabled').checked, categories: categories, slots: slots };
 }
 function addLeadCategory() {
   const rows = Array.prototype.slice.call(document.querySelectorAll('.lm-category'));
@@ -633,7 +649,8 @@ function saveLeadModel() {
   catch (e) { h.style.color = 'var(--red)'; h.textContent = '✗ 识别信息配置有误:' + e.message; return; }
   if (!model.categories.length) { h.style.color = 'var(--red)'; h.textContent = '✗ 至少保留一个笔记分类'; return; }
   h.style.color = ''; h.textContent = '保存中…';
-  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ lead_model: model }))).then(r => r.json()).then(d => { h.textContent = d.ok ? '✓ 已保存,下一轮采集按这些分类执行' : ('✗ ' + d.msg); });
+  const serviceAreas = parseWords($('lm_service_areas').value);
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ lead_model: model, lead_local_words: serviceAreas }))).then(r => r.json()).then(d => { h.textContent = d.ok ? ('✓ 已保存 ' + serviceAreas.length + ' 个服务区域,下一轮读取正文后使用' + (model.llmClassificationEnabled ? '大模型' : '关键词') + '分类') : ('✗ ' + d.msg); });
 }
 function toMinUI(hhmm) { const a = String(hhmm || '0:0').split(':').map(Number); return (a[0] || 0) * 60 + (a[1] || 0); }
 const WD2 = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -724,7 +741,7 @@ function saveTaskSettings() {
   const _schedule = slotsToSchedule(_slots);
   const data = {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
-    task_keyword: $('kw').value, task_direction: $('dir').value,
+    task_keyword: $('kw').value, task_direction: $('dir').value, outreach_fixed_text: $('outreach_fixed_text').value,
     task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value,
     rescan_minutes: Math.max(1, Number($('rescan').value) || 15)
   };

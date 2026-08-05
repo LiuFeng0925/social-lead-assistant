@@ -113,8 +113,19 @@ function listStateExpr() {
     var path = String(location.pathname || '');
     var cardCount = 0;
     try { cardCount = document.querySelectorAll('a[href*="/explore/"],a[href*="/search_result/"]').length; } catch(e) {}
-    return JSON.stringify({ onSearch: path === '/search_result', cardCount: cardCount });
+    return JSON.stringify({ onSearch: path === '/search_result', cardCount: cardCount, href: String(location.href || '') });
   })()`;
+}
+
+function sameSearchContext(currentHref, expectedHref) {
+  if (!expectedHref) return true;
+  try {
+    const current = new URL(currentHref);
+    const expected = new URL(expectedHref);
+    return current.pathname === expected.pathname && current.searchParams.get('keyword') === expected.searchParams.get('keyword');
+  } catch (e) {
+    return false;
+  }
 }
 
 function findCloseButtonExpr() {
@@ -165,30 +176,27 @@ async function waitForList({ client, target, timeoutMs = 10000 }) {
 
 async function ensureSearchList({ client, target, searchUrl, onLog = () => {} }) {
   const current = await evalJson(client, target, listStateExpr());
-  if (current.onSearch && Number(current.cardCount || 0) > 0) return current;
+  if (current.onSearch && Number(current.cardCount || 0) > 0 && sameSearchContext(current.href, searchUrl)) return current;
   if (!searchUrl) throw new Error('not_on_search_list');
-  onLog('回到搜索结果页,准备从列表打开笔记');
+  onLog('切回该笔记所属的搜索结果页');
   await client.navigate({ target, url: searchUrl });
   const state = await waitForList({ client, target });
   if (!state.onSearch || Number(state.cardCount || 0) <= 0) throw new Error('search_list_not_ready');
   return state;
 }
 
-async function locateNoteCard({ client, target, note, searchUrl, onLog = () => {}, maxScrollRounds = 22 }) {
+async function locateNoteCard({ client, target, note, searchUrl, onLog = () => {}, maxScrollRounds = 8 }) {
   await ensureSearchList({ client, target, searchUrl, onLog });
   let reloaded = false;
   for (let round = 0; round < maxScrollRounds; round++) {
     const hit = await evalJson(client, target, findNoteCardExpr(note));
     if (hit.ok) return hit;
-    if (round < 7) {
+    if (round < 4) {
       await client.wheelScroll({ target, x: rand(420, 760), y: rand(260, 560), totalDeltaY: rand(520, 920) }).catch(() => {});
       await sleep(rand(650, 1400));
-    } else if (round < 16) {
-      await client.wheelScroll({ target, x: rand(420, 760), y: rand(260, 560), totalDeltaY: -rand(620, 1100) }).catch(() => {});
-      await sleep(rand(650, 1400));
-    } else if (round === 16 && searchUrl && !reloaded) {
+    } else if (searchUrl && !reloaded) {
       reloaded = true;
-      onLog('当前列表没找到目标笔记,重开搜索页从顶部继续找');
+      onLog('当前列表没找到目标笔记,快速重载后再试');
       await client.navigate({ target, url: searchUrl });
       await waitForList({ client, target });
     } else {
@@ -202,7 +210,27 @@ async function locateNoteCard({ client, target, note, searchUrl, onLog = () => {
 async function openNoteFromList({ client, target, note, searchUrl = note && note.searchUrl, onLog = () => {} }) {
   const noteId = noteIdOf(note);
   if (!noteId) throw new Error('note_id_required');
-  const hit = await locateNoteCard({ client, target, note, searchUrl, onLog });
+  async function openDirectly(reason) {
+    if (!note.url) return null;
+    let directUrl;
+    try { directUrl = new URL(note.url, 'https://www.xiaohongshu.com').toString(); } catch (e) { return null; }
+    onLog('列表定位失败(' + reason + '),改用刚采集的笔记链接打开');
+    await client.navigate({ target, url: directUrl });
+    const directState = await waitForJson({
+      client, target, expression: detailStateExpr(note), timeoutMs: 15000,
+      ok: (s) => s.open || s.ready
+    });
+    return (directState.open || directState.ready) ? { ...directState, openedDirectly: true } : null;
+  }
+
+  let hit;
+  try {
+    hit = await locateNoteCard({ client, target, note, searchUrl, onLog });
+  } catch (error) {
+    const direct = await openDirectly(error.message);
+    if (direct) return direct;
+    throw error;
+  }
   onLog('从搜索列表点开笔记:' + ((note && note.title) || noteId));
   await client.click({ target, x: hit.x, y: hit.y });
   await sleep(rand(900, 1600));
@@ -211,13 +239,21 @@ async function openNoteFromList({ client, target, note, searchUrl = note && note
     ok: (s) => s.open || s.ready
   });
   if (!state.open && !state.ready) {
+    const direct = await openDirectly('note_detail_not_opened');
+    if (direct) return direct;
     if (searchUrl) await client.navigate({ target, url: searchUrl }).catch(() => {});
     throw new Error('note_detail_not_opened:' + noteId);
   }
   return state;
 }
 
-async function closeCurrentNote({ client, target, note = {}, searchUrl = note.searchUrl, onLog = () => {} }) {
+async function closeCurrentNote({ client, target, note = {}, searchUrl = note.searchUrl, onLog = () => {}, openedDirectly = false }) {
+  if (openedDirectly && searchUrl) {
+    onLog('直接返回该笔记的搜索结果页');
+    await client.navigate({ target, url: searchUrl });
+    await waitForList({ client, target, timeoutMs: 10000 }).catch(() => {});
+    return { ok: true, method: 'navigate' };
+  }
   const before = await evalJson(client, target, detailStateExpr(note));
   if (!before.open && !before.ready) {
     await ensureSearchList({ client, target, searchUrl, onLog }).catch(() => {});
@@ -258,6 +294,7 @@ module.exports = {
   detailStateExpr,
   listStateExpr,
   findCloseButtonExpr,
+  sameSearchContext,
   parseEvalJson,
   openNoteFromList,
   closeCurrentNote

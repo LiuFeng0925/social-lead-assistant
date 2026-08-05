@@ -5,6 +5,31 @@
 
 const { cdpFetch, cdpConnectWebSocket, alignCdpWebSocketUrl } = require('./cdp-fetch');
 
+async function waitForCommandResult(conn, id, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let skipped = 0;
+  let timer;
+  const hardTimeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('cdp_command_timeout')), timeoutMs);
+  });
+  try {
+    while (true) {
+      if (Date.now() >= deadline) throw new Error('cdp_command_timeout');
+      const raw = await Promise.race([conn.waitForMessage(), hardTimeout]);
+      const msg = JSON.parse(raw);
+      if (msg.id !== id) {
+        skipped++;
+        if (skipped % 50 === 0) await new Promise((resolve) => setImmediate(resolve));
+        continue;
+      }
+      if (msg.error) throw new Error(msg.error.message || 'cdp_command_failed');
+      return msg.result?.result ?? msg.result ?? null;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 class XhsCdpClient {
   constructor({ endpoint = 'http://127.0.0.1:9222', onPointer = null } = {}) {
     this.endpoint = endpoint.replace(/\/+$/, '');
@@ -42,17 +67,43 @@ class XhsCdpClient {
     const id = this.nextId++;
     try {
       await conn.send(JSON.stringify({ id, method, params }));
-      while (true) {
-        const raw = await Promise.race([
-          conn.waitForMessage(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('cdp_command_timeout')), timeoutMs))
-        ]);
-        const msg = JSON.parse(raw);
-        if (msg.id !== id) continue;            // 跳过事件/其它响应
-        if (msg.error) throw new Error(msg.error.message || 'cdp_command_failed');
-        return msg.result?.result ?? msg.result ?? null;
-      }
+      return await waitForCommandResult(conn, id, timeoutMs);
     } finally {
+      await conn.close().catch(() => {});
+    }
+  }
+
+  // Mouse press/release must share one CDP session. Splitting them across
+  // short-lived sockets can focus an element on press without ever producing
+  // the click event that establishes a comment reply target.
+  async sendCommandSequence({ target, commands = [], timeoutMs = 5000 }) {
+    const conn = await cdpConnectWebSocket(this._wsUrl(target));
+    const pending = new Map();
+    const orderedIds = [];
+    const completed = new Set();
+    let timer;
+    try {
+      for (const command of commands) {
+        const id = this.nextId++;
+        orderedIds.push(id);
+        pending.set(id, null);
+        await conn.send(JSON.stringify({ id, method: command.method, params: command.params || {} }));
+        if (command.delayAfterMs) await new Promise((resolve) => setTimeout(resolve, command.delayAfterMs));
+      }
+      const hardTimeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('cdp_command_timeout')), timeoutMs);
+      });
+      while (completed.size < orderedIds.length) {
+        const raw = await Promise.race([conn.waitForMessage(), hardTimeout]);
+        const msg = JSON.parse(raw);
+        if (!pending.has(msg.id)) continue;
+        if (msg.error) throw new Error(msg.error.message || 'cdp_command_failed');
+        pending.set(msg.id, msg.result?.result ?? msg.result ?? {});
+        completed.add(msg.id);
+      }
+      return orderedIds.map((id) => pending.get(id));
+    } finally {
+      clearTimeout(timer);
       await conn.close().catch(() => {});
     }
   }
@@ -84,94 +135,71 @@ class XhsCdpClient {
 
   // 按一个键(切图用 ArrowRight 等;选择器无关,稳)
   async pressKey({ target, key, code, vk }) {
-    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', key: key, code: code, windowsVirtualKeyCode: vk || 0, nativeVirtualKeyCode: vk || 0 } }).catch(() => {});
+    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', key: key, code: code, windowsVirtualKeyCode: vk || 0, nativeVirtualKeyCode: vk || 0 }, timeoutMs: 2500 }).catch(() => {});
     await new Promise((r) => setTimeout(r, 30 + Math.random() * 60));
-    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: key, code: code, windowsVirtualKeyCode: vk || 0, nativeVirtualKeyCode: vk || 0 } }).catch(() => {});
+    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: key, code: code, windowsVirtualKeyCode: vk || 0, nativeVirtualKeyCode: vk || 0 }, timeoutMs: 2500 }).catch(() => {});
   }
 
   async humanMove({ target, toX, toY }) {
-    const fromX = Number.isFinite(this._lastX) ? this._lastX : (toX - 80);
-    const fromY = Number.isFinite(this._lastY) ? this._lastY : (toY - 60);
-    const dist = Math.hypot(toX - fromX, toY - fromY);
-    const steps = Math.max(5, Math.min(25, Math.floor(dist / 30)));
-    const cp1x = fromX + (toX - fromX) * (0.2 + Math.random() * 0.3);
-    const cp1y = fromY + (toY - fromY) * (0.1 + Math.random() * 0.2) + (Math.random() - 0.5) * 40;
-    const cp2x = fromX + (toX - fromX) * (0.5 + Math.random() * 0.3);
-    const cp2y = fromY + (toY - fromY) * (0.7 + Math.random() * 0.2) + (Math.random() - 0.5) * 30;
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps, it = 1 - t;
-      const px = it * it * it * fromX + 3 * it * it * t * cp1x + 3 * it * t * t * cp2x + t * t * t * toX;
-      const py = it * it * it * fromY + 3 * it * it * t * cp1y + 3 * it * t * t * cp2y + t * t * t * toY;
-      await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseMoved', x: Math.round(px), y: Math.round(py), button: 'none' } }).catch(() => {});
-      if (this.onPointer) { try { this.onPointer({ type: 'move', x: Math.round(px), y: Math.round(py) }); } catch (e) {} }
-      await new Promise((r) => setTimeout(r, 8 + Math.random() * 16));
-    }
-    this._lastX = toX; this._lastY = toY;
+    const x = Math.round(toX), y = Math.round(toY);
+    await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseMoved', x, y, button: 'none' }, timeoutMs: 2500 }).catch(() => {});
+    if (this.onPointer) { try { this.onPointer({ type: 'move', x, y }); } catch (e) {} }
+    this._lastX = x; this._lastY = y;
+    await new Promise((r) => setTimeout(r, 60 + Math.random() * 100));
   }
 
   // 只移动红点(走 window.__xhsMove,不派发真实鼠标事件)——给悬浮敏感的元素(如筛选下拉)用:红点可见但不会触发面板收起
   async moveCursorVisual({ target, toX, toY }) {
-    const fromX = Number.isFinite(this._lastX) ? this._lastX : (toX - 80);
-    const fromY = Number.isFinite(this._lastY) ? this._lastY : (toY - 60);
-    const dist = Math.hypot(toX - fromX, toY - fromY);
-    const steps = Math.max(6, Math.min(22, Math.floor(dist / 28)));
-    const cp1x = fromX + (toX - fromX) * (0.2 + Math.random() * 0.3);
-    const cp1y = fromY + (toY - fromY) * (0.1 + Math.random() * 0.2) + (Math.random() - 0.5) * 36;
-    const cp2x = fromX + (toX - fromX) * (0.5 + Math.random() * 0.3);
-    const cp2y = fromY + (toY - fromY) * (0.7 + Math.random() * 0.2) + (Math.random() - 0.5) * 28;
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps, it = 1 - t;
-      const px = Math.round(it * it * it * fromX + 3 * it * it * t * cp1x + 3 * it * t * t * cp2x + t * t * t * toX);
-      const py = Math.round(it * it * it * fromY + 3 * it * it * t * cp1y + 3 * it * t * t * cp2y + t * t * t * toY);
-      await this.evaluate({ target, expression: 'window.__xhsMove&&window.__xhsMove(' + px + ',' + py + ')' }).catch(() => {});
-      if (this.onPointer) { try { this.onPointer({ type: 'move', x: px, y: py }); } catch (e) {} }
-      await new Promise((r) => setTimeout(r, 10 + Math.random() * 18));
-    }
-    this._lastX = toX; this._lastY = toY;
+    const x = Math.round(toX), y = Math.round(toY);
+    await this.evaluate({ target, expression: 'window.__xhsMove&&window.__xhsMove(' + x + ',' + y + ')' }).catch(() => {});
+    if (this.onPointer) { try { this.onPointer({ type: 'move', x, y }); } catch (e) {} }
+    this._lastX = x; this._lastY = y;
+    await new Promise((r) => setTimeout(r, 60 + Math.random() * 100));
   }
 
   // 拟人点击:贝塞尔移过去 → 落点±抖动(不总点正中心)→ mousedown → dwell → mouseup(release 微抖)
   async click({ target, x, y }) {
     let X = Math.round(Number(x) + (Math.random() - 0.5) * 8);
     let Y = Math.round(Number(y) + (Math.random() - 0.5) * 6);
+    await this.sendCommand({ target, method: 'Page.bringToFront', params: {}, timeoutMs: 2500 });
     await this.humanMove({ target, toX: X, toY: Y });
     if (this.onPointer) { try { this.onPointer({ type: 'click', x: X, y: Y }); } catch (e) {} }
-    await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: X, y: Y, button: 'left', clickCount: 1 } });
-    await new Promise((r) => setTimeout(r, 60 + Math.floor(Math.random() * 90)));
-    await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseReleased', x: X + (Math.random() * 2 - 1), y: Y + (Math.random() * 2 - 1), button: 'left', clickCount: 1 } });
+    const releaseX = X + (Math.random() * 2 - 1);
+    const releaseY = Y + (Math.random() * 2 - 1);
+    await this.sendCommandSequence({
+      target,
+      timeoutMs: 2500,
+      commands: [
+        { method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: X, y: Y, button: 'left', clickCount: 1 }, delayAfterMs: 60 + Math.floor(Math.random() * 90) },
+        { method: 'Input.dispatchMouseEvent', params: { type: 'mouseReleased', x: releaseX, y: releaseY, button: 'left', clickCount: 1 } }
+      ]
+    });
   }
 
   // 拟人滚动:trusted 滚轮(Input mouseWheel),拆成多个 280-500px tick + 横向漂移,搬自 BOSS humanWheelScroll
   // 取代 window.scrollBy(那是 isTrusted=false 的机器特征)
   async wheelScroll({ target, x = 600, y = 400, totalDeltaY = 0 }) {
-    let remaining = Number(totalDeltaY) || 0;
-    const dir = remaining >= 0 ? 1 : -1;
-    let ticks = 0;
-    while (Math.abs(remaining) > 0.5 && ticks < 64) {
-      ticks++;
-      const chunk = Math.min(Math.abs(remaining), 280 + Math.random() * 220);
-      const tickY = dir * Math.round(chunk);
-      remaining -= tickY;
-      const tickX = Math.round(Math.random() * 4 - 2); // 横向漂移
-      await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseWheel', x, y, deltaX: tickX, deltaY: tickY, button: 'none' } }).catch(() => {});
-      if (this.onPointer) { try { this.onPointer({ type: 'scroll', x: x + tickX, y: y }); } catch (e) {} }
-      this._lastX = x + tickX; this._lastY = y;
-      await new Promise((r) => setTimeout(r, 3 + Math.floor(Math.random() * 13)));
-    }
+    const deltaY = Math.round(Number(totalDeltaY) || 0);
+    if (!deltaY) return;
+    const deltaX = Math.round(Math.random() * 4 - 2);
+    await this.sendCommand({ target, method: 'Input.dispatchMouseEvent', params: { type: 'mouseWheel', x, y, deltaX, deltaY, button: 'none' }, timeoutMs: 2500 }).catch(() => {});
+    if (this.onPointer) { try { this.onPointer({ type: 'scroll', x: x + deltaX, y }); } catch (e) {} }
+    this._lastX = x + deltaX; this._lastY = y;
+    await new Promise((r) => setTimeout(r, 30 + Math.floor(Math.random() * 60)));
   }
 
   // 真实输入:逐字 insertText(isTrusted=true)+ 不均匀间隔
   // → 监控里能看到打字过程,也更拟人(避免一次性整段插入的机器特征)
   async typeText({ target, text }) {
-    for (const ch of String(text)) {
-      await this.sendCommand({ target, method: 'Input.insertText', params: { text: ch } });
-      await new Promise((r) => setTimeout(r, 45 + Math.floor(Math.random() * 95)));
-    }
+    const value = String(text || '');
+    if (!value) return;
+    await this.sendCommand({ target, method: 'Input.insertText', params: { text: value }, timeoutMs: 3000 });
+    await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 180)));
   }
 
   async pressKey({ target, key, code, windowsVirtualKeyCode }) {
-    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode } });
-    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode } });
+    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode }, timeoutMs: 2500 }).catch(() => {});
+    await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode }, timeoutMs: 2500 }).catch(() => {});
   }
 
   async pressEnter({ target }) {
@@ -187,4 +215,4 @@ class XhsCdpClient {
   }
 }
 
-module.exports = { XhsCdpClient };
+module.exports = { XhsCdpClient, waitForCommandResult };

@@ -49,6 +49,7 @@ function cdpFetch(input, init = {}) {
       res.on('error', reject);
     });
     req.on('error', reject);
+    req.setTimeout(Number(init.timeoutMs) || 5000, () => req.destroy(new Error('cdp_http_timeout')));
     if (init.body !== undefined && init.body !== null) {
       req.write(typeof init.body === 'string' ? init.body : Buffer.from(init.body));
     }
@@ -73,10 +74,21 @@ function alignCdpWebSocketUrl(wsUrl, anchorEndpoint) {
   }
 }
 
-async function cdpConnectWebSocket(url) {
-  const socket = cdpWebSocket(url);
-  await new Promise((resolve, reject) => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function openWebSocket(url, retries = 2, timeoutMs = 5000) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const socket = cdpWebSocket(url);
+    try {
+      await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      try { socket.terminate(); } catch (e) {}
+      reject(new Error('cdp_socket_timeout'));
+    }, timeoutMs);
     const cleanup = () => {
+      clearTimeout(timer);
       socket.off('open', onOpen);
       socket.off('error', onError);
       socket.off('close', onClose);
@@ -87,7 +99,19 @@ async function cdpConnectWebSocket(url) {
     socket.once('open', onOpen);
     socket.once('error', onError);
     socket.once('close', onClose);
-  });
+      });
+      return socket;
+    } catch (error) {
+      lastError = error;
+      try { socket.close(); } catch (e) {}
+      if (attempt < retries) await sleep(200 * (attempt + 1));
+    }
+  }
+  throw lastError || new Error('cdp_socket_error');
+}
+
+async function cdpConnectWebSocket(url, options = {}) {
+  const socket = await openWebSocket(url, options.retries == null ? 2 : options.retries, options.timeoutMs || 5000);
 
   const messageQueue = [];
   const waiters = [];
