@@ -127,7 +127,7 @@ function status() {
   };
 }
 
-// 当前时段的采集量(逛多少篇)。排班里的 notes 是唯一上限，不再受旧 task_max=40 隐藏值限制。
+// 当前时段每个关键词的采集量。排班里的 notes 是每词上限，不再由系统平均分配。
 // 只有旧配置没有 notes 时，才读取 task_max 作兼容兜底。
 function currentScanLimit(cfg) {
   cfg = cfg || db.getConfig();

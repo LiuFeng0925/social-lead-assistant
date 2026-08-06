@@ -110,12 +110,50 @@ test('llm structured classification preserves extracted location and configured 
   assert.deepEqual(parsed.slotValues, { area: '长阳', budget: '4500元', room_type: '一居' });
 });
 
-test('Shanghai road evidence cannot inherit a Beijing service area match', () => {
+test('service-area prompt uses title, body, extracted facts and geographic relationships', () => {
+  const messages = llm.buildServiceAreaClassificationMessages({
+    note: { title: '房山求租', desc: '本人想在房山朱岗子村附近租一居', tags: ['租房'] },
+    extracted: { city: '北京', district: '房山区', location: '朱岗子村', locationEvidence: '房山朱岗子村' },
+    localWords: ['朱岗子', '长阳']
+  });
+
+  assert.match(messages[0].content, /不能只做字符串包含/);
+  assert.match(messages[0].content, /房山朱岗子村/);
+  assert.match(messages[0].content, /上海普陀/);
+  assert.match(messages[1].content, /【服务区域】朱岗子、长阳/);
+  assert.match(messages[1].content, /【第一阶段地点事实】城市=北京；区县=房山区；具体位置=朱岗子村；地点原文=房山朱岗子村/);
+  assert.match(messages[1].content, /【完整正文】本人想在房山朱岗子村附近租一居/);
+});
+
+test('service-area parser requires an exact configured area value', () => {
+  const parsed = llm.parseServiceAreaClassificationContent(JSON.stringify({
+    locationMatch: 'match', matchedServiceArea: '朱岗子', locationConfidence: 0.94,
+    locationEvidence: '房山朱岗子村', reason: '朱岗子村属于配置的朱岗子服务区'
+  }), ['朱岗子', '长阳']);
+
+  assert.equal(parsed.locationMatch, 'match');
+  assert.equal(parsed.matchedServiceArea, '朱岗子');
+  assert.equal(parsed.locationConfidence, 0.94);
+  assert.equal(parsed.locationEvidence, '房山朱岗子村');
+});
+
+test('llm can match a configured area through geographic alias reasoning', () => {
+  const decision = engine.validateLlmLocation({
+    locationMatch: 'match', matchedServiceArea: '朱岗子', locationConfidence: 0.95,
+    locationEvidence: '房山朱岗子村', reason: '房山朱岗子村与服务区域朱岗子是同一地点'
+  }, {
+    title: '房山求租', desc: '本人想在房山朱岗子村附近租一居'
+  }, { lead_local_words: ['朱岗子', '长阳'] });
+
+  assert.equal(decision.locationMatch, 'match');
+  assert.equal(decision.matchedServiceArea, '朱岗子');
+});
+
+test('confident llm mismatch with exact Shanghai evidence is preserved', () => {
   const cfg = { lead_local_words: ['北京朱岗子', '大宁村', '长阳', '稻田', '篱笆房', '长辛店'] };
   const decision = engine.validateLlmLocation({
-    city: '上海', district: '普陀区', location: '新村路', locationMatch: 'match',
-    matchedServiceArea: '大宁村', locationConfidence: 0.95,
-    locationEvidence: '甘泉路志丹路交界处一居室转租', reason: '错误地匹配了大宁村'
+    locationMatch: 'mismatch', matchedServiceArea: '', locationConfidence: 0.95,
+    locationEvidence: '甘泉路志丹路交界处', reason: '正文地点在上海普陀，明确不属于配置的北京服务区域'
   }, {
     title: '7号线新村路转租',
     desc: '甘泉路志丹路交界处一居室转租，靠近7号线新村路地铁站'
@@ -123,7 +161,6 @@ test('Shanghai road evidence cannot inherit a Beijing service area match', () =>
 
   assert.equal(decision.locationMatch, 'mismatch');
   assert.match(decision.reason, /上海/);
-  assert.match(decision.reason, /北京/);
 });
 
 test('llm match without configured area and body evidence is downgraded to unknown', () => {
@@ -139,6 +176,52 @@ test('llm match without configured area and body evidence is downgraded to unkno
 test('lead model switch independently chooses keyword or llm classification', () => {
   assert.equal(engine.isLlmNoteClassificationEnabled({ lead_model: { llmClassificationEnabled: false, categories: [{ id: 'unknown', fallback: true }] } }), false);
   assert.equal(engine.isLlmNoteClassificationEnabled({ lead_model: { llmClassificationEnabled: true, categories: [{ id: 'unknown', fallback: true }] } }), true);
+});
+
+test('enabled llm classification performs a second service-area diagnosis', async () => {
+  const originalCategory = llm.classifyNoteCategory;
+  const originalArea = llm.classifyServiceArea;
+  let areaCalled = false;
+  llm.classifyNoteCategory = async () => ({
+    categoryId: 'tenant', city: '北京', district: '房山区', location: '朱岗子村',
+    locationEvidence: '房山朱岗子村', slotValues: { area: '朱岗子村' },
+    confidence: 0.93, reason: '发布者本人明确求租', evidence: '本人想租一居'
+  });
+  llm.classifyServiceArea = async ({ note, extracted, localWords }) => {
+    areaCalled = true;
+    assert.equal(note.desc, '本人想在房山朱岗子村附近租一居');
+    assert.equal(extracted.location, '朱岗子村');
+    assert.deepEqual(localWords, ['朱岗子', '长阳']);
+    return {
+      locationMatch: 'match', matchedServiceArea: '朱岗子', locationConfidence: 0.96,
+      locationEvidence: '房山朱岗子村', reason: '房山朱岗子村属于朱岗子服务区'
+    };
+  };
+
+  try {
+    const result = await engine.classifyDetailedNote({
+      title: '房山求租', desc: '本人想在房山朱岗子村附近租一居'
+    }, {
+      llm_enabled: true, llm_api_key: 'test-key', llm_provider: 'dashscope', llm_model: 'test-model',
+      lead_local_words: ['朱岗子', '长阳'],
+      lead_model: {
+        llmClassificationEnabled: true,
+        categories: [
+          { id: 'tenant', name: '租户', action: 'comment' },
+          { id: 'unknown', name: '不明', action: 'record', fallback: true }
+        ]
+      }
+    });
+
+    assert.equal(areaCalled, true);
+    assert.equal(result.classificationMethod, 'llm');
+    assert.equal(result.locationMatch, 'match');
+    assert.equal(result.matchedServiceArea, '朱岗子');
+    assert.equal(result.eligible, true);
+  } finally {
+    llm.classifyNoteCategory = originalCategory;
+    llm.classifyServiceArea = originalArea;
+  }
 });
 
 test('only a confident in-area tenant is eligible for an author comment', () => {

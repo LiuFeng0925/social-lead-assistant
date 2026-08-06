@@ -364,14 +364,18 @@
           <div class="row">
             <div class="fld" style="flex:1"><label>外呼固定短句（留空才使用 AI）</label><input id="outreach_fixed_text" placeholder="例如：有房，私" style="width:100%"></div>
           </div>
+          <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:6px 0 14px">
+            <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="task_llm_classification_enabled"> 本任务启用大模型判断（笔记分类＋地区诊断）</label>
+            <div class="hint" style="margin-top:6px">每篇笔记都会打开并读取标题＋完整正文。关闭时按“获客模型”中的关键词规则分类和判断地区；打开时先按各分类的“LLM 判断说明”分类，再由大模型结合正文地点与服务区域做地理诊断。模型服务商和 API Key 在“模型设置”中配置。</div>
+          </div>
           <div class="row">
             <div class="fld"><label>排序</label><select id="f_sort"><option>综合</option><option>最新</option><option>最多点赞</option><option>最多评论</option><option>最多收藏</option></select></div>
             <div class="fld"><label>发布时间</label><select id="f_time"><option>不限</option><option>一天内</option><option>一周内</option><option>半年内</option></select></div>
             <div class="fld"><label>笔记类型</label><select id="f_type"><option>不限</option><option>图文</option><option>视频</option></select></div>
             <div class="fld"><label>搜索范围</label><select id="f_range"><option>不限</option><option>已看过</option><option>未看过</option><option>已关注</option></select></div>
           </div>
-          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 时间段「采集多少篇 / 评多少条」</div>
-            <div class="hint" style="margin-bottom:8px">默认每个时间段每天生效。需要错峰时,新增多个时间段;需要区分工作日/周末时,在该时间段里勾选适用星期。“采集”数量就是当前时段所有关键词合计的采集量，不再另有隐藏的40篇上限。养号阶梯 / 限频仍是安全天花板。</div>
+          <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 时间段「每个关键词采集多少篇 / 共评多少条」</div>
+            <div class="hint" style="margin-bottom:8px">默认每个时间段每天生效。需要错峰时,新增多个时间段;需要区分工作日/周末时,在该时间段里勾选适用星期。“每词采集”由你直接设置，不再由系统平均分配。例如 5 个关键词、每词采集 50 篇，一轮最多采集 250 篇；“评”仍是整个时间段的评论总配额。</div>
             <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="sch_enabled"> 启用排班(关掉 = 不限时段,只受防封限频约束)</label>
             <div class="fld" style="margin-bottom:10px"><label>时段内节奏</label><select id="slot_pacing"><option value="even">匀速摊开(整段均匀发)</option><option value="burst">开头集中(到点先发完再歇)</option></select></div>
             <div id="schedule-form"></div>
@@ -398,7 +402,7 @@
           <div class="fld" style="flex:1">
             <label>服务区域（逗号、顿号或换行分隔）</label>
             <textarea id="lm_service_areas" placeholder="例如：房山、长阳、朱岗子、大宁村、稻田、篱笆房" style="width:100%"></textarea>
-            <div class="hint">填写实际有房源、愿意承接的区域，尽量写到行政区、商圈、地铁站或村/小区。明确在服务区外的笔记会整篇跳过；关键词分类和大模型分类都会使用。</div>
+            <div class="hint">填写实际有房源、愿意承接的区域，尽量写到行政区、商圈、地铁站或村/小区。关闭大模型时按标题＋正文的关键词/区域规则判断；开启大模型时把正文提取的地点和这些服务区域交给模型做地理诊断。明确在服务区外的笔记会整篇跳过。</div>
           </div>
         </div>
         <div style="font-size:13px;font-weight:700;margin:12px 0 6px">笔记分类</div>
@@ -506,6 +510,7 @@ async function loadTaskSettings() {
   setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('outreach_fixed_text', c.outreach_fixed_text); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
   setVal('rescan', c.rescan_minutes);
+  if ($('task_llm_classification_enabled')) $('task_llm_classification_enabled').checked = !!(c.lead_model && c.lead_model.llmClassificationEnabled);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
   if ($('slot_pacing')) $('slot_pacing').value = c.slot_pacing || 'even';
   if ($('schedule-form')) { const _sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule(); renderSchedule(_sch); markConflicts(); }
@@ -739,14 +744,21 @@ function saveTaskSettings() {
   if (_errs.length) { const h = $('tasksavehint'); h.style.color = 'var(--red)'; h.textContent = '✗ ' + _errs.join('；'); return; }
   $('tasksavehint').style.color = '';
   const _schedule = slotsToSchedule(_slots);
+  const taskLeadModel = Object.assign({}, (_cfg && _cfg.lead_model) || {}, {
+    llmClassificationEnabled: $('task_llm_classification_enabled') ? $('task_llm_classification_enabled').checked : false
+  });
   const data = {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
     task_keyword: $('kw').value, task_direction: $('dir').value, outreach_fixed_text: $('outreach_fixed_text').value,
     task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value,
-    rescan_minutes: Math.max(1, Number($('rescan').value) || 15)
+    rescan_minutes: Math.max(1, Number($('rescan').value) || 15), lead_model: taskLeadModel, scan_quota_mode: 'per_keyword'
   };
   $('tasksavehint').textContent = '保存中…';
-  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => { $('tasksavehint').textContent = d.ok ? '✓ 已保存,控制台开始即用' : ('✗ ' + d.msg); updateTaskSummary(); });
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => {
+    if (d.ok) _cfg.lead_model = taskLeadModel;
+    $('tasksavehint').textContent = d.ok ? '✓ 已保存,控制台开始即用' : ('✗ ' + d.msg);
+    updateTaskSummary();
+  });
 }
 function updateTaskSummary() {
   const el = $('tasksummary'); if (!el) return;
@@ -772,7 +784,7 @@ function slotHtml(slot, i) {
   const dayText = slot.days.length === 7 ? '每天' : slot.days.map(function (d) { return WD2[d]; }).join('、');
   return '<div class="sch-slot" data-i="' + i + '" style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">' +
     '<div style="width:70px;font-weight:700;color:var(--ink)">时间段 ' + (i + 1) + '</div>' +
-    '<div style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap"><input type="time" class="sch-s" onchange="markConflicts()" value="' + esc(slot.start) + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + esc(slot.end) + '"><span class="hint">采集</span><input type="number" class="sch-n" min="0" value="' + esc(slot.notes) + '" style="width:62px" title="本时段在搜索页采集多少篇笔记来筛求租帖"><span class="hint">篇</span><span class="hint">评</span><input type="number" class="sch-q" min="0" value="' + esc(slot.quota) + '" style="width:58px" title="本时段最多打开浏览+评论多少条"><span class="hint">条</span></div>' +
+    '<div style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap"><input type="time" class="sch-s" onchange="markConflicts()" value="' + esc(slot.start) + '"><span>–</span><input type="time" class="sch-e" onchange="markConflicts()" value="' + esc(slot.end) + '"><span class="hint">每词采集</span><input type="number" class="sch-n" min="1" value="' + esc(slot.notes) + '" style="width:62px" title="每一个检索关键词最多采集多少篇笔记"><span class="hint">篇</span><span class="hint">本时段共评</span><input type="number" class="sch-q" min="0" value="' + esc(slot.quota) + '" style="width:58px" title="本时段所有关键词合计最多评论多少条"><span class="hint">条</span></div>' +
     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="badge b-seek">' + esc(dayText) + '</span>' + dayChecks(slot.days) + '</div>' +
     '<a href="#" onclick="rmSlot(' + i + ');return false" style="color:var(--red);text-decoration:none;font-size:12px;margin-left:auto">删除</a>' +
     '</div>';

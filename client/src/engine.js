@@ -275,39 +275,31 @@ function classifyDetailedNoteByKeywords(note, cfg = {}) {
 
 function validateLlmLocation(raw, note, cfg = {}) {
   const sourceText = [note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' ').replace(/\s+/g, ' ').trim();
-  const area = serviceAreaDecision(sourceText, cfg);
-  let locationMatch = raw.locationMatch;
-  let reason = raw.reason;
-  let matchedServiceArea = raw.matchedServiceArea;
-  let locationConfidence = raw.locationConfidence;
-  let locationEvidence = raw.locationEvidence;
   const serviceAreas = Array.isArray(cfg.lead_local_words) ? cfg.lead_local_words.map((word) => String(word || '').trim()).filter(Boolean) : [];
-  const cityNames = ['北京', '上海', '天津', '重庆', '广州', '深圳', '杭州', '南京', '成都', '武汉', '西安', '郑州', '长沙', '苏州', '济南', '青岛', '沈阳', '大连', '合肥'];
-  const serviceCities = cityNames.filter((city) => serviceAreas.some((areaName) => areaName.includes(city)));
-  const extractedCity = cityNames.find((city) => String(raw.city || '').includes(city));
-  const cityMismatch = extractedCity && serviceCities.length && !serviceCities.includes(extractedCity);
-  if (cityMismatch) {
-    locationMatch = 'mismatch';
-    reason = `正文地点识别为“${raw.city}”，不属于服务城市 ${serviceCities.join('、')}`;
-  } else if (area.locationMatch === 'mismatch') {
-    locationMatch = 'mismatch'; reason = area.reason;
-  } else if (area.locationMatch === 'match') {
-    const directArea = serviceAreas.find((areaName) => sourceText.includes(areaName));
-    if (locationMatch === 'unknown' && directArea) {
-      locationMatch = 'match';
-      matchedServiceArea = directArea;
-      locationConfidence = 1;
-      locationEvidence = directArea;
-    }
+  let locationMatch = ['match', 'mismatch', 'unknown'].includes(raw && raw.locationMatch) ? raw.locationMatch : 'unknown';
+  let reason = String((raw && raw.reason) || '').trim() || '大模型未提供地区判断理由';
+  let matchedServiceArea = String((raw && raw.matchedServiceArea) || '').trim();
+  const locationConfidence = Number(raw && raw.locationConfidence) || 0;
+  const locationEvidence = String((raw && raw.locationEvidence) || '').replace(/\s+/g, ' ').trim();
+  if (!serviceAreas.length) {
+    return { locationMatch: 'unknown', reason: '未配置服务区域', matchedServiceArea: '', locationConfidence: 0, locationEvidence };
   }
+  const evidenceExistsInBody = locationEvidence.length >= 2 && sourceText.includes(locationEvidence);
   if (locationMatch === 'match') {
     const matchedAreaIsConfigured = serviceAreas.includes(String(matchedServiceArea || '').trim());
-    const normalizedEvidence = String(locationEvidence || '').replace(/\s+/g, ' ').trim();
-    const evidenceExistsInBody = normalizedEvidence.length >= 2 && sourceText.includes(normalizedEvidence);
     if (!matchedAreaIsConfigured || Number(locationConfidence) < 0.75 || !evidenceExistsInBody) {
       locationMatch = 'unknown';
-      reason = `地区匹配证据不足：${reason || '未能从正文确认服务区域'}`;
+      matchedServiceArea = '';
+      reason = `大模型地区匹配证据不足：${reason}`;
     }
+  } else if (locationMatch === 'mismatch') {
+    matchedServiceArea = '';
+    if (Number(locationConfidence) < 0.75 || !evidenceExistsInBody) {
+      locationMatch = 'unknown';
+      reason = `大模型异地判断证据不足：${reason}`;
+    }
+  } else {
+    matchedServiceArea = '';
   }
   return { locationMatch, reason, matchedServiceArea, locationConfidence, locationEvidence };
 }
@@ -338,11 +330,28 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
     });
   }
   const category = model.categories.find((item) => item.id === raw.categoryId) || fallback;
-  const locationDecision = validateLlmLocation(raw, note, cfg);
+  let locationRaw = { locationMatch: 'unknown', matchedServiceArea: '', locationConfidence: 0, locationEvidence: '', reason: '未配置服务区域' };
+  let locationError = '';
+  if (Array.isArray(cfg.lead_local_words) && cfg.lead_local_words.some(Boolean)) {
+    try {
+      locationRaw = await llm.classifyServiceArea({
+        note,
+        extracted: raw,
+        localWords: cfg.lead_local_words,
+        provider: cfg.llm_provider,
+        model: cfg.llm_model,
+        apiKey: cfg.llm_api_key
+      });
+    } catch (e) {
+      locationRaw = { locationMatch: 'unknown', matchedServiceArea: '', locationConfidence: 0, locationEvidence: '', reason: '大模型地区判断失败' };
+      locationError = e && e.message ? e.message : String(e);
+    }
+  }
+  const locationDecision = validateLlmLocation(locationRaw, note, cfg);
   return categoryClassificationDecision({
     category,
     confidence: raw.confidence,
-    reason: locationDecision.reason,
+    reason: `分类：${raw.reason || '未说明'}；地区：${locationDecision.reason}`,
     evidence: raw.evidence,
     locationMatch: locationDecision.locationMatch,
     demandLocation: raw.demandLocation,
@@ -354,7 +363,8 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
     locationEvidence: locationDecision.locationEvidence,
     slotValues: raw.slotValues,
     method: 'llm',
-    cfg
+    cfg,
+    error: locationError
   });
 }
 

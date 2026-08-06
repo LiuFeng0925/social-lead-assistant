@@ -254,6 +254,89 @@ async function classifyNoteCategory({ note, localWords, leadModel, provider, mod
   return parseNoteCategoryClassificationContent(content, categories);
 }
 
+function buildServiceAreaClassificationMessages({ note, extracted = {}, localWords = [] }) {
+  const title = String((note && note.title) || '').trim();
+  const desc = String((note && note.desc) || '').trim();
+  const tags = Array.isArray(note && note.tags) ? note.tags.join('、') : '';
+  const serviceAreas = (Array.isArray(localWords) ? localWords : [])
+    .map((word) => String(word || '').trim()).filter(Boolean);
+  const facts = [
+    extracted.city ? `城市=${extracted.city}` : '',
+    extracted.district ? `区县=${extracted.district}` : '',
+    extracted.location ? `具体位置=${extracted.location}` : '',
+    extracted.locationEvidence ? `地点原文=${extracted.locationEvidence}` : ''
+  ].filter(Boolean).join('；') || '第一阶段没有提取到明确地点';
+  const system = [
+    '你是获客任务的服务地区诊断器。分类模型已经先从标题和完整正文提取了客观地点；你只负责判断笔记里的目标求租地或房源地是否属于用户配置的服务区域，不要重新判断发布者分类。',
+    '必须结合标题、完整正文、第一阶段地点事实和常识地理关系判断，不能只做字符串包含，也不能只看单个地点词。要理解行政区、村、小区、商圈、地铁站、简称和常见别名之间的归属关系。',
+    '例如服务区是“朱岗子”时，“房山朱岗子村”“北京房山朱岗子”应视为同一地点；服务区是“长阳”时，“长阳地铁站”“长阳镇”可视为覆盖。反过来，上海普陀“新村路/甘泉路”不能因为字面相近而匹配北京“大宁村”。',
+    '判断的是笔记真正想租房或提供房源的位置。上班地、通勤目的地、作者IP、检索关键词都不能当作目标租房地。',
+    'locationMatch 只能是 match、mismatch、unknown：能根据地理关系确认属于任一服务区域才填 match；明确在全部服务区域之外填 mismatch；正文地点不足或存在歧义填 unknown。',
+    'match 时 matchedServiceArea 必须逐字填写下面服务区域中的一个原值，禁止创造新区域。mismatch 或 unknown 时必须为空字符串。',
+    'locationEvidence 必须逐字摘录标题或正文里的地点原文；不要改写或编造。置信度不足时宁可 unknown，不要猜。',
+    '只输出一个 JSON 对象，不要 Markdown，不要解释。格式：',
+    '{"locationMatch":"match|mismatch|unknown","matchedServiceArea":"服务区域原值或空字符串","locationConfidence":0到1之间的小数,"locationEvidence":"标题或正文地点原文","reason":"一句话地理判断理由"}'
+  ].join('\n');
+  const user = [
+    '【服务区域】' + (serviceAreas.join('、') || '未配置'),
+    '【第一阶段地点事实】' + facts,
+    '【标题】' + (title || '空'),
+    '【完整正文】' + (desc || '空'),
+    '【标签】' + (tags || '空'),
+    '请判断目标地点是否属于服务区域并输出 JSON。'
+  ].join('\n');
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
+function normalizeServiceAreaClassification(value, localWords = []) {
+  const raw = value && typeof value === 'object' ? value : {};
+  const common = normalizeNoteClassification({
+    locationMatch: raw.locationMatch || raw.location_match,
+    confidence: raw.locationConfidence != null ? raw.locationConfidence : raw.confidence,
+    reason: raw.reason,
+    evidence: raw.locationEvidence || raw.location_evidence || raw.evidence
+  });
+  const configured = (Array.isArray(localWords) ? localWords : []).map((word) => String(word || '').trim()).filter(Boolean);
+  const requestedArea = String(raw.matchedServiceArea || raw.matched_service_area || '').trim();
+  const matchedServiceArea = configured.find((area) => area === requestedArea) || '';
+  return {
+    locationMatch: common.locationMatch,
+    matchedServiceArea,
+    locationConfidence: common.confidence,
+    locationEvidence: common.evidence,
+    reason: common.reason
+  };
+}
+
+function parseServiceAreaClassificationContent(content, localWords = []) {
+  let text = String(content || '').trim();
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('大模型地区判断未返回 JSON');
+  let parsed;
+  try { parsed = JSON.parse(text.slice(start, end + 1)); }
+  catch (e) { throw new Error('大模型地区判断 JSON 解析失败'); }
+  return normalizeServiceAreaClassification(parsed, localWords);
+}
+
+async function classifyServiceArea({ note, extracted, localWords, provider, model, apiKey }) {
+  const ep = PROVIDERS[provider] || PROVIDERS.ark;
+  const j = await postChat({
+    host: ep.host, path: ep.path, apiKey,
+    body: {
+      model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''),
+      messages: buildServiceAreaClassificationMessages({ note, extracted, localWords }),
+      temperature: 0.05,
+      max_tokens: 260
+    },
+    timeoutMs: 18000
+  });
+  const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+  if (!content) throw new Error('大模型地区判断没有返回内容');
+  return parseServiceAreaClassificationContent(content, localWords);
+}
+
 // 按对方笔记 + 方向,让大模型生成一句拟人评论
 async function genComment({ note, direction, provider, model, apiKey }) {
   const ep = PROVIDERS[provider] || PROVIDERS.ark;
@@ -277,5 +360,9 @@ module.exports = {
   buildNoteCategoryClassificationMessages,
   parseNoteCategoryClassificationContent,
   normalizeNoteCategoryClassification,
+  classifyServiceArea,
+  buildServiceAreaClassificationMessages,
+  parseServiceAreaClassificationContent,
+  normalizeServiceAreaClassification,
   PROVIDERS
 };

@@ -9,6 +9,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const inboxUtils = require('./inbox-utils');
 const leadModel = require('./lead-model');
+const { parseKeywords, migrateLegacyTotalSchedule } = require('./keyword-utils');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 let db = null;
@@ -301,6 +302,7 @@ const DEFAULT_CONFIG = {
   outreach_fixed_text: '',           // 外呼固定短句；留空才使用 AI/模板生成
   lead_local_words: [],              // 可服务区域；命中明确外地城市时整篇跳过
   task_max: 40,
+  scan_quota_mode: 'per_keyword',
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
   // ── 评论生成 LLM(可切换 provider:ark 火山方舟 / dashscope 阿里百炼)。默认关=用内置话术模板;填 key 并启用后,评论改由大模型按对方正文+方向生成 ──
   llm_enabled: false, llm_provider: 'ark', llm_model: '', llm_api_key: '',
@@ -364,6 +366,14 @@ function getConfig() {
         if (w && w.quota == null) w.quota = 8;
       });
     });
+  }
+  // 旧版本把 notes 当“所有关键词合计”。首次升级时除以关键词数，保持实际扫描规模不突增。
+  if (saved.scan_quota_mode !== 'per_keyword') {
+    const keywordCount = parseKeywords(cfg.task_keyword).length;
+    cfg.schedule = migrateLegacyTotalSchedule(cfg.schedule, keywordCount);
+    cfg.task_max = Math.max(1, Math.ceil((Number(cfg.task_max) || 40) / keywordCount));
+    cfg.scan_quota_mode = 'per_keyword';
+    setConfig({ schedule: cfg.schedule, task_max: cfg.task_max, scan_quota_mode: cfg.scan_quota_mode });
   }
   cfg.lead_model = leadModel.normalizeLeadModel(cfg.lead_model);
   return cfg;

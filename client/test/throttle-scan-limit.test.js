@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { currentScanLimit } = require('../src/throttle');
 
-test('schedule note quota is not capped by the legacy hidden task scan limit', () => {
+test('schedule per-keyword note quota is not capped by the legacy hidden task scan limit', () => {
   const schedule = Array.from({ length: 7 }, () => ({
     on: true,
     windows: [{ start: '00:00', end: '23:59', notes: 100, quota: 100 }]

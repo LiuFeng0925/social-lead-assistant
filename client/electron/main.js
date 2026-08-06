@@ -5,6 +5,7 @@
 // 跑:npm run app
 
 const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
+const { xhsZoomFactor } = require('../src/view-scale');
 
 // 暴露内嵌浏览器的 CDP 调试端口,让引擎能连上驱动它
 app.commandLine.appendSwitch('remote-debugging-port', '9333');
@@ -12,14 +13,21 @@ app.commandLine.appendSwitch('remote-debugging-port', '9333');
 process.env.XHS_CDP_ENDPOINT = 'http://127.0.0.1:9333';
 
 let win, view;
+function layoutBrowserView() {
+  if (!win || !view) return;
+  const [w, h] = win.getContentSize();
+  const x = Math.round(w * 0.5);
+  const width = Math.max(1, w - x);
+  view.setBounds({ x, y: 0, width, height: h });
+  view.webContents.setZoomFactor(xhsZoomFactor(width, h));
+}
+
 // 控制内嵌浏览器(监视器)显隐:控制台页签显示右半,其他页签隐藏(让左侧内容铺平)
 ipcMain.on('view-visible', (e, visible) => {
   if (!win || !view) return;
   if (visible) {
     win.setBrowserView(view);
-    const b = win.getContentBounds();
-    const sx = Math.round(b.width * 0.5);
-    view.setBounds({ x: sx, y: 0, width: b.width - sx, height: b.height });
+    layoutBrowserView();
   } else {
     win.setBrowserView(null);
   }
@@ -37,13 +45,9 @@ app.whenReady().then(() => {
   // 右侧:内嵌小红书浏览器(用户能直接在里面点/扫码登录)
   view = new BrowserView();
   win.setBrowserView(view);
-  const layout = () => {
-    const [w, h] = win.getContentSize();
-    const x = Math.round(w * 0.5); // 内嵌浏览器占右半,和左侧控制台严格对齐
-    view.setBounds({ x, y: 0, width: w - x, height: h });
-  };
-  layout();
-  win.on('resize', layout);
+  layoutBrowserView();
+  win.on('resize', layoutBrowserView);
+  view.webContents.on('did-finish-load', layoutBrowserView);
   view.webContents.loadURL('https://www.xiaohongshu.com');
 });
 

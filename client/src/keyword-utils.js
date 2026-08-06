@@ -14,19 +14,30 @@ function limitNotes(notes, maxNotes) {
   return uniqueNotes(notes).slice(0, max);
 }
 
-function keywordScanPlan(value, maxNotes, index = 0) {
+function keywordScanPlan(value, notesPerKeyword, index = 0) {
   const keywords = parseKeywords(value);
   const safeIndex = Math.max(0, Math.min(keywords.length - 1, Number(index) || 0));
-  const total = Math.max(1, Number(maxNotes) || 1);
-  const base = Math.floor(total / keywords.length);
-  const extra = total % keywords.length;
+  const quota = Math.max(1, Math.floor(Number(notesPerKeyword) || 1));
   return {
     keywords,
     index: safeIndex,
     keyword: keywords[safeIndex],
-    quota: base + (safeIndex < extra ? 1 : 0),
-    total
+    quota,
+    notesPerKeyword: quota,
+    total: quota * keywords.length
   };
+}
+
+function migrateLegacyTotalSchedule(schedule, keywordCount) {
+  const count = Math.max(1, Math.floor(Number(keywordCount) || 1));
+  if (!Array.isArray(schedule)) return schedule;
+  return schedule.map((day) => Object.assign({}, day, {
+    windows: Array.isArray(day && day.windows) ? day.windows.map((window) => {
+      const next = Object.assign({}, window);
+      if (next.notes != null && Number(next.notes) > 0) next.notes = Math.max(1, Math.ceil(Number(next.notes) / count));
+      return next;
+    }) : []
+  }));
 }
 
 function uniqueNotes(notes) {
@@ -39,4 +50,4 @@ function uniqueNotes(notes) {
   });
 }
 
-module.exports = { parseKeywords, uniqueNotes, limitNotes, keywordScanPlan };
+module.exports = { parseKeywords, uniqueNotes, limitNotes, keywordScanPlan, migrateLegacyTotalSchedule };

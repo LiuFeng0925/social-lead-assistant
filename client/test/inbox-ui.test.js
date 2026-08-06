@@ -51,13 +51,25 @@ test('model settings are separated from task settings', () => {
   assert.equal(taskHtml.includes('id="llm_provider"'), false, 'task settings should not own provider');
 });
 
+test('task settings expose and persist the shared llm classification switch', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  assert.ok(html.includes('id="task_llm_classification_enabled"'), 'task settings should expose the llm switch');
+  assert.ok(html.includes('本任务启用大模型判断（笔记分类＋地区诊断）'), 'the switch should explain both llm decisions');
+  assert.ok(html.includes("$('task_llm_classification_enabled').checked = !!(c.lead_model && c.lead_model.llmClassificationEnabled)"), 'the task switch should load the shared lead-model setting');
+  assert.ok(html.includes('lead_model: taskLeadModel'), 'saving task settings should persist the shared lead model');
+  assert.ok(html.includes('标题＋完整正文'), 'the task switch should promise full-body reading in either mode');
+});
+
 test('task schedule is edited as time slots defaulting to every day', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(html.includes('排班 · 时间段'), 'schedule copy should use time-slot wording');
   assert.ok(html.includes('class="sch-slot"'), 'schedule rows should be slots');
   assert.ok(html.includes('sch-days'), 'each slot should expose day selection');
   assert.ok(html.includes('每天'), 'default day scope should be every day');
-  assert.ok(html.includes('不再另有隐藏的40篇上限'), 'schedule should explain that its note amount is no longer capped by a hidden value');
+  assert.ok(html.includes('每词采集'), 'schedule should expose a per-keyword collection amount');
+  assert.ok(html.includes('不再由系统平均分配'), 'schedule should explain that the user controls each keyword amount');
+  assert.ok(html.includes("scan_quota_mode: 'per_keyword'"), 'saving task settings should persist the new quota semantics');
   assert.equal(html.includes('class="sch-day"'), false, 'old weekday-row editor should be removed');
 });
 
@@ -118,7 +130,7 @@ test('lead model page edits and saves service areas with the model', () => {
   assert.ok(html.includes('id="lm_service_areas"'), 'service-area input should be visible in the lead model page');
   assert.ok(html.includes("setVal('lm_service_areas'"), 'saved service areas should load into the editor');
   assert.ok(html.includes("lead_local_words: serviceAreas"), 'saving the lead model should persist service areas');
-  assert.ok(html.includes('关键词分类和大模型分类都会使用'), 'the UI should explain that both classifiers share the same areas');
+  assert.ok(html.includes('交给模型做地理诊断'), 'the UI should explain that llm mode performs a geographic diagnosis');
 });
 
 test('lead model category wording explains deterministic rules', () => {

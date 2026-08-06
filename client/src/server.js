@@ -14,8 +14,15 @@ const inboxUtils = require('./inbox-utils');
 const dateFilter = require('./date-filter');
 const { readLoginStatus } = require('./login-status');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
-const { parseKeywords, limitNotes, keywordScanPlan } = require('./keyword-utils');
+const { parseKeywords, uniqueNotes, keywordScanPlan } = require('./keyword-utils');
 const { launchChromeForCdp } = require('./browser-launch');
+const {
+  COMMENT_COMPOSER_PROBE: PROBE,
+  pickCommentInput,
+  pickEnabledSendButton,
+  inputHasExpectedText,
+  normalizeText
+} = require('./comment-composer-probe');
 
 const PORT = Number(process.env.XHS_UI_PORT || 3000);
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
@@ -45,7 +52,7 @@ function formatClassificationFacts(decision) {
 
 async function scanKeywords({ client, target, keywordText, filters, maxNotes, onLog, shouldStop }) {
   const keywords = parseKeywords(keywordText);
-  const eachMax = Math.max(1, Math.ceil(maxNotes / keywords.length));
+  const eachMax = Math.max(1, Math.floor(Number(maxNotes) || 1));
   const collected = [];
   for (let index = 0; index < keywords.length; index++) {
     if (shouldStop()) break;
@@ -54,20 +61,10 @@ async function scanKeywords({ client, target, keywordText, filters, maxNotes, on
     const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: eachMax, onLog, shouldStop });
     collected.push(...notes);
   }
-  const notes = limitNotes(collected, maxNotes);
-  if (keywords.length > 1) onLog(`多关键词合并：${collected.length} 条 → 去重后 ${notes.length} 条`);
+  const notes = uniqueNotes(collected);
+  if (keywords.length > 1) onLog(`多关键词合并：每词最多 ${eachMax} 篇，共抓取 ${collected.length} 篇 → 去重后 ${notes.length} 篇`);
   return notes;
 }
-
-// 评论框 / 发送按钮定位(同 m4)
-const PROBE = `(function(){
-  function vis(r){ return r.width>40&&r.height>10&&r.bottom>0&&r.top<window.innerHeight; }
-  var inputs=[]; var els=document.querySelectorAll('[contenteditable="true"],textarea,p[class*="content-input"],[class*="comment-input"]');
-  for(var i=0;i<els.length;i++){ var e=els[i]; var r=e.getBoundingClientRect(); if(!vis(r))continue; inputs.push({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}); }
-  var btns=[]; var all=document.querySelectorAll('button,span,div');
-  for(var j=0;j<all.length&&btns.length<6;j++){ var b=all[j]; var tx=(b.childElementCount===0?(b.innerText||''):'').trim(); if(tx==='发送'||tx==='发布'){ var br=b.getBoundingClientRect(); if(vis(br)) btns.push({x:Math.round(br.x+br.width/2),y:Math.round(br.y+br.height/2)}); } }
-  return JSON.stringify({inputs:inputs.slice(0,4),sendBtns:btns});
-})()`;
 
 let lastRun = null; // { client, target, results }
 let runState = { running: false, cancelled: false }; // 任务停止开关
@@ -198,28 +195,32 @@ async function handleSend(req, res, q) {
     await sleep(rand(900, 1600));
     const pr = await client.evaluate({ target, expression: PROBE });
     let probe; try { probe = JSON.parse(pr.value); } catch (e) { probe = { inputs: [], sendBtns: [] }; }
-    if (!probe.inputs[0]) { await closeAndEnd({ ok: false, msg: '没定位到评论框' }); return; }
+    const input = pickCommentInput(probe);
+    if (!input) { await closeAndEnd({ ok: false, msg: '没定位到笔记底部评论框' }); return; }
     // 登录检测:未登录直接拦住,绝不假发
     try { const st = await readLoginStatus(client, target); if (!st.loggedIn) { await closeAndEnd({ ok: false, msg: '⚠ 浏览器未登录小红书!请在右侧浏览器扫码登录,再发' }); return; } } catch (e) {}
     if (dry) { await closeAndEnd({ ok: true, dry: true, msg: 'dry-run:已定位评论框并关闭详情(未发送)' }); return; }
     // 防封限频:真发前先过 throttle(工作时间/今日上限/每小时/间隔)
     const gate = throttle.canComment();
     if (!gate.ok) { await closeAndEnd({ ok: false, msg: '⛔ 限频拦截:' + gate.reason }); return; }
-    await client.click({ target, x: probe.inputs[0].x, y: probe.inputs[0].y });
+    if (normalizeText(input.text)) { await closeAndEnd({ ok: false, msg: '评论框已有未发送内容,为避免误发已跳过' }); return; }
+    await client.click({ target, x: input.x, y: input.y });
     await sleep(rand(700, 1300));
     await client.typeText({ target, text: comment });
     await sleep(rand(1200, 2000));
     const pr2 = await client.evaluate({ target, expression: PROBE });
-    let probe2; try { probe2 = JSON.parse(pr2.value); } catch (e) { probe2 = { sendBtns: [] }; }
-    const btn = (probe2.sendBtns || [])[0] || (probe.sendBtns || [])[0];
+    let probe2; try { probe2 = JSON.parse(pr2.value); } catch (e) { probe2 = { inputs: [], sendBtns: [] }; }
+    if (!inputHasExpectedText(pickCommentInput(probe2), comment)) { await closeAndEnd({ ok: false, msg: '文字没有进入目标评论框,为避免点错已停止发送' }); return; }
+    const btn = pickEnabledSendButton(probe2);
     if (!btn) { await closeAndEnd({ ok: false, msg: '评论已输入但没找到发送按钮' }); return; }
     await client.click({ target, x: btn.x, y: btn.y });
     await sleep(1800);
     // 验证真的发出去了(评论成功提示 或 输入框被清空),不再盲目报成功
     let okSent = false;
     try {
-      const vf = await client.evaluate({ target, expression: '(function(){var t=document.body.innerText.indexOf("评论成功")>=0;var b=document.querySelector("p[class*=content-input],div[contenteditable=true]");var empty=b?((b.innerText||"").trim().length===0):false;return (t||empty)?"ok":"no";})()' });
-      okSent = vf && vf.value === 'ok';
+      const sentProbe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value);
+      const sentInput = pickCommentInput(sentProbe);
+      okSent = sentProbe.success === true || (!!sentInput && !normalizeText(sentInput.text));
     } catch (e) {}
     if (okSent) {
       try { db.insertComment({ noteId: r.id, noteTitle: r.title, noteUrl: r.url, content: comment, status: 'sent' }); } catch (e) {}
@@ -416,26 +417,30 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
     if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
     let probe = { inputs: [], sendBtns: [] };
     try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
-    if (!probe.inputs[0]) { await client.wheelScroll({ target, x: 600, y: 500, totalDeltaY: 420 }).catch(() => {}); await sleep(rand(700, 1300)); try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {} }
-    if (!probe.inputs[0]) return { ok: false, msg: '没定位到评论框' };
+    if (!pickCommentInput(probe)) { await client.wheelScroll({ target, x: 600, y: 500, totalDeltaY: 420 }).catch(() => {}); await sleep(rand(700, 1300)); try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {} }
+    const input = pickCommentInput(probe);
+    if (!input) return { ok: false, msg: '没定位到笔记底部评论框' };
     if (dry) return { ok: true, msg: '演练:已定位评论框(未发送)' };
     if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
     try { const st = await readLoginStatus(client, target); if (!st.loggedIn) return { ok: false, msg: '未登录,跳过(绝不假发)' }; } catch (e) {}
-    await client.click({ target, x: probe.inputs[0].x, y: probe.inputs[0].y });
+    if (normalizeText(input.text)) return { ok: false, msg: '评论框已有未发送内容,为避免误发已跳过' };
+    await client.click({ target, x: input.x, y: input.y });
     await sleep(rand(700, 1300));
     await client.typeText({ target, text: comment });
     await sleep(rand(1200, 2000));
     if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped_before_send' };
-    let probe2 = { sendBtns: [] };
+    let probe2 = { inputs: [], sendBtns: [] };
     try { probe2 = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
-    const btn = (probe2.sendBtns || [])[0] || (probe.sendBtns || [])[0];
+    if (!inputHasExpectedText(pickCommentInput(probe2), comment)) return { ok: false, msg: '文字没有进入目标评论框,为避免点错已停止发送' };
+    const btn = pickEnabledSendButton(probe2);
     if (!btn) return { ok: false, msg: '评论已输入但没找到发送按钮' };
     await client.click({ target, x: btn.x, y: btn.y });
     await sleep(1800);
     let okSent = false;
     try {
-      const vf = await client.evaluate({ target, expression: '(function(){var t=document.body.innerText.indexOf("评论成功")>=0;var b=document.querySelector("p[class*=content-input],div[contenteditable=true]");var empty=b?((b.innerText||"").trim().length===0):false;return (t||empty)?"ok":"no";})()' });
-      okSent = vf && vf.value === 'ok';
+      const sentProbe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value);
+      const sentInput = pickCommentInput(sentProbe);
+      okSent = sentProbe.success === true || (!!sentInput && !normalizeText(sentInput.text));
     } catch (e) {}
     if (okSent) {
       try { db.insertComment({ noteId: note.id, noteTitle: note.title, noteUrl: note.url, content: comment, status: 'sent' }); } catch (e) {}
@@ -602,7 +607,7 @@ async function _scanNextKeywordTargets(cfg) {
   }
   const plan = keywordScanPlan(cfg.task_keyword, throttle.currentScanLimit(cfg), machine.keywordIndex);
   machine.keywordTotal = plan.keywords.length;
-  emitLog(`关键词 ${plan.index + 1}/${plan.keywords.length}: ${plan.keyword}`);
+  emitLog(`关键词 ${plan.index + 1}/${plan.keywords.length}: ${plan.keyword}(本词最多 ${plan.quota} 篇)`);
   const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
   const scanned = plan.quota > 0
     ? await engine.scanClean({ client, target, keyword: plan.keyword, maxNotes: plan.quota, onLog: (m) => emitLog(m), shouldStop: () => !machine.running, filters })
@@ -652,7 +657,8 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
   });
   try { db.upsertNote(classifiedNote); } catch (e) {}
   if (authorDecision.locationMatch === 'mismatch') {
-    log('整篇跳过:分类器及地区安全校验判定不属于当前房源服务区');
+    const locationJudge = authorDecision.classificationMethod === 'llm' ? '大模型地区诊断' : '关键词地区规则';
+    log(`整篇跳过:${locationJudge}判定不属于当前房源服务区`);
     return { sent, done };
   }
   if (authorDecision.eligible) {
