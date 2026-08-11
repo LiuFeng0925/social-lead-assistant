@@ -48,6 +48,38 @@ function open() {
       duplicate_of integer, skip_reason text, last_seen_at text,
       basis_text text, raw_text text
     );
+    create table if not exists task_runs (
+      id integer primary key autoincrement,
+      started_at text not null,
+      stopped_at text,
+      status text not null default 'running',
+      live integer not null default 0
+    );
+    create table if not exists task_run_keywords (
+      run_id integer not null,
+      keyword text not null,
+      scanned_count integer not null default 0,
+      reply_count integer not null default 0,
+      primary key (run_id, keyword)
+    );
+    create table if not exists task_run_decisions (
+      id integer primary key autoincrement,
+      run_id integer not null,
+      keyword text not null,
+      note_id text not null,
+      title text,
+      author text,
+      url text,
+      category_name text,
+      location_match text,
+      useful integer not null default 0,
+      reason text,
+      evidence text,
+      location_evidence text,
+      reply_count integer not null default 0,
+      decided_at text not null,
+      unique (run_id, keyword, note_id)
+    );
     create table if not exists config (k text primary key, v text);
   `);
   ensureInboxSchema(db);
@@ -121,6 +153,66 @@ function listNotes(limit = 200, range = {}) {
   return open().prepare(`select * from notes ${where} order by last_seen_at desc limit ?`).all(...r.args, limit);
 }
 function listLeads(limit = 100) { return open().prepare(`select * from leads order by id desc limit ?`).all(limit); }
+
+// ── 每次「开始 → 停止」的执行统计 ──
+function createTaskRun({ live = false } = {}) {
+  const r = open().prepare(`insert into task_runs (started_at, status, live) values (?, 'running', ?)`)
+    .run(now(), live ? 1 : 0);
+  return Number(r.lastInsertRowid);
+}
+function finishTaskRun(runId, status = 'stopped') {
+  if (!Number(runId)) return;
+  open().prepare(`update task_runs set stopped_at=?, status=? where id=?`).run(now(), status, runId);
+}
+function addTaskRunScan(runId, keyword, count) {
+  if (!Number(runId) || !String(keyword || '').trim() || !Number(count)) return;
+  open().prepare(`insert into task_run_keywords (run_id, keyword, scanned_count, reply_count) values (?,?,?,0)
+    on conflict(run_id, keyword) do update set scanned_count=scanned_count + excluded.scanned_count`)
+    .run(runId, String(keyword).trim(), Number(count));
+}
+function recordTaskRunDecision({ runId, keyword, note, decision, replyCount = 0 } = {}) {
+  if (!Number(runId) || !String(keyword || '').trim() || !note || !note.id || !decision) return;
+  const d = open();
+  const key = String(keyword).trim();
+  const replies = Math.max(0, Number(replyCount) || 0);
+  const previous = d.prepare(`select reply_count from task_run_decisions where run_id=? and keyword=? and note_id=?`)
+    .get(runId, key, String(note.id));
+  const previousReplies = previous ? Number(previous.reply_count) || 0 : 0;
+  const useful = decision.eligible ? 1 : 0;
+  d.prepare(`insert into task_run_decisions
+    (run_id, keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at)
+    values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    on conflict(run_id, keyword, note_id) do update set
+      title=excluded.title, author=excluded.author, url=excluded.url,
+      category_name=excluded.category_name, location_match=excluded.location_match,
+      useful=excluded.useful, reason=excluded.reason, evidence=excluded.evidence,
+      location_evidence=excluded.location_evidence, reply_count=excluded.reply_count, decided_at=excluded.decided_at`)
+    .run(runId, key, String(note.id), note.title || '', note.author || '', note.url || '',
+      decision.categoryName || decision.label || '', decision.locationMatch || 'unknown', useful,
+      decision.decisionReason || decision.reason || '', decision.evidence || '', decision.locationEvidence || '', replies, now());
+  const replyDelta = replies - previousReplies;
+  d.prepare(`insert into task_run_keywords (run_id, keyword, scanned_count, reply_count) values (?,?,0,?)
+    on conflict(run_id, keyword) do update set reply_count=max(0, reply_count + excluded.reply_count)`)
+    .run(runId, key, replyDelta);
+}
+function taskRunReport(runId) {
+  const d = open();
+  const runs = d.prepare(`select id, started_at, stopped_at, status, live from task_runs order by id desc limit 20`).all();
+  const selectedId = Number(runId) || (runs[0] && runs[0].id) || 0;
+  const run = selectedId ? d.prepare(`select id, started_at, stopped_at, status, live from task_runs where id=?`).get(selectedId) : null;
+  if (!run) return { run: null, runs, keywords: [], decisions: [] };
+  const keywords = d.prepare(`select k.keyword, k.scanned_count,
+    count(d.id) as judged_count,
+    coalesce(sum(case when d.useful=1 then 1 else 0 end),0) as useful_count,
+    coalesce(sum(case when d.useful=0 then 1 else 0 end),0) as useless_count,
+    k.reply_count
+    from task_run_keywords k left join task_run_decisions d on d.run_id=k.run_id and d.keyword=k.keyword
+    where k.run_id=? group by k.run_id, k.keyword, k.scanned_count, k.reply_count order by k.rowid`).all(run.id)
+    .map((row) => Object.assign(row, { pending_count: Math.max(0, Number(row.scanned_count) - Number(row.judged_count)) }));
+  const decisions = d.prepare(`select keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at
+    from task_run_decisions where run_id=? order by id desc limit 300`).all(run.id);
+  return { run, runs, keywords, decisions };
+}
 
 // ── 承接收件箱 ──
 function ensureInboxSchema(d) {
@@ -400,4 +492,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, taskRunReport, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };

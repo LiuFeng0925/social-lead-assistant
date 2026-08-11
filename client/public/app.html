@@ -261,6 +261,7 @@
         <div class="row">
           <button class="btn" id="go" onclick="engineStart()">▶ 开始</button>
           <button class="btn" id="stopbtn" onclick="engineStop()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
+          <button class="btn ghost" id="clearcachebtn" onclick="clearConsoleCache()" style="margin-left:8px" title="清空当前控制台日志和待发送列表；不删除已发送记录">🧹 清空缓存</button>
           <label style="font-size:13px;color:var(--sub);margin-left:12px;cursor:pointer" title="总真发开关:开=机器真的发评论/回复(务必全新小号);关=全演练"><input type="checkbox" id="autoreal" onchange="saveLive()"> 真发(总开关)</label>
           <span class="hint" id="tasksummary" style="margin-left:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
           <a href="#" onclick="showPage('tasksettings');return false" style="font-size:12px;color:var(--brand);white-space:nowrap;text-decoration:none">⚙ 任务设置</a>
@@ -295,6 +296,16 @@
           <div style="font-size:12px;color:var(--muted);margin-bottom:6px">实时日志 · 引擎在干什么</div>
           <div class="log" id="log" style="height:380px;overflow:auto">连接机器中…(机器常驻:点「开始」按排班自动跑,主任务+评论承接都在这条日志里)</div>
         </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:600">本次执行统计</div>
+          <span class="hint">每次从「开始」到「停止」自动保留</span>
+          <select id="runstats-select" onchange="loadRunStats(this.value)" style="margin-left:auto;max-width:260px"></select>
+        </div>
+        <div class="hint" style="margin-bottom:8px">有用＝笔记作者符合获客模型且地区匹配；无用＝分类、地区或置信度不符合。已回复只统计实际成功发送的消息。</div>
+        <div id="runstats" class="hint">还没有执行统计，开始一次任务后会在这里显示。</div>
       </div>
 
       <div class="card">
@@ -364,6 +375,7 @@
           <div class="row">
             <div class="fld" style="flex:1"><label>外呼固定短句（留空才使用 AI）</label><input id="outreach_fixed_text" placeholder="例如：有房，私" style="width:100%"></div>
           </div>
+          <div class="hint" style="padding:9px 11px;border:1px solid #cfe5d7;border-radius:8px;background:#f1fbf4;margin:2px 0 12px;color:#17633d">✓ 外呼对象：仅处理已确认在服务区域内的“租户/求租者”笔记。先评论该笔记作者；再仅在这类求租笔记的评论区，回复明确求租的人。房东、转租方、房源发布者和同行/中介笔记会整篇跳过。</div>
           <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:6px 0 14px">
             <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="task_llm_classification_enabled"> 本任务启用大模型判断（笔记分类＋地区诊断）</label>
             <div class="hint" style="margin-top:6px">每篇笔记都会打开并读取标题＋完整正文。关闭时按“获客模型”中的关键词规则分类和判断地区；打开时先按各分类的“LLM 判断说明”分类，再由大模型结合正文地点与服务区域做地理诊断。模型服务商和 API Key 在“模型设置”中配置。</div>
@@ -1104,6 +1116,39 @@ function addAutoResult(r) {
     + '<div class="hint" style="white-space:pre-wrap;margin-top:4px">' + esc(r.comment) + '</div>';
   $('results').appendChild(div);
 }
+function loadRunStats(runId) {
+  const suffix = runId ? ('?run_id=' + encodeURIComponent(runId)) : '';
+  fetch('/api/engine/run-stats' + suffix).then(r => r.json()).then(d => { if (d.ok) renderRunStats(d); }).catch(() => {});
+}
+function renderRunStats(d) {
+  const select = $('runstats-select');
+  const run = d.run;
+  const runs = d.runs || [];
+  select.innerHTML = runs.length ? runs.map(function (item) {
+    const label = (formatLocalSecond(item.started_at) || '时间未知') + ' · ' + (item.status === 'running' ? '运行中' : '已停止') + (item.live ? ' · 真发' : ' · 演练');
+    return '<option value="' + item.id + '"' + (run && Number(item.id) === Number(run.id) ? ' selected' : '') + '>' + esc(label) + '</option>';
+  }).join('') : '<option>暂无执行记录</option>';
+  const out = $('runstats');
+  if (!run) { out.innerHTML = '还没有执行统计，开始一次任务后会在这里显示。'; return; }
+  const keywords = d.keywords || [];
+  const totals = keywords.reduce(function (acc, row) {
+    ['scanned_count','judged_count','useful_count','useless_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
+    return acc;
+  }, { scanned_count: 0, judged_count: 0, useful_count: 0, useless_count: 0, reply_count: 0, pending_count: 0 });
+  const summary = '<div class="mgrid" style="grid-template-columns:repeat(6,1fr);margin:0 0 10px">'
+    + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['无用', totals.useless_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
+    + '</div>';
+  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>无用</td><td>已回复</td><td>待判断</td></tr>'
+    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
+    + '</table>' : '<div class="hint">当前这轮还没有检索到笔记。</div>';
+  const decisions = (d.decisions || []).map(function (item) {
+    const tag = Number(item.useful) ? '<span class="badge b-ok">有用</span>' : '<span class="badge b-warn">无用</span>';
+    const title = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
+    const facts = [item.reason ? '判断：' + item.reason : '', item.evidence ? '分类依据：' + item.evidence : '', item.location_evidence ? '地点依据：' + item.location_evidence : ''].filter(Boolean).map(esc).join('\n');
+    return '<details class="basis-detail"><summary>' + tag + esc(item.keyword) + ' · ' + title + ' · ' + esc(item.category_name || '未分类') + ' · 地区' + esc(item.location_match || 'unknown') + (Number(item.reply_count) ? ' · 已回复 ' + Number(item.reply_count) : '') + '</summary><div style="white-space:pre-wrap">' + (facts || '未提供更多判断依据') + '</div></details>';
+  }).join('');
+  out.innerHTML = '<div class="hint" style="margin-bottom:8px">开始：' + esc(formatLocalSecond(run.started_at) || '') + '　状态：' + (run.status === 'running' ? '运行中' : '已停止') + (run.live ? '　真发' : '　演练') + '</div>' + summary + table + '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">判断明细</div>' + (decisions || '<div class="hint">尚未完成笔记判断。</div>');
+}
 // ── 常驻机器:总开关 + 实时日志流(关网页/刷新都不影响机器,只反映状态)──
 let _stream = null, _machineRunning = false;
 function connectStream() {
@@ -1114,11 +1159,13 @@ function connectStream() {
   _stream.addEventListener('status', e => applyMachineStatus(JSON.parse(e.data)));
   _stream.addEventListener('stats', e => renderStats(JSON.parse(e.data)));
   _stream.addEventListener('result', e => { addAutoResult(JSON.parse(e.data)); loadRecords(); });
+  _stream.addEventListener('run-stats', e => renderRunStats(JSON.parse(e.data)));
   _stream.onerror = () => { /* EventSource 浏览器会自动重连 */ };
 }
 function applyMachineStatus(s) {
   _machineRunning = !!s.running;
   $('go').disabled = _machineRunning; $('stopbtn').disabled = !_machineRunning;
+  if ($('clearcachebtn')) $('clearcachebtn').disabled = _machineRunning;
   $('go').textContent = _machineRunning ? '● 运行中' : '▶ 开始';
   if ($('autoreal')) $('autoreal').checked = !!s.live;
   const pm = { search: 'search', reply: 'match', comment: 'generate', starting: 'search' };
@@ -1132,6 +1179,19 @@ function engineStart() {
 function engineStop() {
   $('stopbtn').disabled = true;
   fetch('/api/engine/stop').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); });
+}
+function clearConsoleCache() {
+  if (_machineRunning) { alert('请先停止任务，再清空缓存。'); return; }
+  if (!confirm('清空当前控制台的实时日志和待发送列表？\n\n已发送记录会保留，避免重复发送。')) return;
+  const b = $('clearcachebtn'); b.disabled = true;
+  fetch('/api/engine/clear-cache').then(r => r.json()).then(d => {
+    if (!d.ok) { alert('清空失败：' + (d.msg || '未知错误')); return; }
+    $('log').textContent = '已清空控制台缓存。';
+    $('results').innerHTML = '';
+    $('rcount').textContent = '';
+    ['m-total','m-seek','m-supply','m-target'].forEach(id => $(id).textContent = '0');
+    setPhase('done');
+  }).catch(() => alert('清空失败，请稍后重试。')).finally(() => { b.disabled = _machineRunning; });
 }
 function saveLive() {
   const on = $('autoreal').checked;
@@ -1195,6 +1255,7 @@ function loadRecords() {
 }
 renderAllDateFilters();
 loadRecords();
+loadRunStats();
 
 // 登录状态检测 + 引导
 function checkLogin() {

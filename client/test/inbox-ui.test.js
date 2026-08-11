@@ -18,6 +18,15 @@ test('left navigation is fixed while content scrolls', () => {
   assert.match(html, /\.main\{[^}]*margin-left:174px[^}]*\}/, 'main content should leave space for fixed menu');
 });
 
+test('console exposes per-run keyword statistics and judgement evidence', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="runstats"'), 'console should render a run-statistics panel');
+  assert.ok(html.includes('id="runstats-select"'), 'past runs should be selectable');
+  assert.ok(html.includes('/api/engine/run-stats'), 'statistics should load from the run-statistics endpoint');
+  assert.ok(html.includes('判断明细'), 'the panel should expose judgement evidence');
+  assert.ok(html.includes('有用＝笔记作者符合获客模型且地区匹配'), 'the useful-note definition should be visible');
+});
+
 test('task settings expose fixed outreach copy and clarify pending analysis count', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(html.includes('id="outreach_fixed_text"'));

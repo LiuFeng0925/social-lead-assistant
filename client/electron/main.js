@@ -4,7 +4,7 @@
 // 引擎/服务/数据库全部复用现有 server.js;通过 Electron 的远程调试端口(9333)驱动内嵌浏览器。
 // 跑:npm run app
 
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, powerSaveBlocker } = require('electron');
 const { xhsZoomFactor } = require('../src/view-scale');
 
 // 暴露内嵌浏览器的 CDP 调试端口,让引擎能连上驱动它
@@ -13,6 +13,21 @@ app.commandLine.appendSwitch('remote-debugging-port', '9333');
 process.env.XHS_CDP_ENDPOINT = 'http://127.0.0.1:9333';
 
 let win, view;
+let taskWakeLockId = null;
+
+// 任务运行时阻止 macOS 自动睡眠；停止任务或退出应用后自动释放。
+// 用 prevent-display-sleep 才能在锁屏后继续跑任务，屏幕仍会保持锁定状态。
+function setTaskWakeLock(active) {
+  if (active && taskWakeLockId == null) {
+    taskWakeLockId = powerSaveBlocker.start('prevent-display-sleep');
+    console.log('任务保持唤醒已开启');
+  } else if (!active && taskWakeLockId != null) {
+    powerSaveBlocker.stop(taskWakeLockId);
+    taskWakeLockId = null;
+    console.log('任务保持唤醒已关闭');
+  }
+}
+process.on('xhs:task-wake-lock', setTaskWakeLock);
 function layoutBrowserView() {
   if (!win || !view) return;
   const [w, h] = win.getContentSize();
@@ -51,4 +66,5 @@ app.whenReady().then(() => {
   view.webContents.loadURL('https://www.xiaohongshu.com');
 });
 
+app.on('before-quit', () => setTaskWakeLock(false));
 app.on('window-all-closed', () => app.quit());

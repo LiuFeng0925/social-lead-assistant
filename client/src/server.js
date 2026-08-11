@@ -528,21 +528,40 @@ function emitLog(msg) {
 function emitEvent(type, data) { for (const res of logBus.clients) { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'); } catch (e) {} } }
 function busSend(type, data) { if (type === 'log') emitLog(data); else emitEvent(type, data); }
 
-const machine = { running: false, phase: 'idle', client: null, target: null, targets: [], lastScan: 0, lastInboxCheck: 0, sent: 0, replied: 0, done: 0, keywordIndex: 0, keywordTotal: 0, keywordSignature: '', scanCycleActive: false, scanSeen: new Set(), scanCollected: 0 };
+const machine = { running: false, phase: 'idle', client: null, target: null, targets: [], lastScan: 0, lastInboxCheck: 0, sent: 0, replied: 0, done: 0, keywordIndex: 0, keywordTotal: 0, keywordSignature: '', scanCycleActive: false, scanSeen: new Set(), scanCollected: 0, runId: null };
 const processedOutboundLeads = new Set();
-function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done, keywordIndex: machine.keywordIndex, keywordTotal: machine.keywordTotal }; }
+function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done, keywordIndex: machine.keywordIndex, keywordTotal: machine.keywordTotal, runId: machine.runId }; }
 function resetMachineConnection() { machine.client = null; machine.target = null; }
 function isCdpConnectionError(error) { return /cdp_|no_page_target/i.test(String(error && error.message || error || '')); }
-function startMachine() { if (machine.running) return false; resetMachineConnection(); machine.running = true; machine.phase = 'starting'; machine.targets = []; machine.lastScan = 0; machine.lastInboxCheck = 0; machine.keywordIndex = 0; machine.keywordTotal = 0; machine.keywordSignature = ''; machine.scanCycleActive = false; machine.scanSeen = new Set(); machine.scanCollected = 0; emitEvent('status', machineStatus()); machineLoop(); return true; }
+function emitRunStats() { emitEvent('run-stats', db.taskRunReport(machine.runId)); }
+function setTaskWakeLock(active) { process.emit('xhs:task-wake-lock', !!active); }
+function startMachine() { if (machine.running) return false; const cfg = db.getConfig(); resetMachineConnection(); machine.running = true; machine.phase = 'starting'; machine.targets = []; machine.lastScan = 0; machine.lastInboxCheck = 0; machine.sent = 0; machine.replied = 0; machine.done = 0; machine.keywordIndex = 0; machine.keywordTotal = 0; machine.keywordSignature = ''; machine.scanCycleActive = false; machine.scanSeen = new Set(); machine.scanCollected = 0; machine.runId = db.createTaskRun({ live: cfg.live_send === true }); setTaskWakeLock(true); emitEvent('status', machineStatus()); emitRunStats(); machineLoop(machine.runId); return true; }
 function stopMachine() { if (!machine.running) return; machine.running = false; emitLog('⏹ 收到停止,机器即将停下'); emitEvent('status', machineStatus()); }
+function clearMachineCache() {
+  if (machine.running) return false;
+  if (lastRun) lastRun = Object.assign({}, lastRun, { results: [] });
+  logBus.buffer.length = 0;
+  machine.targets = [];
+  machine.scanSeen = new Set();
+  machine.scanCollected = 0;
+  machine.keywordIndex = 0;
+  machine.keywordTotal = 0;
+  machine.keywordSignature = '';
+  machine.sent = 0;
+  machine.replied = 0;
+  machine.done = 0;
+  processedOutboundLeads.clear();
+  return true;
+}
 async function _sleepI(ms) { const step = 1500; let w = 0; while (w < ms && machine.running) { await sleep(Math.min(step, ms - w)); w += step; } }
 
-async function machineLoop() {
+async function machineLoop(runId) {
   emitLog('▶ 机器已启动' + (db.getConfig().live_send === true ? '(🔴 真发)' : '(🟡 演练)'));
-  while (machine.running) {
+  while (machine.running && machine.runId === runId) {
     try { await machineCycle(); } catch (e) { if (isCdpConnectionError(e)) resetMachineConnection(); emitLog('⚠ 循环出错(自动继续):' + e.message); await sleep(8000); }
   }
-  emitLog('■ 机器已停止'); machine.phase = 'idle'; emitEvent('status', machineStatus());
+  if (machine.runId !== runId) return;
+  emitLog('■ 机器已停止'); machine.phase = 'idle'; db.finishTaskRun(runId); setTaskWakeLock(false); emitEvent('status', machineStatus()); emitRunStats();
 }
 async function _ensureConn() {
   if (machine.client && machine.target) return;
@@ -619,10 +638,11 @@ async function _scanNextKeywordTargets(cfg) {
     return true;
   });
   machine.scanCollected += notes.length;
+  db.addTaskRunScan(machine.runId, plan.keyword, notes.length);
   const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
   tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
   // 检索页只有标题；不能再按标题或评论数提前过滤。每篇都打开详情读取正文后分类。
-  machine.targets = targets.map((t) => Object.assign({}, t, { classificationPending: true }));
+  machine.targets = targets.map((t) => Object.assign({}, t, { classificationPending: true, sourceKeyword: plan.keyword }));
   machine.keywordIndex = plan.index + 1;
   if (machine.keywordIndex >= plan.keywords.length) {
     machine.keywordIndex = 0;
@@ -631,6 +651,7 @@ async function _scanNextKeywordTargets(cfg) {
     emitLog(`本轮 ${plan.keywords.length} 个关键词已扫完,共采集 ${machine.scanCollected} 篇`);
   }
   emitEvent('stats', { total: notes.length, byIntent, targetCount: machine.targets.length });
+  emitRunStats();
   emitLog('本关键词检索 ' + notes.length + ' 篇,' + formatCategoryCounts(byIntent) + ',全部打开详情读取标题+正文');
 }
 
@@ -659,9 +680,9 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
   if (authorDecision.locationMatch === 'mismatch') {
     const locationJudge = authorDecision.classificationMethod === 'llm' ? '大模型地区诊断' : '关键词地区规则';
     log(`整篇跳过:${locationJudge}判定不属于当前房源服务区`);
-    return { sent, done };
+    return { sent, done, decision: authorDecision };
   }
-  if (authorDecision.eligible) {
+  if (engine.shouldCommentNoteAuthor(authorDecision)) {
     let already = false; try { already = db.hasCommented(note.id); } catch (e) {}
     if (!already) {
       const text = String(cfg.outreach_fixed_text || '').trim() || await engine.makeComment(classifiedNote, cfg.task_direction || '', cfg);
@@ -676,12 +697,14 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
       }
     }
   } else {
-    log('作者跳过:' + authorDecision.decisionReason);
+    log('作者跳过:' + authorDecision.decisionReason + '；仅触达已确认的求租笔记作者');
   }
 
-  if (authorDecision.categoryFallback) {
-    log('评论区跳过:笔记进入兜底分类，信息不足以安全触达');
-    return { sent, done };
+  // 只有“作者本人已确认是服务区内求租者”的笔记，才继续看评论区。
+  // 房东、转租、房源和同行笔记在这里直接结束，绝不在它们的评论区留言。
+  if (!engine.shouldCommentNoteAuthor(authorDecision)) {
+    log('评论区跳过:仅处理已确认的求租笔记，不会在房源方或同行笔记下回复。');
+    return { sent, done, decision: authorDecision };
   }
 
   const leads = ((detail && detail.commentsList) || [])
@@ -695,7 +718,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
     })
     .filter((item) => item.decision.eligible && item.can_auto_reply !== false)
     .slice(0, Number(cfg.comment_leads_per_note) || 3);
-  log('评论区识别到明确需求 ' + leads.length + ' 条');
+  log('求租笔记评论区识别到明确需求 ' + leads.length + ' 条');
   for (const item of leads) {
     if (shouldStop()) break;
     const key = [note.id, item.user_link || item.nick, item.content].join('|');
@@ -708,7 +731,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
       const gate = throttle.canComment({ ignoreGap: true });
       if (!gate.ok) { log('评论区回复停止:' + gate.reason); break; }
     }
-    log((dry ? '[草稿] ' : '') + '回复评论者 ' + item.nick + ':' + text);
+    log((dry ? '[草稿] ' : '') + '回复求租评论者 ' + item.nick + ':' + text);
     const response = await engine.replyOpenNoteComment({ client, target, item, text, dry, shouldStop });
     result({ targetType: 'commenter', nick: item.nick, content: item.content, text, response });
     log((response.ok ? '✓ ' : '✗ ') + response.msg);
@@ -718,7 +741,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
       try { db.insertComment({ noteId: note.id + ':reply:' + (item.user_link || item.nick) + ':' + item.content.slice(0, 16), noteTitle: note.title, noteUrl: note.url, content: text, status: 'sent' }); } catch (e) {}
     }
   }
-  return { sent, done };
+  return { sent, done, decision: authorDecision };
 }
 
 async function _processOutbound(cfg, t, dry) {
@@ -731,7 +754,9 @@ async function _processOutbound(cfg, t, dry) {
       const totals = await engageOpenNote({ client, target, note: t, detail, cfg, dry, shouldStop: () => !machine.running, log: (m) => emitLog('  ' + m), result: (lead) => emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', target_type: lead.targetType, nickname: lead.nick, source_content: lead.content, comment: lead.text, ok: lead.response.ok, dry }) });
       machine.done += totals.done;
       machine.sent += totals.sent;
+      if (totals.decision) db.recordTaskRunDecision({ runId: machine.runId, keyword: t.sourceKeyword || '未标记关键词', note: t, decision: totals.decision, replyCount: totals.sent });
       emitEvent('status', machineStatus());
+      emitRunStats();
     } });
   } catch (e) { if (isCdpConnectionError(e)) resetMachineConnection(); emitLog('  跳过:' + e.message); }
 }
@@ -805,6 +830,11 @@ async function handleConfig(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try { res.end(JSON.stringify({ ok: true, config: db.getConfig() })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
+async function handleRunStats(req, res, q) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try { res.end(JSON.stringify({ ok: true, ...db.taskRunReport(q.get('run_id') || machine.runId) })); }
+  catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
 
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
@@ -824,6 +854,12 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/inbox-run') { await handleInboxRun(req, res, u.searchParams); return; }
   if (u.pathname === '/api/engine/start') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine(), status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
+  if (u.pathname === '/api/engine/clear-cache') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (!clearMachineCache()) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '任务仍在运行，请先停止' })); return; }
+    res.end(JSON.stringify({ ok: true, status: machineStatus() })); return;
+  }
+  if (u.pathname === '/api/engine/run-stats') { await handleRunStats(req, res, u.searchParams); return; }
   if (u.pathname === '/api/engine/status') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });

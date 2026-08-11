@@ -3,7 +3,9 @@
 # 启动后会弹出应用窗口;这个终端窗口保持开着 = 程序在运行,关掉应用后可关闭它。
 
 export PATH="/opt/homebrew/bin:$PATH"
-cd "/Users/liufeng/Documents/项目/小红书自动获取线索/client" || { echo "找不到项目目录"; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$SCRIPT_DIR/.node/bin:$PATH"
+cd "$SCRIPT_DIR/client" || { echo "找不到项目目录"; exit 1; }
 
 # 关掉可能残留的旧实例,避免端口被占
 pkill -f "electron/main.js" 2>/dev/null

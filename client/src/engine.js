@@ -161,6 +161,12 @@ function noteClassificationDecision(classification, minConfidence = 0.65) {
   return Object.assign({}, c, { label, eligible, decisionReason: reason });
 }
 
+// 外呼只面向笔记作者本人，且必须是已确认的求租者。
+// 不把“评论区里看起来在找房的人”作为外呼对象，避免在房东或同行笔记下触达。
+function shouldCommentNoteAuthor(decision) {
+  return !!decision && decision.eligible === true && decision.role === 'tenant';
+}
+
 async function classifyNotePublisher(note, cfg = {}) {
   if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim()) {
     return noteClassificationDecision({
@@ -1142,4 +1148,4 @@ async function replyOpenNoteComment({ client, target, item, text, dry = true, sh
   return { ok: true, dry: false, msg: '评论区回复已发送' };
 }
 
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, categoryClassificationDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment };
+module.exports = { connect, buildSearchUrl, scanClean, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, categoryClassificationDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment };

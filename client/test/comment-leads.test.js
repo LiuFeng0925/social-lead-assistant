@@ -2,7 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { leadTextDecision, leadActorDecision, replyOpenNoteComment } = require('../src/engine');
+const { leadTextDecision, leadActorDecision, replyOpenNoteComment, shouldCommentNoteAuthor } = require('../src/engine');
+
+test('outreach only comments a confirmed tenant note author', () => {
+  assert.equal(shouldCommentNoteAuthor({ role: 'tenant', eligible: true }), true);
+  assert.equal(shouldCommentNoteAuthor({ role: 'agent', eligible: true }), false);
+  assert.equal(shouldCommentNoteAuthor({ role: 'supply', eligible: false }), false);
+  assert.equal(shouldCommentNoteAuthor({ role: 'tenant', eligible: false }), false);
+});
 
 test('comment lead detection accepts explicit rental demand', () => {
   assert.equal(leadTextDecision('长阳附近还有两居吗？预算五千，月底入住').eligible, true);
