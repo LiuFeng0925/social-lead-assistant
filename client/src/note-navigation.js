@@ -17,6 +17,22 @@ function parseEvalJson(value) {
   }
 }
 
+function isSearchListPath(pathname) {
+  return /^\/search_result(?:_ai)?\/?$/.test(String(pathname || ''));
+}
+
+function decodedSearchKeyword(value) {
+  let decoded = String(value || '');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch (e) { break; }
+  }
+  return decoded.replace(/\s+/g, ' ').trim();
+}
+
 function findNoteCardExpr(note) {
   const noteId = noteIdOf(note);
   const title = String((note && note.title) || '').replace(/\s+/g, ' ').trim();
@@ -103,7 +119,7 @@ function detailStateExpr(note) {
     var hasDetailMap = !!(noteId && map && map[noteId]);
     var currentMatches = !!(noteId && cur === noteId);
     var inExplore = href.indexOf('/explore/') >= 0;
-    var inSearchDetail = !!(noteId && href.indexOf('/search_result/' + noteId) >= 0);
+    var inSearchDetail = !!(noteId && (href.indexOf('/search_result/' + noteId) >= 0 || href.indexOf('/search_result_ai/' + noteId) >= 0));
     return JSON.stringify({ open: !!(inExplore || inSearchDetail || urlMatches), ready: !!(urlMatches || hasDetailMap || currentMatches), urlMatches: urlMatches, hasDetailMap: hasDetailMap, currentNoteId: cur });
   })()`;
 }
@@ -113,8 +129,42 @@ function listStateExpr() {
     var path = String(location.pathname || '');
     var cardCount = 0;
     try { cardCount = document.querySelectorAll('a[href*="/explore/"],a[href*="/search_result/"]').length; } catch(e) {}
-    return JSON.stringify({ onSearch: path === '/search_result', cardCount: cardCount, href: String(location.href || '') });
+    return JSON.stringify({ onSearch: /^\\/search_result(?:_ai)?\\/?$/.test(path), cardCount: cardCount, href: String(location.href || '') });
   })()`;
+}
+
+function searchScrollStateExpr() {
+  return `(function(){
+    var nodes=document.querySelectorAll('.ai-feeds-page,body *'),best=null;
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i],r=el.getBoundingClientRect(),max=Math.max(0,(el.scrollHeight||0)-(el.clientHeight||0));
+      if(max<100||r.width<300||r.height<200)continue;
+      var score=max+(String(el.className||'').indexOf('ai-feeds-page')>=0?1000000:0);
+      if(!best||score>best.score)best={el:el,score:score,r:r,max:max};
+    }
+    if(!best)return JSON.stringify({found:false,top:Math.max(0,Math.round(window.scrollY||0)),max:0,x:500,y:500});
+    return JSON.stringify({found:true,top:Math.max(0,Math.round(best.el.scrollTop||0)),max:Math.round(best.max),x:Math.round(best.r.left+best.r.width/2),y:Math.round(best.r.top+Math.min(best.r.height-80,Math.max(120,best.r.height/2)))});
+  })()`;
+}
+
+function resetSearchScrollExpr() {
+  return `(function(){
+    var nodes=document.querySelectorAll('.ai-feeds-page,body *'),best=null;
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i],r=el.getBoundingClientRect(),max=Math.max(0,(el.scrollHeight||0)-(el.clientHeight||0));
+      if(max<100||r.width<300||r.height<200)continue;
+      var score=max+(String(el.className||'').indexOf('ai-feeds-page')>=0?1000000:0);
+      if(!best||score>best.score)best={el:el,score:score};
+    }
+    if(best){best.el.scrollTop=0;try{best.el.dispatchEvent(new Event('scroll',{bubbles:true}));}catch(e){}return 'container';}
+    try{window.scrollTo(0,0);}catch(e){}return 'window';
+  })()`;
+}
+
+async function resetSearchListScroll({ client, target }) {
+  await client.evaluate({ target, expression: resetSearchScrollExpr() });
+  await sleep(650);
+  return evalJson(client, target, searchScrollStateExpr());
 }
 
 function sameSearchContext(currentHref, expectedHref) {
@@ -122,7 +172,8 @@ function sameSearchContext(currentHref, expectedHref) {
   try {
     const current = new URL(currentHref);
     const expected = new URL(expectedHref);
-    return current.pathname === expected.pathname && current.searchParams.get('keyword') === expected.searchParams.get('keyword');
+    if (!isSearchListPath(current.pathname) || !isSearchListPath(expected.pathname)) return false;
+    return decodedSearchKeyword(current.searchParams.get('keyword')) === decodedSearchKeyword(expected.searchParams.get('keyword'));
   } catch (e) {
     return false;
   }
@@ -178,57 +229,59 @@ async function ensureSearchList({ client, target, searchUrl, onLog = () => {} })
   const current = await evalJson(client, target, listStateExpr());
   if (current.onSearch && Number(current.cardCount || 0) > 0 && sameSearchContext(current.href, searchUrl)) return current;
   if (!searchUrl) throw new Error('not_on_search_list');
-  onLog('切回该笔记所属的搜索结果页');
-  await client.navigate({ target, url: searchUrl });
-  const state = await waitForList({ client, target });
-  if (!state.onSearch || Number(state.cardCount || 0) <= 0) throw new Error('search_list_not_ready');
-  return state;
+  // Closing a note can reveal the right result page before its virtualized card
+  // list has hydrated. Going back at that moment leaves the correct search page
+  // and makes the next keyword's top search box unavailable. Stay put and wait.
+  if (current.onSearch && sameSearchContext(current.href, searchUrl)) {
+    onLog('已回到当前关键词搜索页，等待列表恢复');
+    const state = await waitForList({ client, target, timeoutMs: 15000 });
+    if (state.onSearch && Number(state.cardCount || 0) > 0 && sameSearchContext(state.href, searchUrl)) return state;
+    throw new Error('search_list_not_ready');
+  }
+  if (client.goBack) {
+    onLog('通过页面历史返回该笔记所属的搜索结果页');
+    await client.goBack({ target }).catch(() => {});
+    const state = await waitForList({ client, target, timeoutMs: 15000 });
+    if (state.onSearch && Number(state.cardCount || 0) > 0 && sameSearchContext(state.href, searchUrl)) return state;
+  }
+  throw new Error('search_list_not_ready');
 }
 
-async function locateNoteCard({ client, target, note, searchUrl, onLog = () => {}, maxScrollRounds = 8 }) {
+async function locateNoteCard({ client, target, note, searchUrl, onLog = () => {}, maxScrollRounds = 12 }) {
   await ensureSearchList({ client, target, searchUrl, onLog });
-  let reloaded = false;
-  for (let round = 0; round < maxScrollRounds; round++) {
-    const hit = await evalJson(client, target, findNoteCardExpr(note));
-    if (hit.ok) return hit;
-    if (round < 4) {
-      await client.wheelScroll({ target, x: rand(420, 760), y: rand(260, 560), totalDeltaY: rand(520, 920) }).catch(() => {});
-      await sleep(rand(650, 1400));
-    } else if (searchUrl && !reloaded) {
-      reloaded = true;
-      onLog('当前列表没找到目标笔记,快速重载后再试');
-      await client.navigate({ target, url: searchUrl });
-      await waitForList({ client, target });
-    } else {
-      await client.wheelScroll({ target, x: rand(420, 760), y: rand(260, 560), totalDeltaY: rand(520, 920) }).catch(() => {});
+  if (Number(note && note.scanOrder) === 0) await resetSearchListScroll({ client, target }).catch(() => {});
+  async function scanDown(rounds) {
+    for (let round = 0; round < rounds; round++) {
+      const hit = await evalJson(client, target, findNoteCardExpr(note));
+      if (hit.ok) return hit;
+      const scroll = await evalJson(client, target, searchScrollStateExpr()).catch(() => ({}));
+      if (Number(scroll.max) > 0 && Number(scroll.top) >= Number(scroll.max) - 20) break;
+      const x = Number(scroll.x) || rand(420, 760);
+      const y = Number(scroll.y) || rand(260, 560);
+      await client.wheelScroll({ target, x, y, totalDeltaY: rand(520, 920) }).catch(() => {});
       await sleep(rand(650, 1400));
     }
+    return null;
   }
+  let hit = await scanDown(maxScrollRounds);
+  if (hit) return hit;
+  // A failed card leaves the virtualized list at the bottom. Without this
+  // reset, every later note starts from the same dead end and fails in a row.
+  onLog('当前滚动位置未找到，回到列表顶部再完整定位一次');
+  await resetSearchListScroll({ client, target }).catch(() => {});
+  hit = await scanDown(maxScrollRounds);
+  if (hit) return hit;
   throw new Error('note_card_not_found:' + noteIdOf(note));
 }
 
 async function openNoteFromList({ client, target, note, searchUrl = note && note.searchUrl, onLog = () => {} }) {
   const noteId = noteIdOf(note);
   if (!noteId) throw new Error('note_id_required');
-  async function openDirectly(reason) {
-    if (!note.url) return null;
-    let directUrl;
-    try { directUrl = new URL(note.url, 'https://www.xiaohongshu.com').toString(); } catch (e) { return null; }
-    onLog('列表定位失败(' + reason + '),改用刚采集的笔记链接打开');
-    await client.navigate({ target, url: directUrl });
-    const directState = await waitForJson({
-      client, target, expression: detailStateExpr(note), timeoutMs: 15000,
-      ok: (s) => s.open || s.ready
-    });
-    return (directState.open || directState.ready) ? { ...directState, openedDirectly: true } : null;
-  }
-
   let hit;
   try {
     hit = await locateNoteCard({ client, target, note, searchUrl, onLog });
   } catch (error) {
-    const direct = await openDirectly(error.message);
-    if (direct) return direct;
+    onLog('列表定位失败(' + error.message + '),跳过本篇，不直接跳转笔记链接');
     throw error;
   }
   onLog('从搜索列表点开笔记:' + ((note && note.title) || noteId));
@@ -239,9 +292,6 @@ async function openNoteFromList({ client, target, note, searchUrl = note && note
     ok: (s) => s.open || s.ready
   });
   if (!state.open && !state.ready) {
-    const direct = await openDirectly('note_detail_not_opened');
-    if (direct) return direct;
-    if (searchUrl) await client.navigate({ target, url: searchUrl }).catch(() => {});
     throw new Error('note_detail_not_opened:' + noteId);
   }
   return state;
@@ -290,12 +340,19 @@ async function closeCurrentNote({ client, target, note = {}, searchUrl = note.se
 }
 
 module.exports = {
+  isSearchListPath,
+  decodedSearchKeyword,
   findNoteCardExpr,
   detailStateExpr,
   listStateExpr,
+  searchScrollStateExpr,
+  resetSearchScrollExpr,
+  resetSearchListScroll,
   findCloseButtonExpr,
   sameSearchContext,
   parseEvalJson,
+  ensureSearchList,
+  locateNoteCard,
   openNoteFromList,
   closeCurrentNote
 };

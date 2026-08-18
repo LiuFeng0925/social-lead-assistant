@@ -24,7 +24,16 @@ test('console exposes per-run keyword statistics and judgement evidence', () => 
   assert.ok(html.includes('id="runstats-select"'), 'past runs should be selectable');
   assert.ok(html.includes('/api/engine/run-stats'), 'statistics should load from the run-statistics endpoint');
   assert.ok(html.includes('判断明细'), 'the panel should expose judgement evidence');
+  assert.ok(html.includes("Number(item.model_failed)"), 'model failures should render as their own decision state');
+  assert.ok(html.includes("['调用失败', totals.failed_count]"), 'model failures should have their own summary metric');
   assert.ok(html.includes('有用＝笔记作者符合获客模型且地区匹配'), 'the useful-note definition should be visible');
+});
+
+test('outbound machine refreshes search results in small fresh batches', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.match(server, /OUTBOUND_FRESH_BATCH_SIZE = 8/);
+  assert.match(server, /处理完立即刷新当前列表/);
+  assert.match(server, /keywordCollected/);
 });
 
 test('task settings expose fixed outreach copy and clarify pending analysis count', () => {

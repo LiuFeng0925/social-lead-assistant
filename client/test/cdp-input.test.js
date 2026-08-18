@@ -32,6 +32,15 @@ test('typing a comment uses one insert command', async () => {
   assert.equal(calls[0].timeoutMs, 3000);
 });
 
+test('select all includes the explicit Chromium editing command', async () => {
+  const client = new XhsCdpClient();
+  const sequences = [];
+  client.sendCommandSequence = async (request) => { sequences.push(request); return [{}, {}]; };
+  await client.selectAll({ target: {} });
+  assert.equal(sequences.length, 1);
+  assert.deepEqual(sequences[0].commands[0].params.commands, ['SelectAll']);
+});
+
 test('a click keeps mouse press and release in one CDP session', async () => {
   const client = new XhsCdpClient();
   const commands = [];

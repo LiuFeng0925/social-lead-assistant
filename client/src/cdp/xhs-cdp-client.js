@@ -197,6 +197,21 @@ class XhsCdpClient {
     await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 180)));
   }
 
+  async selectAll({ target }) {
+    const modifiers = process.platform === 'darwin' ? 4 : 2; // Meta on macOS, Ctrl elsewhere
+    await this.sendCommandSequence({
+      target,
+      timeoutMs: 2500,
+      commands: [
+        // macOS Chromium may receive Meta+A without applying the editing action.
+        // The explicit CDP editing command makes the selection reliable while
+        // retaining the same real keyboard event path.
+        { method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers, commands: ['SelectAll'] } },
+        { method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers } }
+      ]
+    });
+  }
+
   async pressKey({ target, key, code, windowsVirtualKeyCode }) {
     await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode }, timeoutMs: 2500 }).catch(() => {});
     await this.sendCommand({ target, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key, code, windowsVirtualKeyCode, nativeVirtualKeyCode: windowsVirtualKeyCode }, timeoutMs: 2500 }).catch(() => {});

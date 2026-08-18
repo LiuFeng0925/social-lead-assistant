@@ -5,7 +5,8 @@
 
 const { XhsCdpClient } = require('./cdp/xhs-cdp-client');
 const { check, rejectsAgent } = require('./compliance');
-const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
+const { openNoteFromList, closeCurrentNote, resetSearchListScroll } = require('./note-navigation');
+const { pageSecurityReason } = require('./login-status');
 const llm = require('./llm');
 const inboxUtils = require('./inbox-utils');
 const leadModel = require('./lead-model');
@@ -22,30 +23,73 @@ const FEEDS_PICK = `(function(){
   return arr;
 })()`;
 
-const EXPR_PROBE = `(function(){var c=document.querySelectorAll('a[href*="/explore/"],a[href*="/search_result/"]').length;return document.readyState+'|'+c;})()`;
+const EXPR_PROBE = `(function(){var c=document.querySelectorAll('a[href*="/explore/"],a[href*="/search_result/"]').length;return JSON.stringify({readyState:document.readyState,count:c,url:String(location.href||'')});})()`;
 
+// 搜索页以“真实可见卡片”的屏幕坐标决定采集顺序。
+// feeds 只按 note id 补充标题/作者等元数据，绝不再决定先后顺序。
 const EXPR_EXTRACT = `(function(){
-  var arr = ${FEEDS_PICK};
-  var out = [];
-  for (var i=0;i<arr.length;i++){
-    var item = arr[i] || {};
-    if (item.modelType && item.modelType !== 'note') continue;
-    var nc = item.noteCard || item.note_card || {};
-    if (!nc || typeof nc !== 'object') continue;
-    var user = nc.user || {}; var it = nc.interactInfo || {}; var cover = nc.cover || {};
-    var id = item.id || nc.noteId || '';
-    var xsec = item.xsecToken || (user && user.xsecToken) || '';
+  function norm(v){ return String(v == null ? '' : v).replace(/\\s+/g,' ').trim(); }
+  function noteId(href){ var m=String(href||'').match(/\\/(?:explore|search_result)\\/([^?/#]+)/); return m?m[1]:''; }
+  function absoluteUrl(href){ try{return new URL(String(href||''),location.origin).toString();}catch(e){return String(href||'');} }
+  function visibleRect(el){
+    if(!el || el.offsetParent===null) return null;
+    var r=el.getBoundingClientRect(), vh=window.innerHeight||900;
+    if(r.width<80 || r.height<60 || r.bottom<60 || r.top>vh-45) return null;
+    return r;
+  }
+  function cardOf(a){
+    try{return a.closest('section,.note-item,li,div[class*="note-item"],div[class*="note-card"]')||a.parentElement||a;}catch(e){return a;}
+  }
+  function textFrom(card, selectors){
+    for(var i=0;i<selectors.length;i++){
+      var el=null; try{el=card.querySelector(selectors[i]);}catch(e){}
+      var text=norm(el&&(el.innerText||el.textContent)); if(text)return text;
+    }
+    return '';
+  }
+
+  var feedArr=${FEEDS_PICK}, feedById={};
+  for(var f=0;f<feedArr.length;f++){
+    var item=feedArr[f]||{}, nc=item.noteCard||item.note_card||{}, user=nc.user||{}, it=nc.interactInfo||{}, cover=nc.cover||{};
+    var fid=String(item.id||nc.noteId||''); if(!fid)continue;
+    feedById[fid]={
+      type:nc.type||'', title:nc.displayTitle||'', author:user.nickName||user.nickname||'', userId:user.userId||'',
+      likes:it.likedCount!=null?it.likedCount:'', collects:it.collectedCount!=null?it.collectedCount:'', comments:it.commentCount!=null?it.commentCount:'',
+      cover:cover.urlDefault||cover.urlPre||'', xsecToken:item.xsecToken||(user&&user.xsecToken)||''
+    };
+  }
+
+  var anchors=[].slice.call(document.querySelectorAll('a[class*="cover"][href*="/explore/"],a[class*="cover"][href*="/search_result/"]'));
+  if(!anchors.length) anchors=[].slice.call(document.querySelectorAll('a[href*="/explore/"],a[href*="/search_result/"]'));
+  var out=[], seen={};
+  for(var i=0;i<anchors.length;i++){
+    var a=anchors[i], href=a.href||a.getAttribute('href')||'', id=noteId(href), r=visibleRect(a);
+    if(!id||!r||seen[id])continue;
+    seen[id]=1;
+    var card=cardOf(a), meta=feedById[id]||{};
+    var title=textFrom(card,['a[class*="title"]','[class*="title"]','span[class*="title"]'])||meta.title||'';
+    var author=textFrom(card,['a[href*="/user/profile"]','[class*="author"]','[class*="name"]'])||meta.author||'';
+    var xsec=''; try{xsec=new URL(absoluteUrl(href)).searchParams.get('xsec_token')||'';}catch(e){}
     out.push({
-      id: id, type: nc.type || '', title: nc.displayTitle || '',
-      author: user.nickName || user.nickname || '', userId: user.userId || '',
-      likes: it.likedCount!=null?it.likedCount:'', collects: it.collectedCount!=null?it.collectedCount:'',
-      comments: it.commentCount!=null?it.commentCount:'',
-      cover: cover.urlDefault || cover.urlPre || '', xsecToken: xsec,
-      url: id ? ('https://www.xiaohongshu.com/explore/'+id+(xsec?('?xsec_token='+xsec+'&xsec_source=pc_search'):'')) : ''
+      id:id, type:meta.type||'', title:title, author:author, userId:meta.userId||'',
+      likes:meta.likes||'', collects:meta.collects||'', comments:meta.comments||'', cover:meta.cover||'',
+      xsecToken:xsec||meta.xsecToken||'', url:absoluteUrl(href),
+      visualTop:Math.round(r.top), visualLeft:Math.round(r.left)
     });
   }
-  return JSON.stringify({ count: out.length, notes: out });
+  return JSON.stringify({count:out.length,notes:out});
 })()`;
+
+function sortVisualNotes(notes, rowTolerance = 36) {
+  return (notes || []).slice().sort((a, b) => {
+    const at = Number(a && a.visualTop) || 0;
+    const bt = Number(b && b.visualTop) || 0;
+    const al = Number(a && a.visualLeft) || 0;
+    const bl = Number(b && b.visualLeft) || 0;
+    if (Math.abs(at - bt) <= rowTolerance) return al - bl || at - bt;
+    return at - bt || al - bl;
+  });
+}
 
 const DETAIL_EXTRACT = `(function(){
   try{
@@ -286,11 +330,16 @@ function validateLlmLocation(raw, note, cfg = {}) {
   let reason = String((raw && raw.reason) || '').trim() || '大模型未提供地区判断理由';
   let matchedServiceArea = String((raw && raw.matchedServiceArea) || '').trim();
   const locationConfidence = Number(raw && raw.locationConfidence) || 0;
-  const locationEvidence = String((raw && raw.locationEvidence) || '').replace(/\s+/g, ' ').trim();
+  const rawEvidenceQuotes = raw && raw.locationEvidenceQuotes;
+  const locationEvidenceQuotes = (Array.isArray(rawEvidenceQuotes) ? rawEvidenceQuotes : [raw && raw.locationEvidence])
+    .map((quote) => String(quote || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const locationEvidence = locationEvidenceQuotes.join('；');
   if (!serviceAreas.length) {
     return { locationMatch: 'unknown', reason: '未配置服务区域', matchedServiceArea: '', locationConfidence: 0, locationEvidence };
   }
-  const evidenceExistsInBody = locationEvidence.length >= 2 && sourceText.includes(locationEvidence);
+  const evidenceExistsInBody = locationEvidenceQuotes.some((quote) => quote.length >= 2 && sourceText.includes(quote));
   if (locationMatch === 'match') {
     const matchedAreaIsConfigured = serviceAreas.includes(String(matchedServiceArea || '').trim());
     if (!matchedAreaIsConfigured || Number(locationConfidence) < 0.75 || !evidenceExistsInBody) {
@@ -387,9 +436,229 @@ async function connect(endpoint, onPointer) {
   return { client, target };
 }
 
+function accountSecurityError(reason) {
+  const error = new Error('account_security_block:' + (reason || '安全验证页面'));
+  error.code = 'ACCOUNT_SECURITY_BLOCK';
+  error.userMessage = reason || '安全验证页面';
+  return error;
+}
+
+function isAccountSecurityError(error) {
+  return !!error && (error.code === 'ACCOUNT_SECURITY_BLOCK' || /^account_security_block:/.test(String(error.message || error)));
+}
+
+async function assertNoAccountSecurityPage({ client, target }) {
+  let page = {};
+  try {
+    const result = await client.evaluate({
+      target,
+      expression: 'JSON.stringify({url:String(location.href||""),title:String(document.title||"")})'
+    });
+    page = JSON.parse(result && result.value || '{}');
+  } catch (e) { return page; }
+  const reason = pageSecurityReason(page);
+  if (reason) throw accountSecurityError(reason);
+  return page;
+}
+
+function canReturnHomeFromSecurityPage(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    const isXhs = parsed.hostname === 'xiaohongshu.com' || parsed.hostname.endsWith('.xiaohongshu.com');
+    return isXhs && /\/website-login\/error(?:\/|$)/i.test(parsed.pathname);
+  } catch (e) {
+    return false;
+  }
+}
+
+const SECURITY_HOME_PROBE = `(function(){
+  function visible(el){if(!el||el.offsetParent===null)return false;var r=el.getBoundingClientRect();return r.width>30&&r.height>20;}
+  var nodes=document.querySelectorAll('a,button,[role="button"],div,span');
+  for(var i=0;i<nodes.length;i++){
+    var el=nodes[i];
+    if(!visible(el)||(el.textContent||'').replace(/\\s+/g,' ').trim()!=='返回首页')continue;
+    var action=el.closest?(el.closest('a,button,[role="button"]')||el):el;
+    if(!visible(action))continue;
+    var r=action.getBoundingClientRect();
+    return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});
+  }
+  return '';
+})()`;
+
+// 只对安全错误页里小红书自带的“返回首页”操作一次；返回后任务仍保持暂停。
+// 扫码/验证码页不处理，避免把未完成的人工验证藏起来。
+async function returnHomeFromSecurityPage({ client, target }) {
+  let current = {};
+  try {
+    const r = await client.evaluate({ target, expression: 'JSON.stringify({url:String(location.href||""),title:String(document.title||"")})' });
+    current = JSON.parse(r && r.value || '{}');
+  } catch (e) { return { ok: false, reason: 'security_page_read_failed' }; }
+  if (!canReturnHomeFromSecurityPage(current.url)) return { ok: false, reason: 'not_returnable_security_page' };
+  let point = null;
+  try { point = JSON.parse((await client.evaluate({ target, expression: SECURITY_HOME_PROBE })).value || ''); } catch (e) {}
+  if (!point || !Number.isFinite(point.x)) return { ok: false, reason: 'home_button_not_found' };
+  await client.click({ target, x: point.x, y: point.y });
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await sleep(500);
+    try {
+      const r = await client.evaluate({ target, expression: 'JSON.stringify({url:String(location.href||""),title:String(document.title||"")})' });
+      const page = JSON.parse(r && r.value || '{}');
+      if (!pageSecurityReason(page) && /xiaohongshu\.com/i.test(page.url || '')) return { ok: true, page };
+    } catch (e) {}
+  }
+  return { ok: false, reason: 'home_not_restored' };
+}
+
 // ── 检索 + 滚动扫全 + 干净取数 ──
 function buildSearchUrl(keyword) {
   return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_search_result_notes`;
+}
+
+function normalizeSearchKeyword(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function decodeSearchKeyword(value) {
+  let decoded = String(value || '');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch (e) { break; }
+  }
+  return normalizeSearchKeyword(decoded);
+}
+
+function searchPageMatches(url, expectedKeyword) {
+  try {
+    const parsed = new URL(String(url || ''));
+    const isXhs = parsed.hostname === 'xiaohongshu.com' || parsed.hostname.endsWith('.xiaohongshu.com');
+    if (!isXhs || !/^\/search_result(?:_ai)?\/?$/.test(parsed.pathname)) return false;
+    return decodeSearchKeyword(parsed.searchParams.get('keyword')) === normalizeSearchKeyword(expectedKeyword);
+  } catch (e) {
+    return false;
+  }
+}
+
+function parseSearchPageProbe(value) {
+  let probe = {};
+  try { probe = typeof value === 'string' ? JSON.parse(value) : (value || {}); } catch (e) {}
+  return {
+    readyState: String(probe.readyState || ''),
+    count: Math.max(0, Number(probe.count) || 0),
+    url: String(probe.url || '')
+  };
+}
+
+function searchPageMismatchError(keyword, actualUrl) {
+  const error = new Error('search_page_mismatch:' + normalizeSearchKeyword(keyword));
+  error.code = 'SEARCH_PAGE_MISMATCH';
+  error.userMessage = '搜索页未正确打开，已停止采集，避免误读首页推荐';
+  error.actualUrl = String(actualUrl || '');
+  return error;
+}
+
+function isSearchPageMismatchError(error) {
+  return !!error && (error.code === 'SEARCH_PAGE_MISMATCH' || /^search_page_mismatch:/.test(String(error.message || error)));
+}
+
+const SEARCH_INPUT_PROBE = `(function(){
+  var selectors=['textarea#search-input','textarea[name="aiSearchTextarea"]','input.search-input','input#search-input','input[placeholder*="搜索"]','input[type="search"]','[role="searchbox"]'];
+  for(var s=0;s<selectors.length;s++){
+    var nodes=[];try{nodes=document.querySelectorAll(selectors[s]);}catch(e){}
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i],r=el.getBoundingClientRect(),style=getComputedStyle(el);
+      if(el.offsetParent===null||r.width<200||r.height<18||r.top<0||r.top>140||r.bottom<=0||r.right<=0||style.visibility==='hidden'||style.display==='none'||Number(style.opacity||1)<0.05)continue;
+      return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),value:String(el.value||el.textContent||''),placeholder:String(el.placeholder||el.getAttribute('aria-label')||'')});
+    }
+  }
+  return '';
+})()`;
+
+const SEARCH_SUBMIT_PROBE = `(function(){
+  var nodes=document.querySelectorAll('.input-box .submit-button-wrapper,.input-box .search-icon,.input-button .search-icon,[aria-label="搜索"],button[type="submit"]');
+  for(var i=0;i<nodes.length;i++){
+    var el=nodes[i],r=el.getBoundingClientRect(),style=getComputedStyle(el);
+    if(el.offsetParent===null||r.width<16||r.height<16||r.bottom<=0||r.right<=0||style.visibility==='hidden')continue;
+    return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});
+  }
+  return '';
+})()`;
+
+function parseSearchInputProbe(value) {
+  let input = null;
+  try { input = typeof value === 'string' ? JSON.parse(value) : value; } catch (e) {}
+  if (!input || !Number.isFinite(Number(input.x)) || !Number.isFinite(Number(input.y))) return null;
+  return { x: Number(input.x), y: Number(input.y), value: String(input.value || ''), placeholder: String(input.placeholder || '') };
+}
+
+async function searchFromPageUi({ client, target, keyword, onLog = () => {} }) {
+  let page = await assertNoAccountSecurityPage({ client, target });
+  if (searchPageMatches(page && page.url, keyword)) {
+    onLog(`当前已是该关键词的搜索结果页，直接复用:${keyword}`);
+    return { reused: true, url: page.url };
+  }
+  let input = null;
+  let escapeRecoveryTried = false;
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
+    input = parseSearchInputProbe(result && result.value);
+    if (input) break;
+    if (!escapeRecoveryTried && attempt === 3 && client.pressKey) {
+      escapeRecoveryTried = true;
+      onLog('搜索框暂时不可用，尝试按 Escape 关闭残留的笔记详情层');
+      await client.pressKey({ target, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }).catch(() => {});
+    }
+    await sleep(500);
+    page = await assertNoAccountSecurityPage({ client, target });
+    if (searchPageMatches(page && page.url, keyword)) {
+      onLog(`搜索页已在加载中，直接等待结果:${keyword}`);
+      return { reused: true, url: page.url };
+    }
+  }
+  if (!input) throw new Error('search_input_not_found');
+
+  onLog(`通过页面搜索框输入:${keyword}`);
+  if (!client.selectAll) throw new Error('search_select_all_unavailable');
+  let typed = '';
+  // Xiaohongshu currently renders two overlapping search textareas and keeps
+  // them in sync asynchronously.  The trusted keystrokes can already be in
+  // the real editor while the textarea returned by the DOM probe is still one
+  // render behind.  Give the page time to settle before rewriting or failing.
+  for (let writeAttempt = 0; writeAttempt < 3; writeAttempt++) {
+    const freshResult = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
+    const freshInput = parseSearchInputProbe(freshResult && freshResult.value);
+    if (freshInput) input = freshInput;
+    await client.click({ target, x: input.x, y: input.y });
+    await sleep(rand(350, 650));
+    await client.selectAll({ target });
+    await sleep(rand(180, 360));
+    await client.typeText({ target, text: keyword });
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
+      const current = parseSearchInputProbe(result && result.value);
+      typed = current ? normalizeSearchKeyword(current.value) : '';
+      if (typed === normalizeSearchKeyword(keyword)) break;
+      await sleep(250);
+    }
+    if (typed === normalizeSearchKeyword(keyword)) break;
+    if (writeAttempt < 2) onLog('搜索框同步较慢，自动重新全选确认');
+  }
+  if (typed !== normalizeSearchKeyword(keyword)) {
+    // One final read without more typing catches a late React state commit.
+    await sleep(1500);
+    const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
+    const current = parseSearchInputProbe(result && result.value);
+    typed = current ? normalizeSearchKeyword(current.value) : '';
+  }
+  if (typed !== normalizeSearchKeyword(keyword)) throw new Error('search_keyword_not_entered');
+  const submitResult = await client.evaluate({ target, expression: SEARCH_SUBMIT_PROBE }).catch(() => null);
+  const submit = parseSearchInputProbe(submitResult && submitResult.value);
+  if (!submit) throw new Error('search_submit_button_not_found');
+  await client.click({ target, x: submit.x, y: submit.y });
+  onLog(`已点击页面搜索按钮:${keyword}`);
+  return { reused: false };
 }
 
 // 当前视口内可见的笔记卡片中,随机挑一张返回其中心坐标(供"浏览时移过去看一眼")
@@ -404,17 +673,33 @@ const PICK_VISIBLE_CARD = `(function(){
 async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {}, shouldStop = () => false, filters = {} }) {
   const noteLimit = Math.max(1, Number(maxNotes) || 1);
   const url = buildSearchUrl(keyword);
-  onLog(`导航到搜索页:${keyword}`);
-  await client.navigate({ target, url });
+  await searchFromPageUi({ client, target, keyword, onLog });
   let ready = false;
+  let lastProbe = { readyState: '', count: 0, url: '' };
   for (let i = 0; i < 15; i++) {
     await sleep(1000);
-    try { const r = await client.evaluate({ target, expression: EXPR_PROBE }); const [rs, cnt] = String(r?.value || '').split('|'); if (rs === 'complete' && Number(cnt) > 0) { ready = true; break; } } catch (e) {}
+    await assertNoAccountSecurityPage({ client, target });
+    try {
+      const r = await client.evaluate({ target, expression: EXPR_PROBE });
+      lastProbe = parseSearchPageProbe(r && r.value);
+      if (lastProbe.readyState === 'complete' && lastProbe.count > 0 && searchPageMatches(lastProbe.url, keyword)) { ready = true; break; }
+    } catch (e) {}
   }
-  if (!ready) onLog('⚠ 未稳定就绪(需登录?),仍尝试');
+  if (!ready) {
+    if (!searchPageMatches(lastProbe.url, keyword) || lastProbe.readyState !== 'complete') {
+      throw searchPageMismatchError(keyword, lastProbe.url);
+    }
+    onLog(`搜索页已确认是当前关键词，但没有可见笔记:${keyword}`);
+    return [];
+  }
   try { await client.installCursor({ target }); } catch (e) {} // 先注入红点,保证后面点筛选时看得到鼠标
 
   try { await applyFilters({ client, target, filters, onLog }); } catch (e) { onLog('筛选应用失败(忽略):' + e.message); }
+  const afterFilters = await client.evaluate({ target, expression: EXPR_PROBE }).catch(() => null);
+  const filteredProbe = parseSearchPageProbe(afterFilters && afterFilters.value);
+  if (!searchPageMatches(filteredProbe.url, keyword)) throw searchPageMismatchError(keyword, filteredProbe.url);
+  try { await client.evaluate({ target, expression: 'window.scrollTo(0,0);"ok"' }); await sleep(500); } catch (e) {}
+  onLog('按页面顺序采集:从左到右、从上到下');
   let activeSearchUrl = url;
   try {
     const current = await client.evaluate({ target, expression: 'location.href' });
@@ -424,12 +709,15 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
   let stale = 0;
   for (let round = 0; round < maxRounds && stale < 4 && all.size < noteLimit; round++) {
     if (shouldStop()) { onLog('⏹ 收到停止,中断检索'); break; }
+    const pageCheck = await client.evaluate({ target, expression: EXPR_PROBE }).catch(() => null);
+    const roundProbe = parseSearchPageProbe(pageCheck && pageCheck.value);
+    if (!searchPageMatches(roundProbe.url, keyword)) throw searchPageMismatchError(keyword, roundProbe.url);
     let res = { notes: [] };
     try { const r = await client.evaluate({ target, expression: EXPR_EXTRACT }); res = JSON.parse(r.value); } catch (e) {}
     const before = all.size;
-    for (const n of (res.notes || [])) {
+    for (const n of sortVisualNotes(res.notes || [])) {
       if (all.size >= noteLimit) break;
-      if (n.id && !all.has(n.id)) all.set(n.id, { ...n, searchUrl: activeSearchUrl, searchKeyword: keyword });
+      if (n.id && !all.has(n.id)) all.set(n.id, { ...n, searchUrl: activeSearchUrl, searchKeyword: keyword, scanOrder: all.size });
     }
     const added = all.size - before;
     onLog(`第 ${round + 1} 轮:本屏 ${res.count || 0},新增 ${added},累计 ${all.size}`);
@@ -446,6 +734,7 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
     await client.wheelScroll({ target, x: rand(400, 800), y: rand(300, 520), totalDeltaY: rand(700, 1100) }).catch(() => {}); // trusted 滚轮(拟人)
     await sleep(rand(700, 1700) + (Math.random() < 0.14 ? rand(800, 1600) : 0)); // 拟人停顿:随机 + 14% 概率长停
   }
+  await resetSearchListScroll({ client, target }).catch(() => {});
   return [...all.values()].slice(0, noteLimit);
 }
 
@@ -454,8 +743,9 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
   if (!note || !note.id) throw new Error('read_detail_note_required');
   const b = Object.assign({ imagesMin: 2, imagesMax: 5, bodyMin: 1500, bodyMax: 5000, cScrollMin: 2, cScrollMax: 5, cDwellMin: 1800, cDwellMax: 4500 }, browse || {});
   const openState = await openNoteFromList({ client, target, note, onLog });
+  let preserveSecurityPage = false;
   try {
-    for (let k = 0; k < 12; k++) { if (shouldStop()) break; await sleep(800); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
+    for (let k = 0; k < 12; k++) { if (shouldStop()) break; await sleep(800); await assertNoAccountSecurityPage({ client, target }); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
     await sleep(rand(900, 1800));
     let detail; try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); detail = JSON.parse(r.value); } catch (e) { detail = { ok: false, error: e.message }; }
     // ③ 图文按实际张数看图:点右箭头切图,直到轮播 transform 不再变化(已是最后一张)就停,绝不超过实际图片数
@@ -502,8 +792,11 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
     } catch (e) { detail.commentsList = []; }
     if (onBeforeClose && !shouldStop()) { try { await onBeforeClose({ client, target, note, detail }); } catch (e) {} } // 浏览完、关闭前:自动评论在这里评
     return detail;
+  } catch (error) {
+    preserveSecurityPage = isAccountSecurityError(error);
+    throw error;
   } finally {
-    await closeCurrentNote({ client, target, note, onLog, openedDirectly: !!(openState && openState.openedDirectly) });
+    if (!preserveSecurityPage) await closeCurrentNote({ client, target, note, onLog, openedDirectly: !!(openState && openState.openedDirectly) });
   }
 }
 
@@ -690,9 +983,9 @@ async function clickByText({ client, target, label }) {
 // 筛选面板里的选项芯片(排序/类型/时间/范围都是 div.tags),按精确文字找,返回坐标+是否已选中
 function FIND_TAG(label) {
   const j = JSON.stringify(label);
-  return '(function(){var want=' + j + ';var nodes=document.querySelectorAll("div[class*=tags]");var best=null;'
-    + 'for(var i=0;i<nodes.length;i++){var e=nodes[i];if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null)continue;'
-    + 'var r=e.getBoundingClientRect();if(r.width<=0||r.height<=0)continue;'
+  return '(function(){var want=' + j + ';var nodes=document.querySelectorAll(".filter-panel div.tags");var best=null;'
+    + 'for(var i=0;i<nodes.length;i++){var e=nodes[i],s=getComputedStyle(e);if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null||e.getAttribute("aria-hidden")==="true"||s.visibility==="hidden"||s.display==="none"||Number(s.opacity||1)<0.05)continue;'
+    + 'var r=e.getBoundingClientRect();if(r.width<=20||r.height<=15||r.bottom<=0||r.right<=0)continue;'
     + 'var active=((e.className||"").toString().indexOf("active")>=0);'
     + 'if(!best||r.top<best.top)best={x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),active:active};}'
     + 'return best?JSON.stringify(best):"";})()';
@@ -710,31 +1003,53 @@ function JS_CLICK_TAG(label) {
 // 校验某项是否已选中(active)
 function TAG_ACTIVE(label) {
   const j = JSON.stringify(label);
-  return '(function(){var want=' + j + ';var n=document.querySelectorAll("div[class*=tags]");for(var i=0;i<n.length;i++){var e=n[i];if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null)continue;return (e.className||"").toString().indexOf("active")>=0?"YES":"no";}return "gone";})()';
+  return '(function(){var want=' + j + ';var n=document.querySelectorAll(".filter-panel div.tags");for(var i=0;i<n.length;i++){var e=n[i],s=getComputedStyle(e);if((e.textContent||"").trim()!==want)continue;if(e.offsetParent===null||e.getAttribute("aria-hidden")==="true"||s.visibility==="hidden"||s.display==="none"||Number(s.opacity||1)<0.05)continue;return (e.className||"").toString().indexOf("active")>=0?"YES":"no";}return "gone";})()';
 }
 // 当前已选中的非默认项汇总(给日志,证明真生效;只看可见面板)
-const ACTIVE_SUMMARY = '(function(){var n=document.querySelectorAll("div[class*=tags]");var a=[];for(var i=0;i<n.length;i++){var e=n[i];if(e.offsetParent===null)continue;var t=(e.textContent||"").trim();if(t&&t!=="不限"&&t!=="综合"&&(e.className||"").toString().indexOf("active")>=0&&a.indexOf(t)<0)a.push(t);}return a.join("、");})()';
+const ACTIVE_SUMMARY = '(function(){var n=document.querySelectorAll(".filter-panel div.tags");var a=[];for(var i=0;i<n.length;i++){var e=n[i],s=getComputedStyle(e);if(e.offsetParent===null||e.getAttribute("aria-hidden")==="true"||s.visibility==="hidden"||s.display==="none"||Number(s.opacity||1)<0.05)continue;var t=(e.textContent||"").trim();if(t&&t!=="不限"&&t!=="综合"&&(e.className||"").toString().indexOf("active")>=0&&a.indexOf(t)<0)a.push(t);}return a.join("、");})()';
+async function clickFilterPoint({ client, target, x, y }) {
+  const X = Math.round(Number(x)), Y = Math.round(Number(y));
+  if (!Number.isFinite(X) || !Number.isFinite(Y)) return false;
+  await client.humanMove({ target, toX: X, toY: Y }).catch(() => {});
+  if (client.sendCommandSequence) {
+    await client.sendCommandSequence({
+      target,
+      timeoutMs: 2500,
+      commands: [
+        { method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: X, y: Y, button: 'left', clickCount: 1 }, delayAfterMs: 80 },
+        { method: 'Input.dispatchMouseEvent', params: { type: 'mouseReleased', x: X, y: Y, button: 'left', clickCount: 1 } }
+      ]
+    });
+  } else {
+    await client.click({ target, x: X, y: Y });
+  }
+  return true;
+}
 // 慢动作可见点选:红点慢慢移过去(看得见)→ JS 点选一次(只点一次,小红书是"点一下切换",多点会切回去)
 async function pickTagOnce({ client, target, label, onLog }) {
   const r = await client.evaluate({ target, expression: FIND_TAG(label) });
   let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
   if (!p) { onLog('筛选·没找到「' + label + '」'); return; }
   if (p.active) { onLog('筛选·「' + label + '」已是选中'); return; }
-  await client.moveCursorVisual({ target, toX: p.x, toY: p.y }).catch(() => {}); // 红点慢慢挪过去(只动红点,真鼠标移动会把面板碰收起)
-  await sleep(rand(450, 800));
-  await client.evaluate({ target, expression: JS_CLICK_TAG(label) }).catch(() => {});
+  await clickFilterPoint({ client, target, x: p.x, y: p.y });
   onLog('筛选·点了「' + label + '」');
-  await sleep(rand(700, 1100));
+  await sleep(rand(1000, 1500));
 }
 async function findFilterBtn({ client, target }) {
-  const r = await client.evaluate({ target, expression: FIND_BY_TEXT('筛选') });
+  const expression = '(function(){var e=document.querySelector(".search-layout__top .filter");if(!e)return "";var r=e.getBoundingClientRect(),s=getComputedStyle(e);if(e.offsetParent===null||r.width<30||r.height<20||s.visibility==="hidden"||Number(s.opacity||1)<0.05)return "";return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()';
+  const r = await client.evaluate({ target, expression });
   let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
   return (p && Number.isFinite(p.x)) ? p : null;
 }
 async function panelOpen({ client, target }) {
-  // 只数"可见"的筛选芯片——关掉的面板可能以隐藏副本留在 DOM 里,不能算开着
-  const r = await client.evaluate({ target, expression: '(function(){var n=document.querySelectorAll("div[class*=tags]");var c=0;for(var i=0;i<n.length;i++)if(n[i].offsetParent!==null)c++;return c;})()' });
+  const r = await client.evaluate({ target, expression: '(function(){var e=document.querySelector(".filter-panel");if(!e)return 0;var r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>200&&r.height>100&&r.bottom>0&&r.right>0&&s.visibility!=="hidden"&&s.display!=="none"&&Number(s.opacity||1)>=0.05?1:0;})()' });
   return !!(r && Number(r.value) > 0);
+}
+async function findFilterCloseBtn({ client, target }) {
+  const expression = '(function(){var n=document.querySelectorAll(".filter-panel .operation");for(var i=0;i<n.length;i++){var e=n[i],s=getComputedStyle(e),r=e.getBoundingClientRect(),t=(e.textContent||"").replace(/\\s+/g," ").trim();if(t.indexOf("收起")<0||e.getAttribute("aria-hidden")==="true"||s.visibility==="hidden"||s.display==="none"||Number(s.opacity||1)<0.05||r.width<30||r.height<20)continue;return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});}return "";})()';
+  const r = await client.evaluate({ target, expression });
+  let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
+  return (p && Number.isFinite(p.x)) ? p : null;
 }
 // 按文字找可见元素,派发完整 指针+鼠标 事件序列(用来点「筛选」入口,比真鼠标坐标点击稳)
 function JS_CLICK_TEXT(text) {
@@ -746,13 +1061,12 @@ function JS_CLICK_TEXT(text) {
     + 'function fire(el,ty,C){try{el.dispatchEvent(new C(ty,o));}catch(_){try{el.dispatchEvent(new MouseEvent(ty,o));}catch(__){}}}'
     + 'fire(tg,"pointerdown",P);fire(tg,"mousedown",MouseEvent);fire(tg,"pointerup",P);fire(tg,"mouseup",MouseEvent);fire(tg,"click",MouseEvent);return "ok";})()';
 }
-// 健壮地点开筛选面板:已开就跳过;否则红点移过去(可见)+ JS 合成点击,检查是否真开,最多重试几次
+// 健壮地点开筛选面板:只用精确的真鼠标点击，不命中透明注入副本。
 async function openFilterPanel({ client, target, onLog }) {
   for (let k = 0; k < 4; k++) {
     if (await panelOpen({ client, target })) return true;
     const fb = await findFilterBtn({ client, target });
-    if (fb) { await client.moveCursorVisual({ target, toX: fb.x, toY: fb.y }).catch(() => {}); await sleep(rand(400, 700)); }
-    await client.evaluate({ target, expression: JS_CLICK_TEXT('筛选') }).catch(() => {});
+    if (fb) await clickFilterPoint({ client, target, x: fb.x, y: fb.y }).catch(() => {});
     await sleep(rand(1100, 1700));
   }
   return await panelOpen({ client, target });
@@ -761,27 +1075,35 @@ async function applyFilters({ client, target, filters = {}, onLog = () => {} }) 
   const want = (v, def) => (v && v !== def ? v : null);
   const picks = [['排序', want(filters.sort, '综合')], ['类型', want(filters.noteType, '不限')], ['时间', want(filters.noteTime, '不限')], ['范围', want(filters.noteRange, '不限')]].filter((x) => x[1]);
   if (!picks.length) { onLog('筛选:全部默认,无需设置'); return; }
-  // 1) 点开「筛选」面板(排序/类型/时间/范围都在这里面)
-  if (!(await openFilterPanel({ client, target, onLog }))) { onLog('筛选:面板没打开,跳过(可能页面没就绪)'); return; }
-  onLog('筛选:已点开筛选面板');
-  // 2) 逐项点选(每项只点一次)
+  // 新版页面选择一项后可能重绘面板，每项前都重新确认它确实开着。
   const wantLabels = picks.map((x) => x[1]);
-  for (const [dim, label] of picks) { await pickTagOnce({ client, target, label, onLog }); }
+  let announcedOpen = false;
+  for (const [dim, label] of picks) {
+    if (!(await openFilterPanel({ client, target, onLog }))) { onLog('筛选:面板没打开,跳过「' + label + '」'); continue; }
+    if (!announcedOpen) { onLog('筛选:已点开筛选面板'); announcedOpen = true; }
+    await pickTagOnce({ client, target, label, onLog });
+  }
   // 2.5) 读一次真实生效状态;只对"确实没生效"的补点一次(避免重复点把已选的切回去)
   await sleep(rand(400, 700));
+  await openFilterPanel({ client, target, onLog }).catch(() => false);
   let summary = ''; try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {}
   const missing = wantLabels.filter((l) => summary.indexOf(l) < 0);
   for (const label of missing) {
     onLog('筛选·「' + label + '」没生效,补点一次');
-    await client.evaluate({ target, expression: JS_CLICK_TAG(label) }).catch(() => {});
-    await sleep(rand(800, 1200));
+    if (await openFilterPanel({ client, target, onLog })) await pickTagOnce({ client, target, label, onLog });
   }
-  if (missing.length) { try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {} }
+  if (missing.length) {
+    await openFilterPanel({ client, target, onLog }).catch(() => false);
+    try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {}
+  }
   // 逐项如实汇报(以真实生效状态为准)
   for (const label of wantLabels) { onLog(summary.indexOf(label) >= 0 ? ('筛选·「' + label + '」✓ 已生效') : ('筛选·「' + label + '」✗ 没选上')); }
   onLog(summary ? ('筛选已生效:' + summary + '(结果列表已按此过滤)') : '筛选:没有选项生效(可能页面改版)');
-  // 3) 收起面板:真实鼠标移到结果区(下拉对真鼠标敏感,一移开就收起);结果保持过滤,只是面板显示会回默认
-  await client.humanMove({ target, toX: rand(320, 700), toY: rand(420, 640) }).catch(() => {});
+  // 3) 点击面板自带的「收起」，避免遮挡后续笔记卡片。
+  if (await panelOpen({ client, target })) {
+    const close = await findFilterCloseBtn({ client, target });
+    if (close) await clickFilterPoint({ client, target, x: close.x, y: close.y }).catch(() => {});
+  }
   await sleep(rand(1500, 2400));
 }
 
@@ -829,6 +1151,7 @@ const SCAN_INBOX = '(' + _inboxScanFn.toString() + ')()';
 // recentDays>0：只要近 N 天的；通知是新→旧排列，滚到已经超出窗口就停，不用把老的全读一遍
 const FIND_NOTIF_ICON = '(function(){var as=document.querySelectorAll(\'a[href="/notification"]\');for(var i=0;i<as.length;i++){var a=as[i];if(a.offsetParent===null)continue;var r=a.getBoundingClientRect();if(r.width>0&&r.height>0)return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});}return "";})()';
 async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDays = 0 }) {
+  await assertNoAccountSecurityPage({ client, target });
   let cur = ''; try { cur = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
   if (cur.indexOf('notification') < 0) {
     // 拟人:鼠标滑到底部「通知」图标 → 点击进入(不直接跳 URL)
@@ -843,7 +1166,7 @@ async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDay
       await client.navigate({ target, url: 'https://www.xiaohongshu.com/notification' });
     }
   }
-  for (let k = 0; k < 14; k++) { await sleep(1000); try { const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; } catch (e) {} }
+  for (let k = 0; k < 14; k++) { await sleep(1000); await assertNoAccountSecurityPage({ client, target }); try { const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; } catch (e) {} }
   await sleep(rand(2500, 3800));
   try { await client.installCursor({ target }); } catch (e) {}
   let items = [];
@@ -921,13 +1244,57 @@ function _replyFindFn(nick, head) {
     var box = L; for (var k = 0; k < 7 && box; k++) { box = box.parentElement; if (box && /回复了你|评论了你|提到了你/.test(box.innerText || '')) break; }
     if (!box) continue;
     if (head && (box.innerText || '').indexOf(head) < 0) continue;
-    var rep = null, sp = box.querySelectorAll('span,div,button');
-    for (var j = 0; j < sp.length; j++) { var e = sp[j]; if (e.childElementCount === 0 && (e.textContent || '').trim() === '回复') { rep = e; break; } }
+    var rep = null, sp = box.querySelectorAll('button,span,div');
+    for (var j = 0; j < sp.length; j++) {
+      var e = sp[j]; if (e.offsetParent === null || (e.textContent || '').trim() !== '回复') continue;
+      // 当前页面是 action-reply > action-text；点完整按钮比点内层文字稳定。
+      var action = e.closest ? e.closest('.action-reply') : null;
+      rep = action && action.offsetParent !== null ? action : e;
+      break;
+    }
     if (!rep) return 'norep';
     var r = rep.getBoundingClientRect();
     return JSON.stringify({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
   }
   return 'notfound';
+}
+
+function _inboxReplyComposerProbeFn(nick) {
+  function visible(el) { if (!el || el.offsetParent === null) return false; var r=el.getBoundingClientRect(); return r.width>80&&r.height>15; }
+  var nodes=document.querySelectorAll('textarea,[contenteditable=true],[role="textbox"]');
+  for(var i=0;i<nodes.length;i++){
+    var el=nodes[i]; if(!visible(el))continue;
+    var ph=String(el.getAttribute('placeholder')||el.getAttribute('aria-label')||''), cls=String(el.className||'');
+    if(ph.indexOf(nick)<0&&ph.indexOf('回复')<0&&cls.indexOf('comment-input')<0)continue;
+    var r=el.getBoundingClientRect(); return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),ph:ph});
+  }
+  return '';
+}
+
+function _inboxSendProbeFn(expectedText) {
+  function visible(el){return !!el&&el.offsetParent!==null;}
+  function valueOf(el){return String(el&&(el.value!=null?el.value:(el.innerText||el.textContent))||'').trim();}
+  var inputs=document.querySelectorAll('textarea,[contenteditable=true],[role="textbox"]'),input=null;
+  for(var i=0;i<inputs.length;i++){if(!visible(inputs[i]))continue;var v=valueOf(inputs[i]);if(v===expectedText||v.indexOf(expectedText)>=0){input=inputs[i];break;}}
+  if(!input)return JSON.stringify({ok:false,reason:'typed_text_not_found'});
+  var scope=input.parentElement;
+  for(var k=0;k<4&&scope;k++,scope=scope.parentElement){
+    var buttons=scope.querySelectorAll('button,span,div');
+    for(var j=0;j<buttons.length;j++){
+      var e=buttons[j];if(!visible(e)||(e.textContent||'').trim()!=='发送')continue;
+      var button=e.closest?(e.closest('button')||e):e,r=button.getBoundingClientRect();if(r.width<=2||r.height<=2)continue;
+      return JSON.stringify({ok:true,x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});
+    }
+  }
+  return JSON.stringify({ok:false,reason:'send_button_not_found'});
+}
+
+function _inboxSentProbeFn(expectedText) {
+  function visible(el){return !!el&&el.offsetParent!==null;}
+  function valueOf(el){return String(el&&(el.value!=null?el.value:(el.innerText||el.textContent))||'').trim();}
+  var inputs=document.querySelectorAll('textarea,[contenteditable=true],[role="textbox"]');
+  for(var i=0;i<inputs.length;i++){if(!visible(inputs[i]))continue;var v=valueOf(inputs[i]);if(v===expectedText||v.indexOf(expectedText)>=0)return 'pending';}
+  return String(document.body.innerText||'').indexOf('回复成功')>=0?'sent':'cleared';
 }
 // 回复一条：鼠标滑到「回复」→(演练: 只滑过去不点)/(真发: 点回复→点输入框→打字→点发送→验证)。全程真鼠标(拟人可见)。登录检测由调用方做。
 async function replyInboxItem({ client, target, item, text, dry = true, onLog = () => {} }) {
@@ -946,9 +1313,12 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   if (dry) return { ok: true, msg: '演练:鼠标已移到「回复」(未点开)' };
   // 真发:鼠标点「回复」→ 内联输入框
   await client.click({ target, x: rep.x, y: rep.y }).catch(() => {});
-  await sleep(rand(900, 1500));
   let inp = null;
-  try { inp = JSON.parse((await client.evaluate({ target, expression: '(function(){var t=document.querySelector("textarea[class*=comment-input],textarea[class*=input]");if(!t||t.offsetParent===null)return "";var r=t.getBoundingClientRect();return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),ph:t.getAttribute("placeholder")||""});})()' })).value || ''); } catch (e) {}
+  const composerExpr = '(' + _inboxReplyComposerProbeFn.toString() + ')(' + JSON.stringify(item.nick || '') + ')';
+  for (let attempt = 0; attempt < 8 && !inp; attempt++) {
+    await sleep(attempt === 0 ? 450 : 350);
+    try { inp = JSON.parse((await client.evaluate({ target, expression: composerExpr })).value || ''); } catch (e) {}
+  }
   if (!inp) return { ok: false, msg: '回复框没出现' };
   // 鼠标点输入框聚焦 → 逐字打字
   await client.click({ target, x: inp.x, y: inp.y });
@@ -956,12 +1326,16 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   await client.typeText({ target, text: text });
   await sleep(rand(900, 1500));
   let send = null;
-  try { send = JSON.parse((await client.evaluate({ target, expression: '(function(){var n=document.querySelectorAll("button,span,div");for(var i=0;i<n.length;i++){var e=n[i];if(e.childElementCount>0)continue;if((e.textContent||"").trim()!=="发送")continue;if(e.offsetParent===null)continue;var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});}return"";})()' })).value || ''); } catch (e) {}
+  const sendExpr = '(' + _inboxSendProbeFn.toString() + ')(' + JSON.stringify(text) + ')';
+  try { const found = JSON.parse((await client.evaluate({ target, expression: sendExpr })).value || '{}'); if (found.ok) send = found; } catch (e) {}
   if (!send) return { ok: false, msg: '没找到发送按钮' };
   await client.click({ target, x: send.x, y: send.y });
-  await sleep(1800);
   let okSent = false;
-  try { const v = await client.evaluate({ target, expression: '(function(){var t=document.querySelector("textarea[class*=comment-input]");var empty=t?((t.value||"").trim().length===0):true;return (empty||document.body.innerText.indexOf("回复成功")>=0)?"ok":"no";})()' }); okSent = v && v.value === 'ok'; } catch (e) {}
+  const sentExpr = '(' + _inboxSentProbeFn.toString() + ')(' + JSON.stringify(text) + ')';
+  for (let attempt = 0; attempt < 12 && !okSent; attempt++) {
+    await sleep(400);
+    try { const v = await client.evaluate({ target, expression: sentExpr }); okSent = v && (v.value === 'sent' || v.value === 'cleared'); } catch (e) {}
+  }
   return okSent ? { ok: true, msg: '已回复✓' } : { ok: false, msg: '点了发送但没确认成功' };
 }
 
@@ -1148,4 +1522,4 @@ async function replyOpenNoteComment({ client, target, item, text, dry = true, sh
   return { ok: true, dry: false, msg: '评论区回复已发送' };
 }
 
-module.exports = { connect, buildSearchUrl, scanClean, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, categoryClassificationDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment };
+module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, categoryClassificationDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };

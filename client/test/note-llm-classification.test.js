@@ -123,6 +123,8 @@ test('service-area prompt uses title, body, extracted facts and geographic relat
   assert.match(messages[1].content, /【服务区域】朱岗子、长阳/);
   assert.match(messages[1].content, /【第一阶段地点事实】城市=北京；区县=房山区；具体位置=朱岗子村；地点原文=房山朱岗子村/);
   assert.match(messages[1].content, /【完整正文】本人想在房山朱岗子村附近租一居/);
+  assert.match(messages[0].content, /locationEvidenceQuotes/);
+  assert.match(messages[0].content, /1到3 段/);
 });
 
 test('service-area parser requires an exact configured area value', () => {
@@ -135,6 +137,84 @@ test('service-area parser requires an exact configured area value', () => {
   assert.equal(parsed.matchedServiceArea, '朱岗子');
   assert.equal(parsed.locationConfidence, 0.94);
   assert.equal(parsed.locationEvidence, '房山朱岗子村');
+});
+
+test('service-area request enforces JSON mode and retries one malformed response', async () => {
+  const requests = [];
+  const responses = [
+    { choices: [{ message: { content: '该地点在服务区内' } }] },
+    { choices: [{ message: { content: JSON.stringify({
+      locationMatch: 'match', matchedServiceArea: '四川成都租房', locationConfidence: 0.98,
+      locationEvidence: '成都武侯区', reason: '武侯区位于成都'
+    }) } }] }
+  ];
+  const result = await llm.classifyServiceArea({
+    note: { title: '武侯区求租', desc: '本人想在成都武侯区租房' },
+    extracted: { city: '成都', district: '武侯区', locationEvidence: '成都武侯区' },
+    localWords: ['四川成都租房'], provider: 'dashscope', model: 'qwen-plus', apiKey: 'test-key',
+    requestChat: async (request) => { requests.push(request); return responses.shift(); }
+  });
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].body.response_format, { type: 'json_object' });
+  assert.deepEqual(requests[1].body.response_format, { type: 'json_object' });
+  assert.match(requests[1].body.messages.at(-1).content, /上一次输出不是可解析的 JSON/);
+  assert.equal(result.locationMatch, 'match');
+  assert.equal(result.matchedServiceArea, '四川成都租房');
+});
+
+test('service-area request does not retry a valid JSON response', async () => {
+  let calls = 0;
+  await llm.classifyServiceArea({
+    note: { title: '武侯区求租', desc: '成都武侯区求租' },
+    extracted: { city: '成都', district: '武侯区', locationEvidence: '成都武侯区' },
+    localWords: ['四川成都租房'], provider: 'dashscope', model: 'qwen-plus', apiKey: 'test-key',
+    requestChat: async () => {
+      calls++;
+      return { choices: [{ message: { content: JSON.stringify({
+        locationMatch: 'unknown', matchedServiceArea: '', locationConfidence: 0.4,
+        locationEvidence: '成都武侯区', reason: '服务区配置表达有歧义'
+      }) } }] };
+    }
+  });
+  assert.equal(calls, 1);
+});
+
+test('service-area request retries a synthesized location sentence and accepts short verbatim quotes', async () => {
+  const requests = [];
+  const responses = [
+    { choices: [{ message: { content: JSON.stringify({
+      locationMatch: 'match', matchedServiceArea: '成都市', locationConfidence: 0.98,
+      locationEvidence: '武侯区双楠立交、内双楠、双楠岛周边小区', reason: '双楠属于成都市武侯区'
+    }) } }] },
+    { choices: [{ message: { content: JSON.stringify({
+      locationMatch: 'match', matchedServiceArea: '成都市', locationConfidence: 0.98,
+      locationEvidenceQuotes: ['武侯区', '双楠立交'], reason: '双楠属于成都市武侯区'
+    }) } }] }
+  ];
+  const result = await llm.classifyServiceArea({
+    note: { title: '真诚求租双楠立交附近套一', desc: '想在武侯区找房，双楠立交附近都可以' },
+    extracted: { city: '成都', district: '武侯区' }, localWords: ['成都市'],
+    provider: 'dashscope', model: 'qwen-plus', apiKey: 'test-key',
+    requestChat: async (request) => { requests.push(request); return responses.shift(); }
+  });
+
+  assert.equal(requests.length, 2);
+  assert.match(requests[1].body.messages.at(-1).content, /逐字复制/);
+  assert.equal(result.locationMatch, 'match');
+  assert.deepEqual(result.locationEvidenceQuotes, ['武侯区', '双楠立交']);
+});
+
+test('location validator accepts any verified quote instead of requiring a synthesized full sentence', () => {
+  const decision = engine.validateLlmLocation({
+    locationMatch: 'match', matchedServiceArea: '成都市', locationConfidence: 0.98,
+    locationEvidenceQuotes: ['武侯区', '双楠立交'], reason: '武侯区属于成都市'
+  }, {
+    title: '真诚求租双楠立交附近套一', desc: '想在武侯区找房'
+  }, { lead_local_words: ['成都市'] });
+
+  assert.equal(decision.locationMatch, 'match');
+  assert.equal(decision.matchedServiceArea, '成都市');
 });
 
 test('llm can match a configured area through geographic alias reasoning', () => {

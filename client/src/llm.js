@@ -9,6 +9,11 @@ const PROVIDERS = {
   deepseek: { host: 'api.deepseek.com', path: '/chat/completions', label: 'DeepSeek' },
 };
 
+// Newer reasoning-capable models can legitimately take longer than the old
+// 18-second cutoff, especially on the first request.  A short cutoff turns a
+// valid response into a false "classification failed" decision.
+const CLASSIFICATION_TIMEOUT_MS = 60000;
+
 function postChat({ host, path, apiKey, body, timeoutMs = 12000 }) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
@@ -132,7 +137,7 @@ async function classifyNotePublisher({ note, localWords, provider, model, apiKey
       temperature: 0.1,
       max_tokens: 320
     },
-    timeoutMs: 18000
+    timeoutMs: CLASSIFICATION_TIMEOUT_MS
   });
   const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
   if (!content) throw new Error('大模型分类没有返回内容');
@@ -247,7 +252,7 @@ async function classifyNoteCategory({ note, localWords, leadModel, provider, mod
       temperature: 0.1,
       max_tokens: 360
     },
-    timeoutMs: 18000
+    timeoutMs: CLASSIFICATION_TIMEOUT_MS
   });
   const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
   if (!content) throw new Error('大模型分类没有返回内容');
@@ -273,9 +278,9 @@ function buildServiceAreaClassificationMessages({ note, extracted = {}, localWor
     '判断的是笔记真正想租房或提供房源的位置。上班地、通勤目的地、作者IP、检索关键词都不能当作目标租房地。',
     'locationMatch 只能是 match、mismatch、unknown：能根据地理关系确认属于任一服务区域才填 match；明确在全部服务区域之外填 mismatch；正文地点不足或存在歧义填 unknown。',
     'match 时 matchedServiceArea 必须逐字填写下面服务区域中的一个原值，禁止创造新区域。mismatch 或 unknown 时必须为空字符串。',
-    'locationEvidence 必须逐字摘录标题或正文里的地点原文；不要改写或编造。置信度不足时宁可 unknown，不要猜。',
+    'locationEvidenceQuotes 必须返回 1到3 段标题或正文里的简短地点原文，每段逐字复制，不得把分散地点合并成新句子，不得改写或编造。例如正文有“武侯区”和“双楠立交”，应返回 ["武侯区","双楠立交"]。置信度不足时宁可 unknown，不要猜。',
     '只输出一个 JSON 对象，不要 Markdown，不要解释。格式：',
-    '{"locationMatch":"match|mismatch|unknown","matchedServiceArea":"服务区域原值或空字符串","locationConfidence":0到1之间的小数,"locationEvidence":"标题或正文地点原文","reason":"一句话地理判断理由"}'
+    '{"locationMatch":"match|mismatch|unknown","matchedServiceArea":"服务区域原值或空字符串","locationConfidence":0到1之间的小数,"locationEvidenceQuotes":["标题或正文中的简短地点原文"],"reason":"一句话地理判断理由"}'
   ].join('\n');
   const user = [
     '【服务区域】' + (serviceAreas.join('、') || '未配置'),
@@ -299,11 +304,17 @@ function normalizeServiceAreaClassification(value, localWords = []) {
   const configured = (Array.isArray(localWords) ? localWords : []).map((word) => String(word || '').trim()).filter(Boolean);
   const requestedArea = String(raw.matchedServiceArea || raw.matched_service_area || '').trim();
   const matchedServiceArea = configured.find((area) => area === requestedArea) || '';
+  const rawQuotes = raw.locationEvidenceQuotes || raw.location_evidence_quotes;
+  const evidenceQuotes = (Array.isArray(rawQuotes) ? rawQuotes : [raw.locationEvidence || raw.location_evidence || raw.evidence])
+    .map((quote) => String(quote || '').replace(/\s+/g, ' ').trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 3);
   return {
     locationMatch: common.locationMatch,
     matchedServiceArea,
     locationConfidence: common.confidence,
-    locationEvidence: common.evidence,
+    locationEvidence: evidenceQuotes.join('；'),
+    locationEvidenceQuotes: evidenceQuotes,
     reason: common.reason
   };
 }
@@ -320,21 +331,49 @@ function parseServiceAreaClassificationContent(content, localWords = []) {
   return normalizeServiceAreaClassification(parsed, localWords);
 }
 
-async function classifyServiceArea({ note, extracted, localWords, provider, model, apiKey }) {
+async function classifyServiceArea({ note, extracted, localWords, provider, model, apiKey, requestChat = postChat }) {
   const ep = PROVIDERS[provider] || PROVIDERS.ark;
-  const j = await postChat({
-    host: ep.host, path: ep.path, apiKey,
-    body: {
-      model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''),
-      messages: buildServiceAreaClassificationMessages({ note, extracted, localWords }),
-      temperature: 0.05,
-      max_tokens: 260
-    },
-    timeoutMs: 18000
-  });
-  const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-  if (!content) throw new Error('大模型地区判断没有返回内容');
-  return parseServiceAreaClassificationContent(content, localWords);
+  const baseMessages = buildServiceAreaClassificationMessages({ note, extracted, localWords });
+  let formatError = null;
+  let retryReason = '';
+  const sourceText = [note && note.title, note && note.desc]
+    .map((value) => String(value || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const messages = attempt === 0 ? baseMessages : baseMessages.concat([{
+      role: 'user',
+      content: retryReason === 'evidence'
+        ? '上一次 locationEvidenceQuotes 不是标题或正文中可逐字找到的原文。请重新输出 JSON：从标题或完整正文中逐字复制 1到3 段简短地点原文，每段单独放入 locationEvidenceQuotes，不得汇总、改写或拼接。只输出合法 JSON。'
+        : '上一次输出不是可解析的 JSON。请立即修正：只输出一个完整、合法的 JSON 对象，不要 Markdown、不要解释、不要在 JSON 前后添加任何文字。'
+    }]);
+    const j = await requestChat({
+      host: ep.host, path: ep.path, apiKey,
+      body: {
+        model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''),
+        messages,
+        response_format: { type: 'json_object' },
+        temperature: 0.05,
+        max_tokens: 260
+      },
+      timeoutMs: CLASSIFICATION_TIMEOUT_MS
+    });
+    const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    try {
+      if (!content) throw new Error('大模型地区判断没有返回内容');
+      const parsed = parseServiceAreaClassificationContent(content, localWords);
+      if (parsed.locationMatch !== 'unknown') {
+        const hasVerbatimEvidence = parsed.locationEvidenceQuotes.some((quote) => sourceText.includes(quote));
+        if (!hasVerbatimEvidence) {
+          retryReason = 'evidence';
+          throw new Error('大模型地区判断未返回可核对的地点原文');
+        }
+      }
+      return parsed;
+    } catch (error) {
+      formatError = error;
+      if (attempt === 1) throw error;
+    }
+  }
+  throw formatError || new Error('大模型地区判断返回格式异常');
 }
 
 // 按对方笔记 + 方向,让大模型生成一句拟人评论

@@ -204,14 +204,25 @@ function taskRunReport(runId) {
   const keywords = d.prepare(`select k.keyword, k.scanned_count,
     count(d.id) as judged_count,
     coalesce(sum(case when d.useful=1 then 1 else 0 end),0) as useful_count,
-    coalesce(sum(case when d.useful=0 then 1 else 0 end),0) as useless_count,
+    coalesce(sum(case when d.useful=0 and d.reason not like '%大模型分类失败%' then 1 else 0 end),0) as useless_count,
+    coalesce(sum(case when d.reason like '%大模型分类失败%' then 1 else 0 end),0) as failed_count,
     k.reply_count
     from task_run_keywords k left join task_run_decisions d on d.run_id=k.run_id and d.keyword=k.keyword
     where k.run_id=? group by k.run_id, k.keyword, k.scanned_count, k.reply_count order by k.rowid`).all(run.id)
     .map((row) => Object.assign(row, { pending_count: Math.max(0, Number(row.scanned_count) - Number(row.judged_count)) }));
-  const decisions = d.prepare(`select keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at
+  const decisions = d.prepare(`select keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at,
+    case when reason like '%大模型分类失败%' then 1 else 0 end as model_failed
     from task_run_decisions where run_id=? order by id desc limit 300`).all(run.id);
   return { run, runs, keywords, decisions };
+}
+
+function listFailedTaskRunDecisions(runId) {
+  const id = Number(runId);
+  if (!id) return [];
+  return open().prepare(`select keyword, note_id, title, author, url
+    from task_run_decisions
+    where run_id=? and reason like '%大模型分类失败%'
+    order by id`).all(id);
 }
 
 // ── 承接收件箱 ──
@@ -492,4 +503,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, taskRunReport, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };

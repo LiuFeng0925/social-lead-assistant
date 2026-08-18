@@ -1132,16 +1132,20 @@ function renderRunStats(d) {
   if (!run) { out.innerHTML = '还没有执行统计，开始一次任务后会在这里显示。'; return; }
   const keywords = d.keywords || [];
   const totals = keywords.reduce(function (acc, row) {
-    ['scanned_count','judged_count','useful_count','useless_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
+    ['scanned_count','judged_count','useful_count','useless_count','failed_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
     return acc;
-  }, { scanned_count: 0, judged_count: 0, useful_count: 0, useless_count: 0, reply_count: 0, pending_count: 0 });
-  const summary = '<div class="mgrid" style="grid-template-columns:repeat(6,1fr);margin:0 0 10px">'
-    + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['无用', totals.useless_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
+  }, { scanned_count: 0, judged_count: 0, useful_count: 0, useless_count: 0, failed_count: 0, reply_count: 0, pending_count: 0 });
+  const summary = '<div class="mgrid" style="grid-template-columns:repeat(7,1fr);margin:0 0 10px">'
+    + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['无用', totals.useless_count], ['调用失败', totals.failed_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
     + '</div>';
-  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>无用</td><td>已回复</td><td>待判断</td></tr>'
-    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
+  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>无用</td><td>调用失败</td><td>已回复</td><td>待判断</td></tr>'
+    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.failed_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
     + '</table>' : '<div class="hint">当前这轮还没有检索到笔记。</div>';
   const decisions = (d.decisions || []).map(function (item) {
+    if (Number(item.model_failed)) {
+      const failedTitle = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
+      return '<details class="basis-detail"><summary><span class="badge b-bad">调用失败</span>' + esc(item.keyword) + ' · ' + failedTitle + '</summary><div>大模型调用失败</div></details>';
+    }
     const tag = Number(item.useful) ? '<span class="badge b-ok">有用</span>' : '<span class="badge b-warn">无用</span>';
     const title = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
     const facts = [item.reason ? '判断：' + item.reason : '', item.evidence ? '分类依据：' + item.evidence : '', item.location_evidence ? '地点依据：' + item.location_evidence : ''].filter(Boolean).map(esc).join('\n');
