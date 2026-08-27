@@ -29,6 +29,9 @@
   .account-switcher button:hover{background:#f8fafc}.account-switcher button.on{background:#fff0f2;border-color:#ffb5c1;color:var(--brand)}
   .account-hint{font-size:11px;color:#667085;white-space:nowrap}
   .account-label-edit{border:0;background:transparent;color:var(--brand);font-size:12px;font-weight:750;cursor:pointer;padding:4px 2px;white-space:nowrap}
+  .account-note-popover{position:absolute;right:18px;top:48px;z-index:60;width:280px;padding:12px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:0 12px 30px rgba(16,24,40,.16)}
+  .account-note-popover label{display:block;font-size:12px;font-weight:700;color:#344054;margin-bottom:6px}.account-note-popover input{width:100%}
+  .account-note-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}.account-note-actions .btn{min-height:30px;padding:5px 10px;font-size:12px}
   .page{padding:16px 26px 50px;display:none}.page.on{display:block}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,30,50,.05)}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
@@ -252,7 +255,7 @@
   </div>
 
   <div class="main">
-    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button></div>
+    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button><div class="account-note-popover" id="account-note-popover" hidden><label for="account-label-input">账号备注名称</label><input id="account-label-input" maxlength="18" placeholder="例如：成都主号"><div class="account-note-actions"><button class="btn ghost" type="button" onclick="closeAccountLabelEditor()">取消</button><button class="btn" type="button" onclick="saveActiveAccountLabel()">保存</button></div></div></div>
 
     <!-- ===== 控制台 ===== -->
     <div class="page on" id="page-console">
@@ -554,16 +557,24 @@ async function loadAccountLabels() {
   renderAccountSwitcher();
 }
 function editActiveAccountLabel() {
-  const old = accountLabels[activeAccountId] || '';
-  const label = window.prompt('给当前账号填写备注名称（例如：成都主号、武侯区测试号）', old);
-  if (label === null) return;
-  const value = String(label).trim().slice(0, 18);
+  const panel = $('account-note-popover');
+  const input = $('account-label-input');
+  input.value = accountLabels[activeAccountId] || '';
+  panel.hidden = false;
+  setTimeout(function () { input.focus(); input.select(); }, 0);
+}
+function closeAccountLabelEditor() {
+  $('account-note-popover').hidden = true;
+}
+function saveActiveAccountLabel() {
+  const value = String($('account-label-input').value || '').trim().slice(0, 18);
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ account_label: value })))
     .then(function (r) { return r.json(); }).then(function (data) {
       if (!data.ok) { alert('备注保存失败：' + (data.msg || '未知错误')); return; }
       if (value) accountLabels[activeAccountId] = value;
       else delete accountLabels[activeAccountId];
       renderAccountSwitcher();
+      closeAccountLabelEditor();
     }).catch(function () { alert('备注保存失败，请稍后重试。'); });
 }
 function selectAccount(id) {
