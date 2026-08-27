@@ -28,6 +28,7 @@
   .account-switcher button{border:1px solid #cfd8e6;background:#fff;color:#526075;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:750;cursor:pointer}
   .account-switcher button:hover{background:#f8fafc}.account-switcher button.on{background:#fff0f2;border-color:#ffb5c1;color:var(--brand)}
   .account-hint{font-size:11px;color:#667085;white-space:nowrap}
+  .account-label-edit{border:0;background:transparent;color:var(--brand);font-size:12px;font-weight:750;cursor:pointer;padding:4px 2px;white-space:nowrap}
   .page{padding:16px 26px 50px;display:none}.page.on{display:block}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,30,50,.05)}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
@@ -251,7 +252,7 @@
   </div>
 
   <div class="main">
-    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span></div>
+    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button></div>
 
     <!-- ===== 控制台 ===== -->
     <div class="page on" id="page-console">
@@ -523,6 +524,7 @@ let es = null, frameW = 0, frameH = 0;
 // 的独立服务。四个服务、SQLite、限频和浏览器登录态彼此完全隔离。
 const ACCOUNT_PORT_BASE = 3100;
 let activeAccountId = Math.max(1, Math.min(4, Number(localStorage.getItem('xhs-active-account') || 1)));
+let accountLabels = {};
 const nativeFetch = window.fetch.bind(window);
 const NativeEventSource = window.EventSource;
 function accountApiUrl(input) {
@@ -534,9 +536,35 @@ window.EventSource = function (url, config) { return new NativeEventSource(accou
 window.EventSource.prototype = NativeEventSource.prototype;
 function renderAccountSwitcher() {
   document.querySelectorAll('#account-switcher button[data-account]').forEach(function (btn) {
-    btn.classList.toggle('on', Number(btn.dataset.account) === activeAccountId);
+    const id = Number(btn.dataset.account);
+    btn.classList.toggle('on', id === activeAccountId);
+    btn.textContent = accountLabels[id] || ('账号 ' + id);
   });
-  $('account-hint').textContent = '账号 ' + activeAccountId + ' · 独立登录、任务和统计';
+  $('account-hint').textContent = (accountLabels[activeAccountId] || ('账号 ' + activeAccountId)) + ' · 独立登录、任务和统计';
+}
+async function loadAccountLabels() {
+  const rows = await Promise.all([1, 2, 3, 4].map(async function (id) {
+    try {
+      const data = await nativeFetch('http://127.0.0.1:' + (ACCOUNT_PORT_BASE + id) + '/api/config').then(function (r) { return r.json(); });
+      return [id, data && data.config && String(data.config.account_label || '').trim()];
+    } catch (e) { return [id, '']; }
+  }));
+  accountLabels = {};
+  rows.forEach(function (row) { if (row[1]) accountLabels[row[0]] = row[1]; });
+  renderAccountSwitcher();
+}
+function editActiveAccountLabel() {
+  const old = accountLabels[activeAccountId] || '';
+  const label = window.prompt('给当前账号填写备注名称（例如：成都主号、武侯区测试号）', old);
+  if (label === null) return;
+  const value = String(label).trim().slice(0, 18);
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ account_label: value })))
+    .then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.ok) { alert('备注保存失败：' + (data.msg || '未知错误')); return; }
+      if (value) accountLabels[activeAccountId] = value;
+      else delete accountLabels[activeAccountId];
+      renderAccountSwitcher();
+    }).catch(function () { alert('备注保存失败，请稍后重试。'); });
 }
 function selectAccount(id) {
   id = Math.max(1, Math.min(4, Number(id) || 1));
@@ -556,11 +584,13 @@ function selectAccount(id) {
     loadTaskSettings(); loadLeadModelSettings(); loadModelSettings(); loadReplyRules();
     loadReplyMaster(); loadSchedule(); loadThrottle(); loadRecords(); loadRunStats(); checkLogin();
   });
+  loadAccountLabels();
   connectStream();
   connectMonitor();
 }
 renderAccountSwitcher();
 if (window.electronView) window.electronView.selectAccount(activeAccountId);
+loadAccountLabels();
 
 var _cfg = {};
 async function getCfg() {
