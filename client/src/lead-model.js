@@ -8,8 +8,10 @@ function splitWords(v) {
 const DEFAULT_RENT_COMMENT_STRATEGY = '例:笔记只写“望京求租房”。系统能确定的只有:意向=求租,地点=望京,地点粒度=商圈/区域级,预算=未知,户型=未知,通勤/地铁要求=未知。判断逻辑:先抽取 location = 望京、location_type = 商圈/区域、city = 北京;房源库检索先用地点做第一层召回,优先找望京、望京SOHO、望京南、望京西、阜通、东湖渠、来广营附近。预算/户型未知时不要硬筛,不要脑补预算/户型,可选地点贴近、展示质量较好、可沟通空间大的房源做候选,但评论里要追问缺失信息。评论应是半匹配话术,例如“望京这边我有几套在看,近地铁和商圈附近的都有。你大概预算和想要几居呀?”不要直接说“我这有一套望京6500一居,特别适合你”。';
 const LEGACY_RENT_COMMENT_STRATEGY = '结合区域、预算、户型等诉求友好回应,引导看主页/私聊,绝不留联系方式';
 const PREVIOUS_RENT_COMMENT_STRATEGY = '先判断笔记已明确哪些槽位:地点、预算、户型、通勤/特殊要求。地点只写“望京求租房”时,只按区域级判断为望京附近,不要脑补预算/户型。信息完整时结合匹配房源自然回应;信息不完整时先呼应已知地点/诉求,再追问缺失的预算、户型或通勤要求。可引导看主页/私聊,绝不留联系方式。';
+const LEGACY_SEEK_RENT_LLM_PROMPT = '只有发布者本人明确表达正在求租、找房、想租房或询问租房方案时才归入此类。不能因为标题里出现“租房”就判断为求租；要结合正文里的第一人称诉求、地点、预算、户型、入住时间等信息。';
+const DEFAULT_SEEK_RENT_LLM_PROMPT = '只有发布者本人明确寻找用于日常居住的住宅，并且是长租需求时才归入此类。不能因为标题里出现“租房”就判断为求租，要结合正文里的第一人称诉求、地点、预算、户型和入住时间。明确求租商铺、店铺、门面、门脸、档口、写字楼、办公室、仓库、厂房、车位等商业或经营用途的，不属于此类；明确只租1到3个月、日租、周租、短租或临时过渡的，也不属于此类。普通住宅求租未写租期时，可以按长租需求判断。';
 const DEFAULT_CATEGORY_LLM_PROMPTS = {
-  seek_rent: '只有发布者本人明确表达正在求租、找房、想租房或询问租房方案时才归入此类。不能因为标题里出现“租房”就判断为求租；要结合正文里的第一人称诉求、地点、预算、户型、入住时间等信息。',
+  seek_rent: DEFAULT_SEEK_RENT_LLM_PROMPT,
   supply_rent: '发布者本人在出租、转租、展示或提供房源，包括个人房东、二房东和转租人。即使评论区有人求租，发布者仍应归入房源方。',
   agent_peer: '发布者是中介、经纪人、公寓管家、房产机构、租房营销账号或其他同行。要结合正文的批量房源、带看、获客、职业身份和营销表达判断。',
   unknown: '信息不足、角色冲突、仅分享经验资讯，或无法可靠判断发布者是需求方、房源方还是同行时归入此兜底分类。',
@@ -33,6 +35,13 @@ function normalizeReplyStrategy(cat, name) {
   return raw;
 }
 
+function normalizeCategoryLlmPrompt(cat, id, name, fallback) {
+  const raw = String((cat && cat.llmPrompt) || '').trim();
+  const isRentalDemand = id === 'seek_rent' || id === '求租笔记' || name === '求租笔记';
+  if (isRentalDemand && (!raw || raw === LEGACY_SEEK_RENT_LLM_PROMPT)) return DEFAULT_SEEK_RENT_LLM_PROMPT;
+  return raw || defaultCategoryLlmPrompt(id, name, fallback);
+}
+
 function defaultLeadModel() {
   return {
     name: '租房获客',
@@ -43,10 +52,10 @@ function defaultLeadModel() {
         id: 'seek_rent',
         name: '求租笔记',
         action: 'comment',
-        description: '用户正在找房、求推荐、问预算/区域/户型。',
+        description: '本人寻找用于居住的住宅长租；商业用房和1到3个月短租不属于目标受众。',
         keywords: ['求租', '求转租', '求直租', '求推荐', '求靠谱', '求房', '找房', '蹲', '谁有', '有没有', '想租', '要租', '跪求', '急租', '预算'],
         excludeKeywords: ['出租', '招租', '出房', '房东直租'],
-        llmPrompt: '只有发布者本人明确表达正在求租、找房、想租房或询问租房方案时才归入此类。不能因为标题里出现“租房”就判断为求租；要结合正文里的第一人称诉求、地点、预算、户型、入住时间等信息。',
+        llmPrompt: DEFAULT_SEEK_RENT_LLM_PROMPT,
         replyStrategy: DEFAULT_RENT_COMMENT_STRATEGY,
       },
       {
@@ -92,7 +101,7 @@ function normalizeCategory(cat, i) {
     keywords,
     excludeKeywords: splitWords(cat && cat.excludeKeywords),
     replyStrategy: normalizeReplyStrategy(cat, name),
-    llmPrompt: String((cat && cat.llmPrompt) || defaultCategoryLlmPrompt(id, name, !!(cat && cat.fallback))),
+    llmPrompt: normalizeCategoryLlmPrompt(cat, id, name, !!(cat && cat.fallback)),
     fallback: !!(cat && cat.fallback),
     order: i,
   };

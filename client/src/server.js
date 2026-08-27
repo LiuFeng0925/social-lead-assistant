@@ -467,6 +467,12 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
 // 自动评论循环:采集→匹配→去重→逐条(限频闸门→生成→合规→打开评论关闭→拟人间隔)。默认演练。
 // 承接一轮:进通知页抓「评论和@」→ 逐条判意向+回复(限频/批量上限)→ 回搜索页。dry=演练只定位+草稿。
 async function drainInbox({ client, target, cfg, dry, send }) {
+  // 自动承接是可随时关闭的总开关。运行中关闭后，在下一条互动前立刻退出，
+  // 不再让通知页阻塞外呼主线；手动“开始承接”仍由用户主动触发。
+  if (db.getConfig().reply_enabled === false) {
+    send('log', '💬 自动承接已关闭，跳过通知处理，继续外呼。');
+    return 0;
+  }
   send('log', '📥 发现通知,暂停外呼,先去回复…');
   let beforeInboxUrl = '';
   try { beforeInboxUrl = String((await client.evaluate({ target, expression: 'location.href' })).value || ''); } catch (e) {}
@@ -479,6 +485,10 @@ async function drainInbox({ client, target, cfg, dry, send }) {
   const dailyCap = Number(cfg.reply_daily) || 30;
   if (!items.length) { send('log', '  近 ' + (Number(cfg.reply_recent_days) || 0) + ' 天内没有新评论可回(更早的按"只回近N天"略过)'); }
   for (const it of items) {
+    if (db.getConfig().reply_enabled === false) {
+      send('log', '💬 自动承接已关闭，本轮通知处理结束，回到外呼。');
+      break;
+    }
     if (runState.cancelled) break;
     const prepared = inboxUtils.prepareInboxItem({ type: it.type, nick: it.nick, user_link: it.link, content: it.content, basis_text: it.basis_text, raw_text: it.raw_text, action_date: it.date, note_url: it.note_url, source_key: it.source_key });
     const intent = engine.inboxIntent(prepared.content, cfg);
@@ -813,7 +823,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
     return { sent, done, decision: authorDecision };
   }
 
-  const leads = ((detail && detail.commentsList) || [])
+  const evaluatedCommenters = ((detail && detail.commentsList) || [])
     .map((item) => {
       const decision = engine.leadActorDecision(item.content, item.nick, cfg);
       const area = engine.serviceAreaDecision(item.content, cfg);
@@ -821,7 +831,11 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
         return Object.assign({}, item, { decision: { eligible: false, reason: '笔记及留言均未确认服务区域' } });
       }
       return Object.assign({}, item, { decision });
-    })
+    });
+  evaluatedCommenters
+    .filter((item) => !item.decision.eligible && /^非目标受众：/.test(item.decision.reason || ''))
+    .forEach((item) => log('评论者跳过:' + (item.nick || '未知用户') + ' / ' + item.decision.reason));
+  const leads = evaluatedCommenters
     .filter((item) => item.decision.eligible && item.can_auto_reply !== false)
     .slice(0, Number(cfg.comment_leads_per_note) || 3);
   log('求租笔记评论区识别到明确需求 ' + leads.length + ' 条');
@@ -953,6 +967,26 @@ async function handleRunStats(req, res, q) {
   catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 
+// 用户手动恢复右侧小红书页面。刷新是明确的人工操作，安全限制时系统仍不会自动刷新。
+async function handleBrowserRefresh(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  let paused = false;
+  try {
+    if (machine.running) { stopMachine(); paused = true; }
+    if (runState.running) { runState.cancelled = true; paused = true; }
+    // 给当前操作一个很短的停止窗口，再由用户发起普通刷新。
+    await sleep(350);
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    await client.sendCommand({ target, method: 'Page.reload', params: { ignoreCache: false }, timeoutMs: 10000 });
+    resetMachineConnection();
+    emitLog((paused ? '任务已暂停；' : '') + '已手动刷新右侧小红书页面');
+    res.end(JSON.stringify({ ok: true, paused, msg: paused ? '任务已暂停，小红书页面已刷新' : '小红书页面已刷新', status: machineStatus() }));
+  } catch (e) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e), status: machineStatus() }));
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
   if (u.pathname === '/') {
@@ -972,6 +1006,7 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/engine/start') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine(), status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/retry-failed') { const retryRunId = Number(u.searchParams.get('run_id')) || 0; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine({ retryRunId }), status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
+  if (u.pathname === '/api/browser/refresh') { await handleBrowserRefresh(req, res); return; }
   if (u.pathname === '/api/engine/clear-cache') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     if (!clearMachineCache()) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '任务仍在运行，请先停止' })); return; }

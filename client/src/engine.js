@@ -211,6 +211,45 @@ function shouldCommentNoteAuthor(decision) {
   return !!decision && decision.eligible === true && decision.role === 'tenant';
 }
 
+function residentialLongTermAudienceDecision(content) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!text) return { eligible: true, reason: '' };
+  const rentalContext = /(求租|找房|想租|要租|租房|租住|租期|出租|转租|招租)/.test(text);
+  const commercialUse = /(商铺|店铺|门面房?|门脸房?|档口|摊位|写字楼|办公室|办公场地|仓库|厂房|车位|车库|商业用房|经营场所)/.test(text);
+  if (rentalContext && commercialUse) {
+    return { eligible: false, reason: '非目标受众：求租商业用房，不是用于居住的住宅长租' };
+  }
+
+  // 先去掉“不要短租/不接受短租”等否定表达，防止把明确要长租的人误伤。
+  const withoutNegatedShortRent = text.replace(/(?:不接受|不考虑|不能|不要|不是|拒绝|非|不)\s*(?:日租|周租|短租|月租房|临时过渡)/g, '');
+  const explicitShortRent = /(?:日租|周租|短租|月租房|临时过渡|过渡租)|(?:只|仅|就|计划|打算|需要|想|要|求|找|临时|过渡).{0,6}(?:租|住|租住).{0,6}(?:1|2|3|一|二|两|三)\s*个?月|(?:租期|租住时间|租多久).{0,8}(?:1|2|3|一|二|两|三)\s*个?月|(?:1|2|3|一|二|两|三)\s*个?月.{0,5}(?:短租|过渡)/.test(withoutNegatedShortRent);
+  if (explicitShortRent) {
+    return { eligible: false, reason: '非目标受众：明确是1到3个月短租或临时过渡，只触达住宅长租' };
+  }
+  return { eligible: true, reason: '' };
+}
+
+function isResidentialRentalLeadModel(model) {
+  return !!(model && Array.isArray(model.categories) && model.categories.some((category) => {
+    return String(category.action || '') === 'comment'
+      && (/(seek_rent|tenant)/i.test(String(category.id || '')) || /(求租|租户)/.test(String(category.name || '')));
+  }));
+}
+
+function applyResidentialAudienceGuard(decision, note, model) {
+  if (!isResidentialRentalLeadModel(model)) return decision;
+  const text = [note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' ');
+  const audience = residentialLongTermAudienceDecision(text);
+  if (audience.eligible) return Object.assign({}, decision, { audienceMatch: 'match' });
+  return Object.assign({}, decision, {
+    eligible: false,
+    audienceMatch: 'mismatch',
+    reason: audience.reason,
+    decisionReason: audience.reason,
+    evidence: audience.reason
+  });
+}
+
 async function classifyNotePublisher(note, cfg = {}) {
   if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim()) {
     return noteClassificationDecision({
@@ -249,7 +288,9 @@ async function classifyNotePublisher(note, cfg = {}) {
   } else if (area.locationMatch === 'match' && classification.locationMatch === 'unknown') {
     classification = Object.assign({}, classification, { locationMatch: 'match' });
   }
-  return noteClassificationDecision(classification);
+  const decision = noteClassificationDecision(classification);
+  const rentalModel = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
+  return applyResidentialAudienceGuard(decision, note, rentalModel);
 }
 
 function isLlmNoteClassificationEnabled(cfg = {}) {
@@ -312,7 +353,7 @@ function classifyDetailedNoteByKeywords(note, cfg = {}) {
     || model.categories.find((item) => item.fallback)
     || model.categories[model.categories.length - 1];
   const area = serviceAreaDecision([note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' '), cfg);
-  return categoryClassificationDecision({
+  const decision = categoryClassificationDecision({
     category,
     confidence: tagged.category_confidence,
     reason: tagged.classify_reason,
@@ -321,6 +362,7 @@ function classifyDetailedNoteByKeywords(note, cfg = {}) {
     method: 'keyword',
     cfg
   });
+  return applyResidentialAudienceGuard(decision, note, model);
 }
 
 function validateLlmLocation(raw, note, cfg = {}) {
@@ -403,7 +445,7 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
     }
   }
   const locationDecision = validateLlmLocation(locationRaw, note, cfg);
-  return categoryClassificationDecision({
+  const decision = categoryClassificationDecision({
     category,
     confidence: raw.confidence,
     reason: `分类：${raw.reason || '未说明'}；地区：${locationDecision.reason}`,
@@ -421,6 +463,7 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
     cfg,
     error: locationError
   });
+  return applyResidentialAudienceGuard(decision, note, model);
 }
 
 async function classifyDetailedNote(note, cfg = {}) {
@@ -1362,8 +1405,10 @@ function leadTextDecision(content, cfg = {}) {
   const area = serviceAreaDecision(text, cfg);
   if (area.locationMatch === 'mismatch') return { eligible: false, reason: '异地内容' };
   if ((cfg.reply_black_words || []).some((word) => word && text.includes(word))) return { eligible: false, reason: '命中黑词' };
+  const audience = residentialLongTermAudienceDecision(text);
+  if (!audience.eligible) return audience;
   if (/(中介|经纪人|房产销售|公寓管家|招租|出租|转租|房源发布|佣金|合作|房东直租|可带看|随时带看|我.{0,4}有房|我.{0,6}有.{0,4}(一居|两居|三居)|手上有|主页.{0,6}(房源|房子|实拍)|私你了|已私|我私你|私信你了)/.test(text)) return { eligible: false, reason: '供给方/同行信息' };
-  const strong = /(求租|找房|想租|要租|租房需求|蹲房|有没有.{0,8}(房|一居|两居|合租|整租)|还在吗|还有吗|多少钱|价格多少|预算.{0,10}(元|千|万)|(想|求|找|要|蹲).{0,8}(一居|两居|三居|合租|整租|短租|入住)|(一居|两居|三居|合租|整租|短租).{0,8}(求租|找房|想租|要租))/.test(text);
+  const strong = /(求租|找房|想租|要租|租房需求|蹲房|有没有.{0,8}(房|一居|两居|合租|整租)|还在吗|还有吗|多少钱|价格多少|预算.{0,10}(元|千|万)|(想|求|找|要|蹲).{0,8}(一居|两居|三居|合租|整租|入住)|(一居|两居|三居|合租|整租).{0,8}(求租|找房|想租|要租))/.test(text);
   return strong ? { eligible: true, reason: '明确租房需求' } : { eligible: false, reason: '未识别到明确需求' };
 }
 
@@ -1522,4 +1567,4 @@ async function replyOpenNoteComment({ client, target, item, text, dry = true, sh
   return { ok: true, dry: false, msg: '评论区回复已发送' };
 }
 
-module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, categoryClassificationDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };
+module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };

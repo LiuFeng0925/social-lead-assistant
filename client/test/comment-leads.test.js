@@ -14,6 +14,18 @@ test('outreach only comments a confirmed tenant note author', () => {
 test('comment lead detection accepts explicit rental demand', () => {
   assert.equal(leadTextDecision('长阳附近还有两居吗？预算五千，月底入住').eligible, true);
   assert.equal(leadTextDecision('我也在找房，想整租一居').eligible, true);
+  assert.equal(leadTextDecision('求租武侯区住宅套一，准备长期住').eligible, true);
+  assert.equal(leadTextDecision('求租武侯区住宅套一，不能短租，只要长租').eligible, true);
+});
+
+test('comment lead detection only accepts residential long-term renters', () => {
+  assert.deepEqual(leadTextDecision('求租武侯区临街商铺，准备开奶茶店'), {
+    eligible: false,
+    reason: '非目标受众：求租商业用房，不是用于居住的住宅长租'
+  });
+  assert.equal(leadTextDecision('找个门面房做餐饮').eligible, false);
+  assert.match(leadTextDecision('求租套一，只住两个月').reason, /1到3个月短租/);
+  assert.match(leadTextDecision('工作过渡，想租3个月').reason, /1到3个月短租/);
 });
 
 test('comment lead detection rejects agents and property listings', () => {

@@ -241,22 +241,40 @@ function parseNoteCategoryClassificationContent(content, categories) {
   return normalizeNoteCategoryClassification(parsed, categories);
 }
 
-async function classifyNoteCategory({ note, localWords, leadModel, provider, model, apiKey }) {
+async function classifyNoteCategory({ note, localWords, leadModel, provider, model, apiKey, requestChat = postChat }) {
   const ep = PROVIDERS[provider] || PROVIDERS.ark;
   const categories = Array.isArray(leadModel && leadModel.categories) ? leadModel.categories : [];
-  const j = await postChat({
-    host: ep.host, path: ep.path, apiKey,
-    body: {
+  const baseMessages = buildNoteCategoryClassificationMessages({ note, leadModel });
+  let formatError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const messages = attempt === 0 ? baseMessages : baseMessages.concat([{
+      role: 'user',
+      content: '上一次没有返回可解析的完整 JSON。请立即重新输出：只输出一个完整、合法的 JSON 对象，不要 Markdown、不要解释、不要在 JSON 前后添加任何文字。'
+    }]);
+    const body = {
       model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''),
-      messages: buildNoteCategoryClassificationMessages({ note, leadModel }),
+      messages,
+      response_format: { type: 'json_object' },
       temperature: 0.1,
-      max_tokens: 360
-    },
-    timeoutMs: CLASSIFICATION_TIMEOUT_MS
-  });
-  const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-  if (!content) throw new Error('大模型分类没有返回内容');
-  return parseNoteCategoryClassificationContent(content, categories);
+      max_tokens: 800
+    };
+    // DeepSeek V4 defaults to high-effort thinking. For short structured
+    // extraction this can consume the output budget before the final JSON.
+    if (provider === 'deepseek') body.thinking = { type: 'disabled' };
+    const j = await requestChat({
+      host: ep.host, path: ep.path, apiKey, body,
+      timeoutMs: CLASSIFICATION_TIMEOUT_MS
+    });
+    const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    try {
+      if (!content) throw new Error('大模型分类没有返回内容');
+      return parseNoteCategoryClassificationContent(content, categories);
+    } catch (error) {
+      formatError = error;
+      if (attempt === 1) throw error;
+    }
+  }
+  throw formatError || new Error('大模型分类返回格式异常');
 }
 
 function buildServiceAreaClassificationMessages({ note, extracted = {}, localWords = [] }) {
@@ -345,15 +363,17 @@ async function classifyServiceArea({ note, extracted, localWords, provider, mode
         ? '上一次 locationEvidenceQuotes 不是标题或正文中可逐字找到的原文。请重新输出 JSON：从标题或完整正文中逐字复制 1到3 段简短地点原文，每段单独放入 locationEvidenceQuotes，不得汇总、改写或拼接。只输出合法 JSON。'
         : '上一次输出不是可解析的 JSON。请立即修正：只输出一个完整、合法的 JSON 对象，不要 Markdown、不要解释、不要在 JSON 前后添加任何文字。'
     }]);
+    const body = {
+      model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''),
+      messages,
+      response_format: { type: 'json_object' },
+      temperature: 0.05,
+      max_tokens: 800
+    };
+    if (provider === 'deepseek') body.thinking = { type: 'disabled' };
     const j = await requestChat({
       host: ep.host, path: ep.path, apiKey,
-      body: {
-        model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''),
-        messages,
-        response_format: { type: 'json_object' },
-        temperature: 0.05,
-        max_tokens: 260
-      },
+      body,
       timeoutMs: CLASSIFICATION_TIMEOUT_MS
     });
     const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
@@ -379,9 +399,11 @@ async function classifyServiceArea({ note, extracted, localWords, provider, mode
 // 按对方笔记 + 方向,让大模型生成一句拟人评论
 async function genComment({ note, direction, provider, model, apiKey }) {
   const ep = PROVIDERS[provider] || PROVIDERS.ark;
+  const body = { model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''), messages: buildCommentMessages({ note, direction }), temperature: 0.9, max_tokens: 120 };
+  if (provider === 'deepseek') body.thinking = { type: 'disabled' };
   const j = await postChat({
     host: ep.host, path: ep.path, apiKey,
-    body: { model: model || (provider === 'deepseek' ? 'deepseek-v4-flash' : ''), messages: buildCommentMessages({ note, direction }), temperature: 0.9, max_tokens: 120 },
+    body,
   });
   const txt = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
   if (!txt) throw new Error('LLM 没返回内容');

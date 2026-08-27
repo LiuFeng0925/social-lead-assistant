@@ -62,6 +62,28 @@ test('keyword mode classifies from title plus body after detail is read', async 
   assert.match(result.evidence, /想租/);
 });
 
+test('residential audience guard rejects commercial and explicit short-term rental notes', async () => {
+  const cfg = {
+    lead_local_words: ['成都'],
+    lead_model: {
+      llmClassificationEnabled: false,
+      categories: [
+        { id: 'tenant', name: '租户', action: 'comment', keywords: ['求租', '想租'] },
+        { id: 'unknown', name: '不明', action: 'record', fallback: true }
+      ]
+    }
+  };
+  const commercial = await engine.classifyDetailedNote({ title: '成都求租商铺', desc: '本人想租门面开店' }, cfg);
+  const shortTerm = await engine.classifyDetailedNote({ title: '成都求租', desc: '工作过渡，只租三个月' }, cfg);
+  const residential = await engine.classifyDetailedNote({ title: '成都求租住宅', desc: '本人想长期租一套房自住' }, cfg);
+
+  assert.equal(commercial.eligible, false);
+  assert.match(commercial.decisionReason, /商业用房/);
+  assert.equal(shortTerm.eligible, false);
+  assert.match(shortTerm.decisionReason, /1到3个月短租/);
+  assert.equal(residential.eligible, true);
+});
+
 test('llm category prompt includes every category prompt and the complete body', () => {
   const fullBody = '标题没说身份，但正文明确写本人想在长阳租一居。';
   const leadModel = {
@@ -108,6 +130,51 @@ test('llm structured classification preserves extracted location and configured 
   assert.equal(parsed.matchedServiceArea, '长阳');
   assert.equal(parsed.locationConfidence, 0.96);
   assert.deepEqual(parsed.slotValues, { area: '长阳', budget: '4500元', room_type: '一居' });
+});
+
+test('category request disables DeepSeek thinking, enforces JSON, raises the output limit and retries malformed output once', async () => {
+  const requests = [];
+  const responses = [
+    { choices: [{ message: { content: '' } }] },
+    { choices: [{ message: { content: JSON.stringify({
+      categoryId: 'tenant', city: '成都', district: '武侯区', location: '双楠',
+      confidence: 0.96, reason: '发布者本人明确求租', evidence: '本人想在双楠租套一',
+      slotValues: { area: '双楠', room_type: '套一' }
+    }) } }] }
+  ];
+  const result = await llm.classifyNoteCategory({
+    note: { title: '武侯区求租', desc: '本人想在双楠租套一' },
+    leadModel: {
+      categories: [
+        { id: 'tenant', name: '租户', action: 'comment' },
+        { id: 'unknown', name: '不明', action: 'record', fallback: true }
+      ]
+    },
+    provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-key',
+    requestChat: async (request) => { requests.push(request); return responses.shift(); }
+  });
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].body.response_format, { type: 'json_object' });
+  assert.deepEqual(requests[0].body.thinking, { type: 'disabled' });
+  assert.equal(requests[0].body.max_tokens, 800);
+  assert.match(requests[1].body.messages.at(-1).content, /上一次没有返回可解析的完整 JSON/);
+  assert.equal(result.categoryId, 'tenant');
+});
+
+test('category request does not send DeepSeek-only thinking control to DashScope', async () => {
+  let captured;
+  await llm.classifyNoteCategory({
+    note: { title: '成都求租', desc: '本人想租套一' },
+    leadModel: { categories: [{ id: 'tenant', name: '租户', action: 'comment' }] },
+    provider: 'dashscope', model: 'qwen3.7-flash', apiKey: 'test-key',
+    requestChat: async (request) => {
+      captured = request;
+      return { choices: [{ message: { content: JSON.stringify({ categoryId: 'tenant', confidence: 0.9, reason: '本人求租', evidence: '想租套一' }) } }] };
+    }
+  });
+  assert.equal(Object.hasOwn(captured.body, 'thinking'), false);
+  assert.equal(captured.body.max_tokens, 800);
 });
 
 test('service-area prompt uses title, body, extracted facts and geographic relationships', () => {
@@ -158,9 +225,28 @@ test('service-area request enforces JSON mode and retries one malformed response
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[0].body.response_format, { type: 'json_object' });
   assert.deepEqual(requests[1].body.response_format, { type: 'json_object' });
+  assert.equal(requests[0].body.max_tokens, 800);
   assert.match(requests[1].body.messages.at(-1).content, /上一次输出不是可解析的 JSON/);
   assert.equal(result.locationMatch, 'match');
   assert.equal(result.matchedServiceArea, '四川成都租房');
+});
+
+test('service-area request disables DeepSeek thinking', async () => {
+  let captured;
+  await llm.classifyServiceArea({
+    note: { title: '武侯区求租', desc: '成都武侯区求租' },
+    extracted: { city: '成都', district: '武侯区', locationEvidence: '成都武侯区' },
+    localWords: ['成都市'], provider: 'deepseek', model: 'deepseek-v4-flash', apiKey: 'test-key',
+    requestChat: async (request) => {
+      captured = request;
+      return { choices: [{ message: { content: JSON.stringify({
+        locationMatch: 'match', matchedServiceArea: '成都市', locationConfidence: 0.98,
+        locationEvidenceQuotes: ['成都武侯区'], reason: '武侯区属于成都市'
+      }) } }] };
+    }
+  });
+  assert.deepEqual(captured.body.thinking, { type: 'disabled' });
+  assert.equal(captured.body.max_tokens, 800);
 });
 
 test('service-area request does not retry a valid JSON response', async () => {

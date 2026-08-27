@@ -36,6 +36,19 @@ test('outbound machine refreshes search results in small fresh batches', () => {
   assert.match(server, /keywordCollected/);
 });
 
+test('console provides a manual Xiaohongshu refresh that pauses work without clearing records', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+
+  assert.ok(html.includes('id="refreshxhsbtn"'));
+  assert.ok(html.includes('↻ 刷新小红书'));
+  assert.ok(html.includes("fetch('/api/browser/refresh'"));
+  assert.ok(server.includes("u.pathname === '/api/browser/refresh'"));
+  assert.match(server, /Page\.reload/);
+  assert.match(server, /if \(machine\.running\) \{ stopMachine\(\)/);
+  assert.equal(server.includes("handleBrowserRefresh(req, res) {\n  clearMachineCache"), false);
+});
+
 test('task settings expose fixed outreach copy and clarify pending analysis count', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(html.includes('id="outreach_fixed_text"'));

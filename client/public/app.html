@@ -261,8 +261,11 @@
         <div class="row">
           <button class="btn" id="go" onclick="engineStart()">▶ 开始</button>
           <button class="btn" id="stopbtn" onclick="engineStop()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
+          <button class="btn ghost" id="refreshxhsbtn" onclick="refreshXhsBrowser()" style="margin-left:8px" title="遇到扫码验证或页面卡住时，先暂停任务再刷新右侧小红书；不清空历史记录">↻ 刷新小红书</button>
           <button class="btn ghost" id="clearcachebtn" onclick="clearConsoleCache()" style="margin-left:8px" title="清空当前控制台日志和待发送列表；不删除已发送记录">🧹 清空缓存</button>
           <label style="font-size:13px;color:var(--sub);margin-left:12px;cursor:pointer" title="总真发开关:开=机器真的发评论/回复(务必全新小号);关=全演练"><input type="checkbox" id="autoreal" onchange="saveLive()"> 真发(总开关)</label>
+          <label style="font-size:13px;color:var(--sub);margin-left:10px;cursor:pointer" title="关闭后，任务不会查看通知、不会暂停外呼，也不会自动回复评论或@"><input type="checkbox" id="replymaster" onchange="saveReplyMaster()"> 💬 自动承接</label>
+          <span class="hint" id="replymasterhint" style="font-size:12px;white-space:nowrap"></span>
           <span class="hint" id="tasksummary" style="margin-left:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
           <a href="#" onclick="showPage('tasksettings');return false" style="font-size:12px;color:var(--brand);white-space:nowrap;text-decoration:none">⚙ 任务设置</a>
         </div>
@@ -294,7 +297,7 @@
         </div>
         <div class="card" style="flex:1;min-width:0;margin-bottom:0;display:flex;flex-direction:column">
           <div style="font-size:12px;color:var(--muted);margin-bottom:6px">实时日志 · 引擎在干什么</div>
-          <div class="log" id="log" style="height:380px;overflow:auto">连接机器中…(机器常驻:点「开始」按排班自动跑,主任务+评论承接都在这条日志里)</div>
+          <div class="log" id="log" style="height:380px;overflow:auto">连接机器中…(机器常驻:点「开始」按排班自动跑；自动承接可在上方单独开关)</div>
         </div>
       </div>
 
@@ -473,7 +476,7 @@
       <div class="card">
         <div style="font-size:14px;font-weight:700;margin-bottom:4px">💬 评论承接 · 规则</div>
         <div class="hint" style="margin-bottom:14px">别人评论/回复我 → 自动接住回复。任务运行中发现通知会插队优先回复。下面规则全部可配,改完点保存。</div>
-        <label style="cursor:pointer;display:inline-block;margin-bottom:10px"><input type="checkbox" id="r_enabled"> 任务运行时承接评论(关掉=只外呼不承接)</label>
+        <label style="cursor:pointer;display:inline-block;margin-bottom:10px"><input type="checkbox" id="r_enabled"> 自动承接总开关（关闭后：不查通知、不暂停外呼、不自动回复）</label>
         <div style="font-size:13px;font-weight:700;margin:8px 0 4px">📅 承接排班(和主任务分开;只在这个时段内查通知/回复)</div>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <label style="cursor:pointer"><input type="checkbox" id="r_sch_enabled"> 启用承接排班(关掉=全程在线)</label>
@@ -1184,6 +1187,18 @@ function engineStop() {
   $('stopbtn').disabled = true;
   fetch('/api/engine/stop').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); });
 }
+function refreshXhsBrowser() {
+  const b = $('refreshxhsbtn');
+  const old = b.textContent;
+  b.disabled = true; b.textContent = '刷新中…';
+  fetch('/api/browser/refresh', { method: 'POST' }).then(r => r.json()).then(d => {
+    if (d.status) applyMachineStatus(d.status);
+    if (!d.ok) { alert('刷新失败：' + (d.msg || '未知错误')); return; }
+    addLog(d.msg || '小红书页面已刷新');
+  }).catch(() => alert('刷新失败，请稍后重试。')).finally(() => {
+    b.disabled = false; b.textContent = old;
+  });
+}
 function clearConsoleCache() {
   if (_machineRunning) { alert('请先停止任务，再清空缓存。'); return; }
   if (!confirm('清空当前控制台的实时日志和待发送列表？\n\n已发送记录会保留，避免重复发送。')) return;
@@ -1201,6 +1216,26 @@ function saveLive() {
   const on = $('autoreal').checked;
   if (on && !confirm('⚠ 开启「真发」总开关后,机器会真的把评论/回复发出去(务必用全新小号)。确认开启?')) { $('autoreal').checked = false; return; }
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ live_send: on }))).then(r => r.json());
+}
+function setReplyMasterState(on) {
+  if ($('replymaster')) $('replymaster').checked = !!on;
+  if ($('r_enabled')) $('r_enabled').checked = !!on;
+  if ($('replymasterhint')) $('replymasterhint').textContent = on ? '通知会插队处理' : '已关闭，只做外呼';
+}
+async function loadReplyMaster() {
+  try { const c = await getCfg(); setReplyMasterState(c.reply_enabled !== false); } catch (e) {}
+}
+function saveReplyMaster() {
+  const on = $('replymaster').checked;
+  if (on && !confirm('开启自动承接后，任务发现通知会暂停外呼并按承接规则处理。确认开启？')) {
+    setReplyMasterState(false); return;
+  }
+  setReplyMasterState(on);
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ reply_enabled: on })))
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { setReplyMasterState(!on); alert('保存失败：' + (d.msg || '未知错误')); return; }
+      addLog(on ? '💬 自动承接已开启：发现通知会优先处理。' : '💬 自动承接已关闭：任务将只做外呼，不再查看通知。');
+    }).catch(() => { setReplyMasterState(!on); alert('保存失败，请稍后重试。'); });
 }
 function doSend(i, dry) {
   if (!dry && !confirm('确认真发这条评论到对方笔记?(用的是你登录的小号)')) return;
@@ -1307,6 +1342,7 @@ function saveConfig() {
 }
 checkLogin();
 loadTaskSettings();
+loadReplyMaster();
 loadSchedule();
 connectStream();
 fetch('/api/cursor-install').catch(function () {});

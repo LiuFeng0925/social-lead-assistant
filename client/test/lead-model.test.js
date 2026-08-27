@@ -17,6 +17,8 @@ test('default lead model classifies rental notes with configured categories', ()
 
   assert.equal(model.llmClassificationEnabled, false, 'keyword classification should remain the default');
   assert.match(model.categories.find((c) => c.id === 'seek_rent').llmPrompt, /发布者本人/);
+  assert.match(model.categories.find((c) => c.id === 'seek_rent').llmPrompt, /用于日常居住的住宅/);
+  assert.match(model.categories.find((c) => c.id === 'seek_rent').llmPrompt, /1到3个月/);
 
   const seek = classifyNote({ title: '朝阳求租一居 预算5000 近地铁', author: '安安' }, model);
   assert.equal(seek.categoryName, '求租笔记');
@@ -31,6 +33,20 @@ test('default lead model classifies rental notes with configured categories', ()
   const unknown = classifyNote({ title: '北京生活碎片', author: '普通用户' }, model);
   assert.equal(unknown.categoryName, '不明');
   assert.equal(unknown.action, 'record');
+});
+
+test('legacy rental prompt is upgraded to residential long-term targeting', () => {
+  const model = normalizeLeadModel({
+    categories: [
+      {
+        id: '求租笔记', name: '求租笔记', action: 'comment', keywords: ['求租'],
+        llmPrompt: '只有发布者本人明确表达正在求租、找房、想租房或询问租房方案时才归入此类。不能因为标题里出现“租房”就判断为求租；要结合正文里的第一人称诉求、地点、预算、户型、入住时间等信息。'
+      },
+      { id: 'unknown', name: '不明', action: 'record', fallback: true }
+    ]
+  });
+  assert.match(model.categories[0].llmPrompt, /商业或经营用途/);
+  assert.match(model.categories[0].llmPrompt, /普通住宅求租未写租期/);
 });
 
 test('lead model normalization preserves the llm classification switch and category prompts', () => {
