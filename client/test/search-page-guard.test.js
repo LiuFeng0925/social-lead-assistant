@@ -44,6 +44,7 @@ test('visible page search input probe requires usable coordinates', () => {
   assert.match(engine.SEARCH_INPUT_PROBE, /textarea#search-input/);
   assert.match(engine.SEARCH_INPUT_PROBE, /opacity/);
   assert.match(engine.SEARCH_SUBMIT_PROBE, /submit-button-wrapper/);
+  assert.match(engine.SEARCH_SUBMIT_PROBE, /single-line-search-btn/);
 });
 
 test('page UI search clicks, replaces text and clicks submit without direct navigation', async () => {

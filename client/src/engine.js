@@ -622,7 +622,9 @@ const SEARCH_INPUT_PROBE = `(function(){
 })()`;
 
 const SEARCH_SUBMIT_PROBE = `(function(){
-  var nodes=document.querySelectorAll('.input-box .submit-button-wrapper,.input-box .search-icon,.input-button .search-icon,[aria-label="搜索"],button[type="submit"]');
+  // 经典搜索页、AI 搜索页和新版单行搜索框的按钮类名不同；缺少新版
+  // single-line-search-btn 会导致输入成功却无法提交，进而反复报错。
+  var nodes=document.querySelectorAll('.input-box .submit-button-wrapper,.input-box .search-icon,.input-button .search-icon,.single-line-search-btn,[aria-label="搜索"],button[type="submit"]');
   for(var i=0;i<nodes.length;i++){
     var el=nodes[i],r=el.getBoundingClientRect(),style=getComputedStyle(el);
     if(el.offsetParent===null||r.width<16||r.height<16||r.bottom<=0||r.right<=0||style.visibility==='hidden')continue;
