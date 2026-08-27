@@ -26,6 +26,7 @@ const {
 
 const PORT = Number(process.env.XHS_UI_PORT || 3000);
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
+const ACCOUNT_ID = Math.max(1, Number(process.env.XHS_ACCOUNT_ID || 1));
 const TMP = path.join(__dirname, '..', 'tmp');
 const CHROME_PROFILE = path.join(__dirname, '..', '.xhs-chrome-profile');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
@@ -573,7 +574,12 @@ function machineStatus() { return { running: machine.running, phase: machine.pha
 function resetMachineConnection() { machine.client = null; machine.target = null; }
 function isCdpConnectionError(error) { return /cdp_|no_page_target/i.test(String(error && error.message || error || '')); }
 function emitRunStats() { emitEvent('run-stats', db.taskRunReport(machine.runId)); }
-function setTaskWakeLock(active) { process.emit('xhs:task-wake-lock', !!active); }
+function setTaskWakeLock(active) {
+  // 多账号时每个工作进程把唤醒状态汇报给 Electron 主进程，由主进程按
+  // “任一账号在跑”统一保持唤醒。单账号/开发模式仍保留原事件路径。
+  if (typeof process.send === 'function') process.send({ type: 'xhs:task-wake-lock', accountId: ACCOUNT_ID, active: !!active });
+  else process.emit('xhs:task-wake-lock', !!active);
+}
 function startMachine({ retryRunId = 0 } = {}) {
   if (machine.running) return false;
   const cfg = db.getConfig();
@@ -988,6 +994,11 @@ async function handleBrowserRefresh(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
+  // 控制台切换账号时会请求另一个本地账号服务。仅限本机端口，开放 CORS
+  // 让 EventSource 和 fetch 可以无刷新切换，绝不对外网监听。
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   const u = new URL(req.url, `http://localhost:${PORT}`);
   if (u.pathname === '/') {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
@@ -1027,6 +1038,7 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/stop') { await handleStop(req, res); return; }
   if (u.pathname === '/api/cursor-install') { await handleCursorInstall(req, res); return; }
   if (u.pathname === '/api/config') { await handleConfig(req, res); return; }
+  if (u.pathname === '/api/account') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, accountId: ACCOUNT_ID, port: PORT })); return; }
   if (u.pathname === '/api/throttle') { await handleThrottle(req, res); return; }
   if (u.pathname === '/api/save-config') { await handleSaveConfig(req, res, u.searchParams); return; }
   res.writeHead(404); res.end('not found');

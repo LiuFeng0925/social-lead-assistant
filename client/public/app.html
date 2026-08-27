@@ -23,6 +23,11 @@
   .main{flex:1;min-width:0;margin-left:174px}
   .bar{display:flex;align-items:center;gap:10px;padding:11px 20px;background:#fff;border-bottom:1px solid var(--line)}
   .bar b{font-size:15px}.bar .acct{margin-left:auto;font-size:12px;color:var(--muted)}
+  .account-switcher{display:flex;align-items:center;gap:5px;margin-left:auto}
+  .account-switcher .label{font-size:12px;color:var(--muted);margin-right:3px}
+  .account-switcher button{border:1px solid #cfd8e6;background:#fff;color:#526075;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:750;cursor:pointer}
+  .account-switcher button:hover{background:#f8fafc}.account-switcher button.on{background:#fff0f2;border-color:#ffb5c1;color:var(--brand)}
+  .account-hint{font-size:11px;color:#667085;white-space:nowrap}
   .page{padding:16px 26px 50px;display:none}.page.on{display:block}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,30,50,.05)}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
@@ -246,7 +251,7 @@
   </div>
 
   <div class="main">
-    <div class="bar"><b id="pagetitle">控制台</b><span class="acct">本地界面 · 引擎 M1-M5</span></div>
+    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span></div>
 
     <!-- ===== 控制台 ===== -->
     <div class="page on" id="page-console">
@@ -513,6 +518,49 @@
 const $ = (id) => document.getElementById(id);
 if (navigator.userAgent.indexOf('Electron') >= 0) document.documentElement.classList.add('electron');
 let es = null, frameW = 0, frameH = 0;
+
+// 多账号版：控制台页面只保留一份，点击账号后把所有本地接口切到该账号
+// 的独立服务。四个服务、SQLite、限频和浏览器登录态彼此完全隔离。
+const ACCOUNT_PORT_BASE = 3100;
+let activeAccountId = Math.max(1, Math.min(4, Number(localStorage.getItem('xhs-active-account') || 1)));
+const nativeFetch = window.fetch.bind(window);
+const NativeEventSource = window.EventSource;
+function accountApiUrl(input) {
+  if (typeof input !== 'string' || !input.startsWith('/api/')) return input;
+  return 'http://127.0.0.1:' + (ACCOUNT_PORT_BASE + activeAccountId) + input;
+}
+window.fetch = function (input, init) { return nativeFetch(accountApiUrl(input), init); };
+window.EventSource = function (url, config) { return new NativeEventSource(accountApiUrl(url), config); };
+window.EventSource.prototype = NativeEventSource.prototype;
+function renderAccountSwitcher() {
+  document.querySelectorAll('#account-switcher button[data-account]').forEach(function (btn) {
+    btn.classList.toggle('on', Number(btn.dataset.account) === activeAccountId);
+  });
+  $('account-hint').textContent = '账号 ' + activeAccountId + ' · 独立登录、任务和统计';
+}
+function selectAccount(id) {
+  id = Math.max(1, Math.min(4, Number(id) || 1));
+  if (id === activeAccountId && _stream) return;
+  if (es) { try { es.close(); } catch (e) {} es = null; }
+  if (_stream) { try { _stream.close(); } catch (e) {} _stream = null; }
+  if (_monitor) { try { _monitor.close(); } catch (e) {} _monitor = null; }
+  activeAccountId = id;
+  localStorage.setItem('xhs-active-account', String(id));
+  renderAccountSwitcher();
+  if (window.electronView) window.electronView.selectAccount(id);
+  $('log').textContent = '已切换到账号 ' + id + '。该账号的登录、任务、限频、历史和统计均独立保存。';
+  $('results').innerHTML = '';
+  $('runstats').textContent = '加载该账号执行统计中…';
+  ['m-total','m-seek','m-supply','m-target'].forEach(function (key) { $(key).textContent = '–'; });
+  getCfg().then(function () {
+    loadTaskSettings(); loadLeadModelSettings(); loadModelSettings(); loadReplyRules();
+    loadReplyMaster(); loadSchedule(); loadThrottle(); loadRecords(); loadRunStats(); checkLogin();
+  });
+  connectStream();
+  connectMonitor();
+}
+renderAccountSwitcher();
+if (window.electronView) window.electronView.selectAccount(activeAccountId);
 
 var _cfg = {};
 async function getCfg() {
@@ -1246,12 +1294,14 @@ function doSend(i, dry) {
 }
 
 // 实时监控
+let _monitor = null;
 function connectMonitor() {
-  const mes = new EventSource('/api/screencast');
-  mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接' : ('连接失败:'+(h.msg||'')); });
+  if (_monitor) { try { _monitor.close(); } catch (e) {} }
+  const mes = _monitor = new EventSource('/api/screencast');
+  mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接 · 账号 ' + activeAccountId : ('连接失败:'+(h.msg||'')); });
   mes.addEventListener('frame', e => { const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH; const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block'; const ce = $('castempty'); if (ce) ce.style.display = 'none'; });
   mes.addEventListener('pointer', e => { const p = JSON.parse(e.data); showCursor(p.x, p.y, p.type); });
-  mes.onerror = () => { $('caststatus').textContent = '○ 重连中…'; };
+  mes.onerror = () => { if (mes === _monitor) $('caststatus').textContent = '○ 账号 ' + activeAccountId + ' 重连中…'; };
 }
 let _trail = [], _trailI = 0;
 function ensureTrail() {

@@ -45,7 +45,9 @@ class XhsCdpClient {
   }
 
   // 找一个可用的网页标签页:优先小红书域名,否则取第一个普通网页 tab。
-  async resolvePageTarget({ preferHost = 'xiaohongshu.com' } = {}) {
+  // 多账号 Electron 版会给每个 BrowserView 写入独立 window.name；必须精确
+  // 命中该标记，绝不能在账号 A 的任务里误操作账号 B 的页面。
+  async resolvePageTarget({ preferHost = 'xiaohongshu.com', accountMarker = '' } = {}) {
     const targets = await this.listTargets();
     const pages = targets.filter((t) =>
       t.type === 'page' &&
@@ -54,7 +56,27 @@ class XhsCdpClient {
       !t.url.startsWith('chrome://') &&
       !t.url.startsWith('chrome-extension://'));
     if (!pages.length) throw new Error('no_page_target');
-    return pages.find((p) => p.url.includes(preferHost)) || pages[0];
+    const preferred = pages.filter((p) => p.url.includes(preferHost));
+    if (!accountMarker) return preferred[0] || pages[0];
+
+    // 首屏加载前，URL 中也带有标记，先走零开销的快速定位。
+    const urlMatched = preferred.find((p) => p.url.includes(accountMarker));
+    if (urlMatched) return urlMatched;
+
+    // 搜索、详情等页面跳转会丢掉 URL 参数，但同一个 BrowserView 的
+    // window.name 会持续存在；逐个探测后精确绑定到对应账号。
+    for (const target of preferred) {
+      try {
+        const value = await this.sendCommand({
+          target,
+          method: 'Runtime.evaluate',
+          params: { expression: 'String(window.name || "")', returnByValue: true },
+          timeoutMs: 1800
+        });
+        if (value && value.value === accountMarker) return target;
+      } catch (e) { /* 页面正在跳转，继续检查其他候选页 */ }
+    }
+    throw new Error(`account_page_target_not_ready:${accountMarker}`);
   }
 
   _wsUrl(target) {

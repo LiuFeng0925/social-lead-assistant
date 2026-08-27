@@ -11,7 +11,11 @@ const inboxUtils = require('./inbox-utils');
 const leadModel = require('./lead-model');
 const { parseKeywords, migrateLegacyTotalSchedule } = require('./keyword-utils');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// 多账号模式下，每个账号工作进程传入独立的数据目录。未传入时仍沿用
+// 单账号版本的 data/，保证旧数据和旧启动方式完全兼容。
+const DATA_DIR = process.env.XHS_DATA_DIR
+  ? path.resolve(process.env.XHS_DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 let db = null;
 
 function open() {

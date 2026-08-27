@@ -473,9 +473,11 @@ async function classifyDetailedNote(note, cfg = {}) {
 }
 
 // ── CDP 连接 ──
-async function connect(endpoint, onPointer) {
+async function connect(endpoint, onPointer, options = {}) {
   const client = new XhsCdpClient({ endpoint: endpoint || 'http://127.0.0.1:9222', onPointer });
-  const target = await client.resolvePageTarget();
+  const target = await client.resolvePageTarget({
+    accountMarker: options.accountMarker || process.env.XHS_ACCOUNT_MARKER || ''
+  });
   return { client, target };
 }
 

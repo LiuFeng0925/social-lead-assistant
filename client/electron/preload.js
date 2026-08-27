@@ -5,4 +5,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronView', {
   // 切到控制台 → setVisible(true) 显示右侧内嵌浏览器;切到其他页签 → setVisible(false) 隐藏并铺平
   setVisible: (visible) => ipcRenderer.send('view-visible', !!visible),
+  // 选择一个账号时只展示该账号的内嵌页面；后台三个页面与任务仍继续运行。
+  selectAccount: (accountId) => ipcRenderer.send('account-selected', Number(accountId) || 1),
 });
