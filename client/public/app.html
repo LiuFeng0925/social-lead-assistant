@@ -387,7 +387,11 @@
           <div class="row">
             <div class="fld" style="flex:1"><label>外呼固定短句（留空才使用 AI）</label><input id="outreach_fixed_text" placeholder="例如：有房，私" style="width:100%"></div>
           </div>
-          <div class="hint" style="padding:9px 11px;border:1px solid #cfe5d7;border-radius:8px;background:#f1fbf4;margin:2px 0 12px;color:#17633d">✓ 外呼对象：仅处理已确认在服务区域内的“租户/求租者”笔记。先评论该笔记作者；再仅在这类求租笔记的评论区，回复明确求租的人。房东、转租方、房源发布者和同行/中介笔记会整篇跳过。</div>
+          <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:2px 0 12px">
+            <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="reply_under_supply_enabled"> 在房源/同行笔记下回复求租评论者</label>
+            <div class="hint" style="margin-top:6px">关闭时：只在求租笔记下回复评论者。打开后：系统仍不会评论房东、中介或同行作者本人；但会读取服务区域内房源/同行笔记的评论区。评论者写“我也需要”“同求”等简短留言时，系统会结合原笔记的地区、住宅性质和租期判断。商铺、短租、外地、同行留言仍会跳过。</div>
+          </div>
+          <div class="hint" style="padding:9px 11px;border:1px solid #cfe5d7;border-radius:8px;background:#f1fbf4;margin:2px 0 12px;color:#17633d">✓ 外呼对象：先判断笔记作者；确认是服务区域内求租者才评论作者。评论区线索会逐条判断，确保只触达明确住宅长租需求。</div>
           <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:6px 0 14px">
             <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="task_llm_classification_enabled"> 本任务启用大模型判断（笔记分类＋地区诊断）</label>
             <div class="hint" style="margin-top:6px">每篇笔记都会打开并读取标题＋完整正文。关闭时按“获客模型”中的关键词规则分类和判断地区；打开时先按各分类的“LLM 判断说明”分类，再由大模型结合正文地点与服务区域做地理诊断。模型服务商和 API Key 在“模型设置”中配置。</div>
@@ -614,6 +618,7 @@ async function loadTaskSettings() {
   setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('outreach_fixed_text', c.outreach_fixed_text); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
   setVal('rescan', c.rescan_minutes);
+  if ($('reply_under_supply_enabled')) $('reply_under_supply_enabled').checked = c.reply_under_supply_enabled === true;
   if ($('task_llm_classification_enabled')) $('task_llm_classification_enabled').checked = !!(c.lead_model && c.lead_model.llmClassificationEnabled);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
   if ($('slot_pacing')) $('slot_pacing').value = c.slot_pacing || 'even';
@@ -855,7 +860,9 @@ function saveTaskSettings() {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
     task_keyword: $('kw').value, task_direction: $('dir').value, outreach_fixed_text: $('outreach_fixed_text').value,
     task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value,
-    rescan_minutes: Math.max(1, Number($('rescan').value) || 15), lead_model: taskLeadModel, scan_quota_mode: 'per_keyword'
+    rescan_minutes: Math.max(1, Number($('rescan').value) || 15),
+    reply_under_supply_enabled: $('reply_under_supply_enabled') ? $('reply_under_supply_enabled').checked : false,
+    lead_model: taskLeadModel, scan_quota_mode: 'per_keyword'
   };
   $('tasksavehint').textContent = '保存中…';
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(d => {

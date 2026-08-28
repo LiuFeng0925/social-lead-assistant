@@ -211,6 +211,17 @@ function shouldCommentNoteAuthor(decision) {
   return !!decision && decision.eligible === true && decision.role === 'tenant';
 }
 
+// 评论区线索可来自两种场景：
+// 1) 已确认的求租笔记；2) 用户明确打开开关后，服务区内的房源/同行笔记。
+// 无论来源如何，都不会评论房源方或同行作者本人；后续还会逐条判断评论者。
+function shouldInspectNoteCommenters(decision, cfg = {}) {
+  if (shouldCommentNoteAuthor(decision)) return true;
+  return cfg.reply_under_supply_enabled === true
+    && !!decision
+    && decision.locationMatch === 'match'
+    && (decision.role === 'supply' || decision.role === 'agent');
+}
+
 function residentialLongTermAudienceDecision(content) {
   const text = String(content || '').replace(/\s+/g, ' ').trim();
   if (!text) return { eligible: true, reason: '' };
@@ -1424,6 +1435,32 @@ function leadActorDecision(content, nickname, cfg = {}) {
   return leadTextDecision(content, cfg);
 }
 
+function noteContextText(note = {}) {
+  const tags = Array.isArray(note.tags) ? note.tags.join(' ') : String(note.tags || '');
+  return [note.title, note.desc, note.content, note.body, tags].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+// 有些真实租客只会在房源帖下写“我也需要”“同求”。这时地区、住宅性质和
+// 租期要由原笔记的标题/正文来判断，而不是把短留言当成信息不全直接丢弃。
+// 这条兜底只在用户打开房源/同行评论区开关、且原笔记已确认在服务区时生效。
+function commenterLeadDecision({ content, nickname, parentNote, parentDecision, cfg = {} } = {}) {
+  const direct = leadActorDecision(content, nickname, cfg);
+  if (direct.eligible) return direct;
+  if (!shouldInspectNoteCommenters(parentDecision, cfg)) return direct;
+  // 明确异地、商业短租、房源方或同行留言，绝不因上下文而放行。
+  if (/异地|非目标受众|供给方|同行/.test(String(direct.reason || ''))) return direct;
+  const parentAudience = residentialLongTermAudienceDecision(noteContextText(parentNote));
+  if (!parentAudience.eligible) return { eligible: false, reason: '原笔记不属于住宅长租场景：' + parentAudience.reason };
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  const contextNeed = /(?:我也|俺也|同|也).{0,4}(?:需要|想要|想租|找房|求租)|(?:我也需要|同求|求同|求一个|还在吗|还有吗|可以租吗)/.test(text);
+  if (!contextNeed) return direct;
+  return {
+    eligible: true,
+    reason: '原笔记已确认是服务区内住宅租住场景；评论者表达同求/需要，按笔记上下文判为租住需求',
+    inferredFromParent: true
+  };
+}
+
 function _openNoteReplyFindFn(nick, head, userLink) {
   function profilePath(href) {
     return String(href || '').split('?')[0].replace(/^https?:\/\/[^/]+/, '');
@@ -1571,4 +1608,4 @@ async function replyOpenNoteComment({ client, target, item, text, dry = true, sh
   return { ok: true, dry: false, msg: '评论区回复已发送' };
 }
 
-module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };
+module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, shouldInspectNoteCommenters, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };

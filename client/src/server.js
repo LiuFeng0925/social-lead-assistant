@@ -822,16 +822,19 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
     log('作者跳过:' + authorDecision.decisionReason + '；仅触达已确认的求租笔记作者');
   }
 
-  // 只有“作者本人已确认是服务区内求租者”的笔记，才继续看评论区。
-  // 房东、转租、房源和同行笔记在这里直接结束，绝不在它们的评论区留言。
-  if (!engine.shouldCommentNoteAuthor(authorDecision)) {
-    log('评论区跳过:仅处理已确认的求租笔记，不会在房源方或同行笔记下回复。');
+  const inspectCommenters = engine.shouldInspectNoteCommenters(authorDecision, cfg);
+  // 默认只读求租笔记评论区。用户可额外开启“房源/同行笔记评论区线索”开关，
+  // 但始终不评论这类笔记的作者本人，只逐条筛选评论里的明确求租者。
+  if (!inspectCommenters) {
+    log('评论区跳过:当前只处理求租笔记；房源/同行笔记下的求租评论者开关未开启或地区不匹配。');
     return { sent, done, decision: authorDecision };
   }
 
   const evaluatedCommenters = ((detail && detail.commentsList) || [])
     .map((item) => {
-      const decision = engine.leadActorDecision(item.content, item.nick, cfg);
+      const decision = engine.commenterLeadDecision({
+        content: item.content, nickname: item.nick, parentNote: merged, parentDecision: authorDecision, cfg
+      });
       const area = engine.serviceAreaDecision(item.content, cfg);
       if (decision.eligible && authorDecision.locationMatch === 'unknown' && area.locationMatch !== 'match') {
         return Object.assign({}, item, { decision: { eligible: false, reason: '笔记及留言均未确认服务区域' } });
@@ -844,7 +847,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
   const leads = evaluatedCommenters
     .filter((item) => item.decision.eligible && item.can_auto_reply !== false)
     .slice(0, Number(cfg.comment_leads_per_note) || 3);
-  log('求租笔记评论区识别到明确需求 ' + leads.length + ' 条');
+  log((engine.shouldCommentNoteAuthor(authorDecision) ? '求租笔记' : '房源/同行笔记') + '评论区识别到明确或上下文需求 ' + leads.length + ' 条');
   for (const item of leads) {
     if (shouldStop()) break;
     const key = [note.id, item.user_link || item.nick, item.content].join('|');

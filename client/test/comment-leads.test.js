@@ -2,13 +2,34 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { leadTextDecision, leadActorDecision, replyOpenNoteComment, shouldCommentNoteAuthor } = require('../src/engine');
+const { leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, shouldCommentNoteAuthor, shouldInspectNoteCommenters } = require('../src/engine');
 
 test('outreach only comments a confirmed tenant note author', () => {
   assert.equal(shouldCommentNoteAuthor({ role: 'tenant', eligible: true }), true);
   assert.equal(shouldCommentNoteAuthor({ role: 'agent', eligible: true }), false);
   assert.equal(shouldCommentNoteAuthor({ role: 'supply', eligible: false }), false);
   assert.equal(shouldCommentNoteAuthor({ role: 'tenant', eligible: false }), false);
+});
+
+test('supply and agent post commenters require the explicit opt-in and an in-area source post', () => {
+  const supply = { role: 'supply', eligible: false, locationMatch: 'match' };
+  const agent = { role: 'agent', eligible: false, locationMatch: 'match' };
+  assert.equal(shouldInspectNoteCommenters(supply, {}), false);
+  assert.equal(shouldInspectNoteCommenters(supply, { reply_under_supply_enabled: true }), true);
+  assert.equal(shouldInspectNoteCommenters(agent, { reply_under_supply_enabled: true }), true);
+  assert.equal(shouldInspectNoteCommenters({ role: 'supply', eligible: false, locationMatch: 'unknown' }, { reply_under_supply_enabled: true }), false);
+  assert.equal(shouldInspectNoteCommenters({ role: 'tenant', eligible: true, locationMatch: 'match' }, {}), true);
+});
+
+test('short commenter demand is inferred only from a qualified in-area residential supply post', () => {
+  const cfg = { reply_under_supply_enabled: true, lead_local_words: ['石家庄'] };
+  const parentDecision = { role: 'supply', eligible: false, locationMatch: 'match' };
+  const parentNote = { title: '石家庄桥西区一居室房东直租', desc: '住宅整租，长期出租，随时入住' };
+  assert.equal(commenterLeadDecision({ content: '我也需要', nickname: '普通用户', parentNote, parentDecision, cfg }).eligible, true);
+  assert.equal(commenterLeadDecision({ content: '同求', nickname: '普通用户', parentNote, parentDecision, cfg }).eligible, true);
+  assert.equal(commenterLeadDecision({ content: '我也需要', nickname: '贝壳找房小王', parentNote, parentDecision, cfg }).eligible, false);
+  assert.equal(commenterLeadDecision({ content: '我也需要', nickname: '普通用户', parentNote: { title: '石家庄短租一居，住两个月' }, parentDecision, cfg }).eligible, false);
+  assert.equal(commenterLeadDecision({ content: '我也需要', nickname: '普通用户', parentNote, parentDecision: { role: 'supply', locationMatch: 'unknown' }, cfg }).eligible, false);
 });
 
 test('comment lead detection accepts explicit rental demand', () => {

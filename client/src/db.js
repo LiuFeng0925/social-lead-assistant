@@ -494,6 +494,7 @@ const DEFAULT_CONFIG = {
   task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
   outreach_fixed_text: '',           // 外呼固定短句；留空才使用 AI/模板生成
   lead_local_words: [],              // 可服务区域；命中明确外地城市时整篇跳过
+  reply_under_supply_enabled: false, // 是否在服务区内房源/同行笔记下回复明确求租评论者
   task_max: 40,
   scan_quota_mode: 'per_keyword',
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
