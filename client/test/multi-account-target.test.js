@@ -2,7 +2,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { XhsCdpClient } = require('../src/cdp/xhs-cdp-client');
+
+test('fifth isolated account is reserved for publishing tests', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(main, /const ACCOUNT_COUNT = 5/);
+  assert.match(ui, /data-account="5"/);
+  assert.match(ui, /发布测试/);
+});
 
 function clientWithTargets(targets, names) {
   const client = new XhsCdpClient({ endpoint: 'http://127.0.0.1:9333' });

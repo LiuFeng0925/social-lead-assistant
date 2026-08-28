@@ -1,8 +1,8 @@
 'use strict';
 
-// Electron 多账号版：一个管理窗口 + 四个隔离 BrowserView + 四个独立本地任务服务。
+// Electron 多账号版：一个管理窗口 + 五个隔离 BrowserView + 五个独立本地任务服务。
 // 每个服务各自持有 SQLite、配置、限频、任务循环和 SSE 日志；BrowserView 则通过
-// 不同 partition 保存四份独立登录态。账号之间不共享 cookie、任务或统计。
+// 不同 partition 保存五份独立登录态。账号之间不共享 cookie、任务或统计。
 
 const { app, BrowserWindow, BrowserView, ipcMain, powerSaveBlocker } = require('electron');
 const { fork } = require('node:child_process');
@@ -10,7 +10,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { xhsZoomFactor } = require('../src/view-scale');
 
-const ACCOUNT_COUNT = 4;
+const ACCOUNT_COUNT = 5;
 const UI_PORT_BASE = 3100;
 const CDP_PORT = 9333;
 
@@ -41,7 +41,7 @@ function initializeAccountData(id) {
   const target = path.join(meta.dataDir, 'xhs.sqlite');
   if (fs.existsSync(target)) return;
   fs.mkdirSync(meta.dataDir, { recursive: true });
-  // 第一次升级时将单账号数据库交给账号 1；之后账号 2–4 各建自己的库。
+  // 第一次升级时将单账号数据库交给账号 1；之后账号 2–5 各建自己的库。
   if (id !== 1) return;
   const legacyDir = path.join(__dirname, '..', 'data');
   for (const suffix of ['xhs.sqlite', 'xhs.sqlite-wal', 'xhs.sqlite-shm']) {
@@ -135,13 +135,13 @@ ipcMain.on('view-visible', (e, visible) => {
 ipcMain.on('account-selected', (e, accountId) => selectAccount(accountId));
 
 app.whenReady().then(() => {
-  // 先启动四个独立任务服务，再创建四个隔离登录页面。
+  // 先启动五个独立任务服务，再创建五个隔离登录页面。
   for (let id = 1; id <= ACCOUNT_COUNT; id++) startWorker(id);
 
   win = new BrowserWindow({
     width: 1520,
     height: 960,
-    title: '小红书获客 · 四账号并发版',
+    title: '小红书获客 · 五账号并发版',
     webPreferences: { preload: path.join(__dirname, 'preload.js') }
   });
   win.once('ready-to-show', () => { win.show(); win.focus(); win.moveTop(); });
@@ -161,7 +161,7 @@ app.whenReady().then(() => {
   }
   layoutBrowserView();
 
-  // 账号 1 是原有单账号数据的升级入口；控制台启动后可切换到 2/3/4 分别登录。
+  // 账号 1 是原有单账号数据的升级入口；账号 5 预留给发布笔记测试。
   setTimeout(() => win.loadURL(`http://127.0.0.1:${UI_PORT_BASE + 1}`), 900);
 });
 

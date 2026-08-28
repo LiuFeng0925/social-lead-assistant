@@ -255,7 +255,7 @@
   </div>
 
   <div class="main">
-    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button><div class="account-note-popover" id="account-note-popover" hidden><label for="account-label-input">账号备注名称</label><input id="account-label-input" maxlength="18" placeholder="例如：成都主号"><div class="account-note-actions"><button class="btn ghost" type="button" onclick="closeAccountLabelEditor()">取消</button><button class="btn" type="button" onclick="saveActiveAccountLabel()">保存</button></div></div></div>
+    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button><button data-account="5" onclick="selectAccount(5)">发布测试</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button><div class="account-note-popover" id="account-note-popover" hidden><label for="account-label-input">账号备注名称</label><input id="account-label-input" maxlength="18" placeholder="例如：成都主号"><div class="account-note-actions"><button class="btn ghost" type="button" onclick="closeAccountLabelEditor()">取消</button><button class="btn" type="button" onclick="saveActiveAccountLabel()">保存</button></div></div></div>
 
     <!-- ===== 控制台 ===== -->
     <div class="page on" id="page-console">
@@ -528,9 +528,10 @@ if (navigator.userAgent.indexOf('Electron') >= 0) document.documentElement.class
 let es = null, frameW = 0, frameH = 0;
 
 // 多账号版：控制台页面只保留一份，点击账号后把所有本地接口切到该账号
-// 的独立服务。四个服务、SQLite、限频和浏览器登录态彼此完全隔离。
+// 的独立服务。五个服务、SQLite、限频和浏览器登录态彼此完全隔离。
 const ACCOUNT_PORT_BASE = 3100;
-let activeAccountId = Math.max(1, Math.min(4, Number(localStorage.getItem('xhs-active-account') || 1)));
+const ACCOUNT_COUNT = 5;
+let activeAccountId = Math.max(1, Math.min(ACCOUNT_COUNT, Number(localStorage.getItem('xhs-active-account') || 1)));
 let accountLabels = {};
 const nativeFetch = window.fetch.bind(window);
 const NativeEventSource = window.EventSource;
@@ -545,12 +546,12 @@ function renderAccountSwitcher() {
   document.querySelectorAll('#account-switcher button[data-account]').forEach(function (btn) {
     const id = Number(btn.dataset.account);
     btn.classList.toggle('on', id === activeAccountId);
-    btn.textContent = accountLabels[id] || ('账号 ' + id);
+    btn.textContent = accountLabels[id] || (id === 5 ? '发布测试' : ('账号 ' + id));
   });
-  $('account-hint').textContent = (accountLabels[activeAccountId] || ('账号 ' + activeAccountId)) + ' · 独立登录、任务和统计';
+  $('account-hint').textContent = (accountLabels[activeAccountId] || (activeAccountId === 5 ? '发布测试' : ('账号 ' + activeAccountId))) + (activeAccountId === 5 ? ' · 独立登录与发布项目测试空间' : ' · 独立登录、任务和统计');
 }
 async function loadAccountLabels() {
-  const rows = await Promise.all([1, 2, 3, 4].map(async function (id) {
+  const rows = await Promise.all(Array.from({ length: ACCOUNT_COUNT }, function (_, index) { return index + 1; }).map(async function (id) {
     try {
       const data = await nativeFetch('http://127.0.0.1:' + (ACCOUNT_PORT_BASE + id) + '/api/config').then(function (r) { return r.json(); });
       return [id, data && data.config && String(data.config.account_label || '').trim()];
@@ -582,7 +583,7 @@ function saveActiveAccountLabel() {
     }).catch(function () { alert('备注保存失败，请稍后重试。'); });
 }
 function selectAccount(id) {
-  id = Math.max(1, Math.min(4, Number(id) || 1));
+  id = Math.max(1, Math.min(ACCOUNT_COUNT, Number(id) || 1));
   if (id === activeAccountId && _stream) return;
   if (es) { try { es.close(); } catch (e) {} es = null; }
   if (_stream) { try { _stream.close(); } catch (e) {} _stream = null; }
