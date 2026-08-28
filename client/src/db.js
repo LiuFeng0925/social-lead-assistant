@@ -87,8 +87,55 @@ function open() {
     create table if not exists config (k text primary key, v text);
   `);
   ensureInboxSchema(db);
+  ensureTaskRunReplyGuards(db);
   backfillInboxIdentities(db);
   return db;
+}
+
+// 兼容仍在运行的旧服务进程：即使它用旧的“覆盖”方式写入统计，SQLite
+// 也会立刻按 comments 表中的真实成功发送记录校正回来。新版本的 JS
+// 本身已经使用累加，这一层同时防止旧进程和异常重试造成数字倒退。
+function ensureTaskRunReplyGuards(database) {
+  database.exec(`
+    create trigger if not exists task_run_decision_reply_from_comments
+    after update of reply_count on task_run_decisions
+    begin
+      update task_run_decisions
+      set reply_count = case when id = (
+        select id from task_run_decisions latest
+        where latest.run_id = new.run_id and latest.note_id = new.note_id
+        order by latest.id desc limit 1
+      ) then (
+        select count(*) from comments c join task_runs r on r.id = new.run_id
+        where c.status = 'sent' and c.created_at >= r.started_at
+          and (r.stopped_at is null or c.created_at < r.stopped_at)
+          and (c.note_id = new.note_id or c.note_id like new.note_id || ':reply:%')
+      ) else 0 end
+      where id = new.id;
+    end;
+
+    create trigger if not exists task_run_keyword_reply_from_comments
+    after update of reply_count on task_run_keywords
+    begin
+      update task_run_keywords
+      set reply_count = (
+        select count(*) from comments c join task_runs r on r.id = new.run_id
+        where c.status = 'sent' and c.created_at >= r.started_at
+          and (r.stopped_at is null or c.created_at < r.stopped_at)
+          and exists (
+            select 1 from task_run_decisions d
+            where d.run_id = new.run_id and d.keyword = new.keyword
+              and d.id = (
+                select id from task_run_decisions latest
+                where latest.run_id = new.run_id and latest.note_id = d.note_id
+                order by latest.id desc limit 1
+              )
+              and (c.note_id = d.note_id or c.note_id like d.note_id || ':reply:%')
+          )
+      )
+      where run_id = new.run_id and keyword = new.keyword;
+    end;
+  `);
 }
 
 const now = () => new Date().toISOString();
@@ -181,7 +228,11 @@ function recordTaskRunDecision({ runId, keyword, note, decision, replyCount = 0 
   const replies = Math.max(0, Number(replyCount) || 0);
   const previous = d.prepare(`select reply_count from task_run_decisions where run_id=? and keyword=? and note_id=?`)
     .get(runId, key, String(note.id));
+  // 同一篇笔记在循环检索中会再次被打开。replyCount 是「这一次」实际
+  // 成功发送的条数，不能用后一次的 0 覆盖掉先前已经成功发送的记录。
+  // 否则页面上的“已回复”会随着重复扫描反向减少。
   const previousReplies = previous ? Number(previous.reply_count) || 0 : 0;
+  const totalReplies = previousReplies + replies;
   const useful = decision.eligible ? 1 : 0;
   d.prepare(`insert into task_run_decisions
     (run_id, keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at)
@@ -193,11 +244,45 @@ function recordTaskRunDecision({ runId, keyword, note, decision, replyCount = 0 
       location_evidence=excluded.location_evidence, reply_count=excluded.reply_count, decided_at=excluded.decided_at`)
     .run(runId, key, String(note.id), note.title || '', note.author || '', note.url || '',
       decision.categoryName || decision.label || '', decision.locationMatch || 'unknown', useful,
-      decision.decisionReason || decision.reason || '', decision.evidence || '', decision.locationEvidence || '', replies, now());
-  const replyDelta = replies - previousReplies;
+      decision.decisionReason || decision.reason || '', decision.evidence || '', decision.locationEvidence || '', totalReplies, now());
+  // 关键词汇总只累计本次新发送的数量，不做“覆盖后的差额”计算。
   d.prepare(`insert into task_run_keywords (run_id, keyword, scanned_count, reply_count) values (?,?,0,?)
     on conflict(run_id, keyword) do update set reply_count=max(0, reply_count + excluded.reply_count)`)
-    .run(runId, key, replyDelta);
+    .run(runId, key, replies);
+}
+
+// 旧版本曾把重复扫描后的 0 覆盖到已回复笔记上。评论发送记录是最终事实，
+// 因此在读取执行统计时按本轮的实际成功评论回填一次，兼容已经在跑的旧任务。
+function rebuildTaskRunReplyCounts(runId) {
+  const id = Number(runId);
+  if (!id) return;
+  const d = open();
+  const run = d.prepare(`select started_at, stopped_at from task_runs where id=?`).get(id);
+  if (!run || !run.started_at) return;
+  const endClause = run.stopped_at ? ' and created_at < ?' : '';
+  const args = run.stopped_at ? [run.started_at, run.stopped_at] : [run.started_at];
+  const comments = d.prepare(`select note_id from comments where status='sent' and created_at >= ?${endClause}`).all(...args);
+  const updateDecision = d.prepare(`update task_run_decisions set reply_count=reply_count+1 where id=?`);
+  const updateKeyword = d.prepare(`update task_run_keywords set reply_count=reply_count+1 where run_id=? and keyword=?`);
+  const findDecision = d.prepare(`select id, keyword from task_run_decisions where run_id=? and note_id=? order by id desc limit 1`);
+  const resetDecisions = d.prepare(`update task_run_decisions set reply_count=0 where run_id=?`);
+  const resetKeywords = d.prepare(`update task_run_keywords set reply_count=0 where run_id=?`);
+  d.exec('begin');
+  try {
+    resetDecisions.run(id);
+    resetKeywords.run(id);
+    for (const item of comments) {
+      const noteId = String(item.note_id || '').split(':reply:')[0];
+      const decision = findDecision.get(id, noteId);
+      if (!decision) continue;
+      updateDecision.run(decision.id);
+      updateKeyword.run(id, decision.keyword);
+    }
+    d.exec('commit');
+  } catch (error) {
+    try { d.exec('rollback'); } catch (ignored) {}
+    throw error;
+  }
 }
 function taskRunReport(runId) {
   const d = open();
@@ -205,6 +290,7 @@ function taskRunReport(runId) {
   const selectedId = Number(runId) || (runs[0] && runs[0].id) || 0;
   const run = selectedId ? d.prepare(`select id, started_at, stopped_at, status, live from task_runs where id=?`).get(selectedId) : null;
   if (!run) return { run: null, runs, keywords: [], decisions: [] };
+  rebuildTaskRunReplyCounts(run.id);
   const keywords = d.prepare(`select k.keyword, k.scanned_count,
     count(d.id) as judged_count,
     coalesce(sum(case when d.useful=1 then 1 else 0 end),0) as useful_count,
@@ -507,4 +593,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
