@@ -10,6 +10,8 @@ const { pageSecurityReason } = require('./login-status');
 const llm = require('./llm');
 const inboxUtils = require('./inbox-utils');
 const leadModel = require('./lead-model');
+const { withSearchRecovery, returnHomeForSearch, isSearchRecoveryError, checkSearchStopped, waitForSearch, assertSearchRecoveryAccess } = require('./search-recovery');
+const { SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, SEARCH_INPUT_DIAGNOSTIC_PROBE } = require('./search-input-probe');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
@@ -222,7 +224,20 @@ function shouldInspectNoteCommenters(decision, cfg = {}) {
     && (decision.role === 'supply' || decision.role === 'agent');
 }
 
-function residentialLongTermAudienceDecision(content) {
+const ONE_BEDROOM_ENTIRE_POLICY = 'one_bedroom_entire';
+
+function usesOneBedroomEntirePolicy(cfg = {}) {
+  return String(cfg.lead_layout_policy || '').trim() === ONE_BEDROOM_ENTIRE_POLICY;
+}
+
+function stripNegatedLayoutNeeds(text) {
+  const layoutTerms = '(?:合租|合住|拼租|分租|群租|找室友|寻室友|求室友|主卧|次卧|床位|单间|开间|loft|两居(?:室)?|二居(?:室)?|2\s*居(?:室)?|两室(?:一厅)?|二室(?:一厅)?|2\s*室(?:1|一)?厅?|套\s*(?:二|2)|三居(?:室)?|3\s*居(?:室)?|三室(?:一厅)?|3\s*室(?:1|一)?厅?|套\s*(?:三|3)|一居(?:室)?|1\s*居(?:室)?|一室(?:一厅)?|1\s*室(?:1|一)?厅?|套\s*(?:一|1))';
+  return String(text || '')
+    .replace(new RegExp(layoutTerms + '.{0,3}(?:不考虑|不要|不接受|不想|排除)', 'gi'), '')
+    .replace(new RegExp('(?:不要|不考虑|不接受|拒绝|不想|无需|不需要|不找|不是|不能|排除|非)\\s*(?:和别人|跟别人|与人|任何|这种|这类)?\\s*(?:租|住|选择|考虑)?\\s*' + layoutTerms, 'gi'), '');
+}
+
+function residentialLongTermAudienceDecision(content, cfg = {}) {
   const text = String(content || '').replace(/\s+/g, ' ').trim();
   if (!text) return { eligible: true, reason: '' };
   const rentalContext = /(求租|找房|想租|要租|租房|租住|租期|出租|转租|招租)/.test(text);
@@ -237,6 +252,42 @@ function residentialLongTermAudienceDecision(content) {
   if (explicitShortRent) {
     return { eligible: false, reason: '非目标受众：明确是1到3个月短租或临时过渡，只触达住宅长租' };
   }
+  if (usesOneBedroomEntirePolicy(cfg)) {
+    // 只在当前账号开启“一居室整租”策略时收紧户型。先去掉
+    // “不要合租/两居不考虑”等否定表达，避免把真实目标用户误伤。
+    const layoutText = stripNegatedLayoutNeeds(text);
+    const sharedRental = /(合租|合住|拼租|分租|群租|找室友|寻室友|求室友|主卧|次卧|床位|单间)/i.test(layoutText);
+    if (sharedRental) {
+      return {
+        eligible: false,
+        reason: '非目标受众：明确求租合租、单间或室友床位，只触达一居室整租',
+        audienceCode: 'shared_rental'
+      };
+    }
+    const multiBedroom = /(?:两|二|2|三|3|四|4|五|5|六|6)\s*(?:居(?:室)?|室(?:\s*(?:一|1)厅)?|房(?:\s*(?:一|1)厅)?|卧)|套\s*(?:二|2|三|3|四|4|五|5|六|6)|(?:2|3|4|5|6)\s*(?:br?|bed(?:room)?s?)/i.test(layoutText);
+    if (multiBedroom) {
+      return {
+        eligible: false,
+        reason: '非目标受众：明确求租两居室及以上，只触达一居室整租',
+        audienceCode: 'multi_bedroom'
+      };
+    }
+    if (/(开间|loft)/i.test(layoutText)) {
+      return {
+        eligible: false,
+        reason: '非目标受众：明确求租开间或loft，只触达一居室整租',
+        audienceCode: 'non_one_bedroom'
+      };
+    }
+    const oneBedroom = /(?:一|1)\s*(?:居(?:室)?|室(?:\s*(?:一|1)厅)?|房(?:\s*(?:一|1)厅)?)|套\s*(?:一|1)(?!\d)/i.test(layoutText);
+    if (!oneBedroom) {
+      return {
+        eligible: false,
+        reason: '目标户型未确认：没有识别到一居室整租需求，本次不自动触达',
+        audienceCode: 'layout_unknown'
+      };
+    }
+  }
   return { eligible: true, reason: '' };
 }
 
@@ -247,10 +298,10 @@ function isResidentialRentalLeadModel(model) {
   }));
 }
 
-function applyResidentialAudienceGuard(decision, note, model) {
+function applyResidentialAudienceGuard(decision, note, model, cfg = {}) {
   if (!isResidentialRentalLeadModel(model)) return decision;
   const text = [note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' ');
-  const audience = residentialLongTermAudienceDecision(text);
+  const audience = residentialLongTermAudienceDecision(text, cfg);
   if (audience.eligible) return Object.assign({}, decision, { audienceMatch: 'match' });
   return Object.assign({}, decision, {
     eligible: false,
@@ -301,12 +352,26 @@ async function classifyNotePublisher(note, cfg = {}) {
   }
   const decision = noteClassificationDecision(classification);
   const rentalModel = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
-  return applyResidentialAudienceGuard(decision, note, rentalModel);
+  return applyResidentialAudienceGuard(decision, note, rentalModel, cfg);
 }
 
 function isLlmNoteClassificationEnabled(cfg = {}) {
   const model = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
   return model.llmClassificationEnabled === true;
+}
+
+function leadModelWithAudiencePolicy(model, cfg = {}) {
+  if (!usesOneBedroomEntirePolicy(cfg) || !isResidentialRentalLeadModel(model)) return model;
+  const policyPrompt = '当前账号只触达求租一居室整租的住宅长租用户。正文必须明确出现一居、一居室、一室一厅、一房一厅或套一等同义需求；明确两居及以上、合租、单间、主卧、次卧、找室友、开间或loft，以及户型未说明的，都不得归入求租目标类。“不要合租，只要一居整租”属于目标用户。';
+  return Object.assign({}, model, {
+    categories: model.categories.map((category) => {
+      const isRentalDemand = /(?:seek_rent|tenant)/i.test(String(category.id || '')) || /(?:求租|租户)/.test(String(category.name || ''));
+      if (!isRentalDemand || String(category.action || '') !== 'comment') return category;
+      return Object.assign({}, category, {
+        llmPrompt: [String(category.llmPrompt || '').trim(), policyPrompt].filter(Boolean).join('\n')
+      });
+    })
+  });
 }
 
 function roleFromCategory(category) {
@@ -373,7 +438,7 @@ function classifyDetailedNoteByKeywords(note, cfg = {}) {
     method: 'keyword',
     cfg
   });
-  return applyResidentialAudienceGuard(decision, note, model);
+  return applyResidentialAudienceGuard(decision, note, model, cfg);
 }
 
 function validateLlmLocation(raw, note, cfg = {}) {
@@ -413,7 +478,7 @@ function validateLlmLocation(raw, note, cfg = {}) {
 }
 
 async function classifyDetailedNoteByLlm(note, cfg = {}) {
-  const model = leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg);
+  const model = leadModelWithAudiencePolicy(leadModel.normalizeLeadModel(cfg.lead_model || cfg.leadModel || cfg), cfg);
   const fallback = model.categories.find((item) => item.fallback) || model.categories[model.categories.length - 1];
   if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim()) {
     return categoryClassificationDecision({
@@ -427,6 +492,7 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
       note,
       localWords: cfg.lead_local_words,
       leadModel: model,
+      extractDemand: cfg.native_extract_demand === true,
       provider: cfg.llm_provider,
       model: cfg.llm_model,
       apiKey: cfg.llm_api_key
@@ -474,7 +540,9 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
     cfg,
     error: locationError
   });
-  return applyResidentialAudienceGuard(decision, note, model);
+  const enriched = cfg.native_extract_demand === true && raw.rentalDemand
+    ? Object.assign({}, decision, { rentalDemand: raw.rentalDemand }) : decision;
+  return applyResidentialAudienceGuard(enriched, note, model, cfg);
 }
 
 async function classifyDetailedNote(note, cfg = {}) {
@@ -619,101 +687,138 @@ function isSearchPageMismatchError(error) {
   return !!error && (error.code === 'SEARCH_PAGE_MISMATCH' || /^search_page_mismatch:/.test(String(error.message || error)));
 }
 
-const SEARCH_INPUT_PROBE = `(function(){
-  var selectors=['textarea#search-input','textarea[name="aiSearchTextarea"]','input.search-input','input#search-input','input[placeholder*="搜索"]','input[type="search"]','[role="searchbox"]'];
-  for(var s=0;s<selectors.length;s++){
-    var nodes=[];try{nodes=document.querySelectorAll(selectors[s]);}catch(e){}
-    for(var i=0;i<nodes.length;i++){
-      var el=nodes[i],r=el.getBoundingClientRect(),style=getComputedStyle(el);
-      if(el.offsetParent===null||r.width<200||r.height<18||r.top<0||r.top>140||r.bottom<=0||r.right<=0||style.visibility==='hidden'||style.display==='none'||Number(style.opacity||1)<0.05)continue;
-      return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),value:String(el.value||el.textContent||''),placeholder:String(el.placeholder||el.getAttribute('aria-label')||'')});
-    }
-  }
-  return '';
-})()`;
-
-const SEARCH_SUBMIT_PROBE = `(function(){
-  // 经典搜索页、AI 搜索页和新版单行搜索框的按钮类名不同；缺少新版
-  // single-line-search-btn 会导致输入成功却无法提交，进而反复报错。
-  var nodes=document.querySelectorAll('.input-box .submit-button-wrapper,.input-box .search-icon,.input-button .search-icon,.single-line-search-btn,[aria-label="搜索"],button[type="submit"]');
-  for(var i=0;i<nodes.length;i++){
-    var el=nodes[i],r=el.getBoundingClientRect(),style=getComputedStyle(el);
-    if(el.offsetParent===null||r.width<16||r.height<16||r.bottom<=0||r.right<=0||style.visibility==='hidden')continue;
-    return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});
-  }
-  return '';
-})()`;
-
 function parseSearchInputProbe(value) {
   let input = null;
   try { input = typeof value === 'string' ? JSON.parse(value) : value; } catch (e) {}
   if (!input || !Number.isFinite(Number(input.x)) || !Number.isFinite(Number(input.y))) return null;
-  return { x: Number(input.x), y: Number(input.y), value: String(input.value || ''), placeholder: String(input.placeholder || '') };
+  return { x: Number(input.x), y: Number(input.y), value: String(input.value || ''), placeholder: String(input.placeholder || ''),
+    ...(typeof input.focused === 'boolean' ? { focused: input.focused } : {}) };
 }
 
-async function searchFromPageUi({ client, target, keyword, onLog = () => {} }) {
-  let page = await assertNoAccountSecurityPage({ client, target });
+async function searchFromPageUi({ client, target, keyword, onLog = () => {}, shouldStop = () => false }) {
+  const pause = (ms) => waitForSearch(ms, shouldStop);
+  const checkAccess = () => assertSearchRecoveryAccess({ client, target, shouldStop });
+  const wanted = normalizeSearchKeyword(keyword);
+  let lastReason = 'input_unavailable';
+  const readInput = async () => {
+    checkSearchStopped(shouldStop);
+    try {
+      const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE });
+      const input = parseSearchInputProbe(result && result.value);
+      if (!input) lastReason = 'input_missing_or_covered';
+      return input;
+    } catch (error) {
+      lastReason = 'input_page_read_failed';
+      return null;
+    }
+  };
+  const diagnose = async (reason) => {
+    checkSearchStopped(shouldStop);
+    const result = await client.evaluate({ target, expression: SEARCH_INPUT_DIAGNOSTIC_PROBE }).catch(() => null);
+    // This probe only returns bounded search-control metadata, never page text,
+    // cookies, notification content or full URLs with signed query parameters.
+    onLog(`搜索输入诊断:${reason}；${String(result && result.value || '页面状态读取失败').slice(0, 2600)}`);
+  };
+  let escapeRecoveryTried = false;
+  const dismissDetail = async () => {
+    if (escapeRecoveryTried || !client.pressKey) return;
+    await checkAccess(); // A login/captcha wall must never be dismissed.
+    escapeRecoveryTried = true;
+    onLog('搜索框被遮挡或未获得焦点，尝试按 Escape 关闭残留的笔记详情层');
+    await client.pressKey({ target, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await pause(500);
+  };
+  const focusedInput = async () => {
+    const input = await readInput();
+    if (!input || input.focused !== true) { if (input) lastReason = 'search_input_not_focused'; return null; }
+    return input;
+  };
+  checkSearchStopped(shouldStop);
+  let page = await checkAccess();
   if (searchPageMatches(page && page.url, keyword)) {
     onLog(`当前已是该关键词的搜索结果页，直接复用:${keyword}`);
     return { reused: true, url: page.url };
   }
   let input = null;
-  let escapeRecoveryTried = false;
   for (let attempt = 0; attempt < 24; attempt++) {
-    const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
-    input = parseSearchInputProbe(result && result.value);
+    checkSearchStopped(shouldStop);
+    input = await readInput();
     if (input) break;
-    if (!escapeRecoveryTried && attempt === 3 && client.pressKey) {
-      escapeRecoveryTried = true;
-      onLog('搜索框暂时不可用，尝试按 Escape 关闭残留的笔记详情层');
-      await client.pressKey({ target, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }).catch(() => {});
-    }
-    await sleep(500);
-    page = await assertNoAccountSecurityPage({ client, target });
+    if (attempt === 3) await dismissDetail();
+    await pause(500);
+    page = await checkAccess();
     if (searchPageMatches(page && page.url, keyword)) {
       onLog(`搜索页已在加载中，直接等待结果:${keyword}`);
       return { reused: true, url: page.url };
     }
   }
-  if (!input) throw new Error('search_input_not_found');
+  if (!input) { await diagnose(lastReason); throw new Error('search_input_not_found'); }
 
   onLog(`通过页面搜索框输入:${keyword}`);
   if (!client.selectAll) throw new Error('search_select_all_unavailable');
   let typed = '';
-  // Xiaohongshu currently renders two overlapping search textareas and keeps
-  // them in sync asynchronously.  The trusted keystrokes can already be in
-  // the real editor while the textarea returned by the DOM probe is still one
-  // render behind.  Give the page time to settle before rewriting or failing.
+  // Re-resolve the actual editable, hit-tested control on every attempt. Never
+  // reuse stale coordinates or type into whatever happens to have focus.
   for (let writeAttempt = 0; writeAttempt < 3; writeAttempt++) {
-    const freshResult = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
-    const freshInput = parseSearchInputProbe(freshResult && freshResult.value);
-    if (freshInput) input = freshInput;
+    await checkAccess();
+    input = await readInput();
+    if (!input) { await dismissDetail(); await pause(500); continue; }
     await client.click({ target, x: input.x, y: input.y });
-    await sleep(rand(350, 650));
+    await pause(rand(350, 650));
+    let focused = null;
+    for (let n = 0; n < 6; n++) {
+      focused = await focusedInput();
+      if (focused) break;
+      await pause(150);
+    }
+    if (!focused) {
+      await diagnose(lastReason);
+      await dismissDetail();
+      onLog(`搜索框未获得输入焦点，重新定位 ${writeAttempt + 1}/3；本次未输入文字`);
+      continue;
+    }
+    await checkAccess();
+    if (!(await focusedInput())) continue;
     await client.selectAll({ target });
-    await sleep(rand(180, 360));
+    await pause(rand(180, 360));
+    await checkAccess();
+    if (!(await focusedInput())) { onLog('全选后搜索框焦点已变化，取消输入并重新定位'); continue; }
     await client.typeText({ target, text: keyword });
     for (let attempt = 0; attempt < 16; attempt++) {
-      const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
-      const current = parseSearchInputProbe(result && result.value);
+      const current = await focusedInput();
       typed = current ? normalizeSearchKeyword(current.value) : '';
-      if (typed === normalizeSearchKeyword(keyword)) break;
-      await sleep(250);
+      if (typed === wanted) break;
+      if (current) lastReason = 'search_value_mismatch';
+      await pause(250);
     }
-    if (typed === normalizeSearchKeyword(keyword)) break;
-    if (writeAttempt < 2) onLog('搜索框同步较慢，自动重新全选确认');
+    if (typed === wanted) break;
+    await diagnose(lastReason);
+    if (writeAttempt < 2) onLog('搜索输入未通过核对，重新定位真实输入框并重试');
   }
-  if (typed !== normalizeSearchKeyword(keyword)) {
-    // One final read without more typing catches a late React state commit.
-    await sleep(1500);
-    const result = await client.evaluate({ target, expression: SEARCH_INPUT_PROBE }).catch(() => null);
-    const current = parseSearchInputProbe(result && result.value);
+  if (typed !== wanted) {
+    await pause(1500);
+    const current = await focusedInput();
     typed = current ? normalizeSearchKeyword(current.value) : '';
   }
-  if (typed !== normalizeSearchKeyword(keyword)) throw new Error('search_keyword_not_entered');
-  const submitResult = await client.evaluate({ target, expression: SEARCH_SUBMIT_PROBE }).catch(() => null);
-  const submit = parseSearchInputProbe(submitResult && submitResult.value);
-  if (!submit) throw new Error('search_submit_button_not_found');
+  if (typed !== wanted) {
+    await diagnose(lastReason);
+    throw new Error(lastReason === 'search_input_not_focused' ? 'search_input_not_focused' : 'search_keyword_not_entered');
+  }
+  let submit = null;
+  for (let n = 0; n < 8; n++) {
+    await checkAccess();
+    const current = await readInput();
+    if (!current || normalizeSearchKeyword(current.value) !== wanted) {
+      await diagnose('search_value_changed_before_submit');
+      throw new Error('search_keyword_not_entered');
+    }
+    const result = await client.evaluate({ target, expression: SEARCH_SUBMIT_PROBE }).catch(() => null);
+    submit = parseSearchInputProbe(result && result.value);
+    if (submit) break;
+    await pause(250);
+  }
+  if (!submit) { await diagnose('search_submit_missing_or_covered'); throw new Error('search_submit_button_not_found'); }
+  await checkAccess();
   await client.click({ target, x: submit.x, y: submit.y });
   onLog(`已点击页面搜索按钮:${keyword}`);
   return { reused: false };
@@ -728,15 +833,44 @@ const PICK_VISIBLE_CARD = `(function(){
   return JSON.stringify(vis[Math.floor(Math.random()*vis.length)]);
 })()`;
 
-async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {}, shouldStop = () => false, filters = {} }) {
+async function scanClean(options) {
+  const { client, target, onLog = () => {}, shouldStop = () => false, maxHomeRetries = 1 } = options;
+  return withSearchRecovery({
+    scan: () => scanCleanOnce(options),
+    returnHome: () => returnHomeForSearch({ client, target, onLog, shouldStop }),
+    maxHomeRetries, onLog, shouldStop
+  });
+}
+
+async function waitForVerifiedSearchPage({ client, target, keyword, onLog = () => {}, shouldStop = () => false }) {
+  let lastProbe = { readyState: '', count: 0, url: '' };
+  for (let attempt = 0; attempt < 9; attempt++) {
+    checkSearchStopped(shouldStop);
+    await assertSearchRecoveryAccess({ client, target, shouldStop });
+    const result = await client.evaluate({ target, expression: EXPR_PROBE }).catch(() => null);
+    lastProbe = parseSearchPageProbe(result && result.value);
+    // A known different page/keyword is not a loading delay. Never consume its
+    // cards or substitute an earlier URL when the fresh probe cannot be read.
+    if (lastProbe.url && !searchPageMatches(lastProbe.url, keyword)) throw searchPageMismatchError(keyword, lastProbe.url);
+    if (lastProbe.url && lastProbe.readyState === 'complete') return lastProbe;
+    if (attempt === 0) onLog('搜索页正在重绘或状态暂未读到，短暂等待重新核对；暂不采集');
+    if (attempt < 8) await waitForSearch(250, shouldStop);
+  }
+  throw searchPageMismatchError(keyword, lastProbe.url);
+}
+
+async function scanCleanOnce({ client, target, keyword, maxNotes = 60, maxRounds = 20, onLog = () => {}, shouldStop = () => false, filters = {} }) {
+  const pause = (ms) => waitForSearch(ms, shouldStop);
+  checkSearchStopped(shouldStop);
+  await assertSearchRecoveryAccess({ client, target, shouldStop });
   const noteLimit = Math.max(1, Number(maxNotes) || 1);
   const url = buildSearchUrl(keyword);
-  await searchFromPageUi({ client, target, keyword, onLog });
+  await searchFromPageUi({ client, target, keyword, onLog, shouldStop });
   let ready = false;
   let lastProbe = { readyState: '', count: 0, url: '' };
   for (let i = 0; i < 15; i++) {
-    await sleep(1000);
-    await assertNoAccountSecurityPage({ client, target });
+    await pause(1000);
+    await assertSearchRecoveryAccess({ client, target, shouldStop });
     try {
       const r = await client.evaluate({ target, expression: EXPR_PROBE });
       lastProbe = parseSearchPageProbe(r && r.value);
@@ -750,13 +884,20 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
     onLog(`搜索页已确认是当前关键词，但没有可见笔记:${keyword}`);
     return [];
   }
+  checkSearchStopped(shouldStop);
   try { await client.installCursor({ target }); } catch (e) {} // 先注入红点,保证后面点筛选时看得到鼠标
 
-  try { await applyFilters({ client, target, filters, onLog }); } catch (e) { onLog('筛选应用失败(忽略):' + e.message); }
-  const afterFilters = await client.evaluate({ target, expression: EXPR_PROBE }).catch(() => null);
-  const filteredProbe = parseSearchPageProbe(afterFilters && afterFilters.value);
-  if (!searchPageMatches(filteredProbe.url, keyword)) throw searchPageMismatchError(keyword, filteredProbe.url);
-  try { await client.evaluate({ target, expression: 'window.scrollTo(0,0);"ok"' }); await sleep(500); } catch (e) {}
+  checkSearchStopped(shouldStop);
+  try {
+    await applyFilters({ client, target, filters, onLog, shouldStop, beforeAction: () => assertSearchRecoveryAccess({ client, target, shouldStop }) });
+  } catch (e) {
+    if (e.code === 'SEARCH_CANCELLED' || isAccountSecurityError(e) || isSearchRecoveryError(e)) throw e;
+    onLog('筛选应用失败(忽略):' + e.message);
+  }
+  checkSearchStopped(shouldStop);
+  await waitForVerifiedSearchPage({ client, target, keyword, onLog, shouldStop });
+  try { await client.evaluate({ target, expression: 'window.scrollTo(0,0);"ok"' }); } catch (e) {}
+  await pause(500);
   onLog('按页面顺序采集:从左到右、从上到下');
   let activeSearchUrl = url;
   try {
@@ -767,9 +908,8 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
   let stale = 0;
   for (let round = 0; round < maxRounds && stale < 4 && all.size < noteLimit; round++) {
     if (shouldStop()) { onLog('⏹ 收到停止,中断检索'); break; }
-    const pageCheck = await client.evaluate({ target, expression: EXPR_PROBE }).catch(() => null);
-    const roundProbe = parseSearchPageProbe(pageCheck && pageCheck.value);
-    if (!searchPageMatches(roundProbe.url, keyword)) throw searchPageMismatchError(keyword, roundProbe.url);
+    await waitForVerifiedSearchPage({ client, target, keyword, onLog, shouldStop });
+    checkSearchStopped(shouldStop);
     let res = { notes: [] };
     try { const r = await client.evaluate({ target, expression: EXPR_EXTRACT }); res = JSON.parse(r.value); } catch (e) {}
     const before = all.size;
@@ -786,12 +926,14 @@ async function scanClean({ client, target, keyword, maxNotes = 60, maxRounds = 2
       try {
         const cr = await client.evaluate({ target, expression: PICK_VISIBLE_CARD });
         const cp = JSON.parse((cr && cr.value) || 'null');
-        if (cp && Number.isFinite(cp.x)) { await client.humanMove({ target, toX: cp.x, toY: cp.y }); await sleep(rand(500, 1300)); }
+        if (cp && Number.isFinite(cp.x)) { checkSearchStopped(shouldStop); await client.humanMove({ target, toX: cp.x, toY: cp.y }); await pause(rand(500, 1300)); }
       } catch (e) {}
     }
+    checkSearchStopped(shouldStop);
     await client.wheelScroll({ target, x: rand(400, 800), y: rand(300, 520), totalDeltaY: rand(700, 1100) }).catch(() => {}); // trusted 滚轮(拟人)
-    await sleep(rand(700, 1700) + (Math.random() < 0.14 ? rand(800, 1600) : 0)); // 拟人停顿:随机 + 14% 概率长停
+    await pause(rand(700, 1700) + (Math.random() < 0.14 ? rand(800, 1600) : 0)); // 拟人停顿:随机 + 14% 概率长停
   }
+  checkSearchStopped(shouldStop);
   await resetSearchListScroll({ client, target }).catch(() => {});
   return [...all.values()].slice(0, noteLimit);
 }
@@ -1065,10 +1207,14 @@ function TAG_ACTIVE(label) {
 }
 // 当前已选中的非默认项汇总(给日志,证明真生效;只看可见面板)
 const ACTIVE_SUMMARY = '(function(){var n=document.querySelectorAll(".filter-panel div.tags");var a=[];for(var i=0;i<n.length;i++){var e=n[i],s=getComputedStyle(e);if(e.offsetParent===null||e.getAttribute("aria-hidden")==="true"||s.visibility==="hidden"||s.display==="none"||Number(s.opacity||1)<0.05)continue;var t=(e.textContent||"").trim();if(t&&t!=="不限"&&t!=="综合"&&(e.className||"").toString().indexOf("active")>=0&&a.indexOf(t)<0)a.push(t);}return a.join("、");})()';
-async function clickFilterPoint({ client, target, x, y }) {
+async function clickFilterPoint({ client, target, x, y, shouldStop = () => false, beforeAction = async () => {} }) {
   const X = Math.round(Number(x)), Y = Math.round(Number(y));
   if (!Number.isFinite(X) || !Number.isFinite(Y)) return false;
+  checkSearchStopped(shouldStop);
+  await beforeAction();
   await client.humanMove({ target, toX: X, toY: Y }).catch(() => {});
+  checkSearchStopped(shouldStop);
+  await beforeAction();
   if (client.sendCommandSequence) {
     await client.sendCommandSequence({
       target,
@@ -1084,14 +1230,15 @@ async function clickFilterPoint({ client, target, x, y }) {
   return true;
 }
 // 慢动作可见点选:红点慢慢移过去(看得见)→ JS 点选一次(只点一次,小红书是"点一下切换",多点会切回去)
-async function pickTagOnce({ client, target, label, onLog }) {
+async function pickTagOnce({ client, target, label, onLog, shouldStop, beforeAction }) {
+  checkSearchStopped(shouldStop);
   const r = await client.evaluate({ target, expression: FIND_TAG(label) });
   let p = null; try { p = JSON.parse((r && r.value) || ''); } catch (e) {}
   if (!p) { onLog('筛选·没找到「' + label + '」'); return; }
   if (p.active) { onLog('筛选·「' + label + '」已是选中'); return; }
-  await clickFilterPoint({ client, target, x: p.x, y: p.y });
+  await clickFilterPoint({ client, target, x: p.x, y: p.y, shouldStop, beforeAction });
   onLog('筛选·点了「' + label + '」');
-  await sleep(rand(1000, 1500));
+  await waitForSearch(rand(1000, 1500), shouldStop);
 }
 async function findFilterBtn({ client, target }) {
   const expression = '(function(){var e=document.querySelector(".search-layout__top .filter");if(!e)return "";var r=e.getBoundingClientRect(),s=getComputedStyle(e);if(e.offsetParent===null||r.width<30||r.height<20||s.visibility==="hidden"||Number(s.opacity||1)<0.05)return "";return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()';
@@ -1120,16 +1267,19 @@ function JS_CLICK_TEXT(text) {
     + 'fire(tg,"pointerdown",P);fire(tg,"mousedown",MouseEvent);fire(tg,"pointerup",P);fire(tg,"mouseup",MouseEvent);fire(tg,"click",MouseEvent);return "ok";})()';
 }
 // 健壮地点开筛选面板:只用精确的真鼠标点击，不命中透明注入副本。
-async function openFilterPanel({ client, target, onLog }) {
+async function openFilterPanel({ client, target, onLog, shouldStop, beforeAction }) {
   for (let k = 0; k < 4; k++) {
+    checkSearchStopped(shouldStop);
     if (await panelOpen({ client, target })) return true;
     const fb = await findFilterBtn({ client, target });
-    if (fb) await clickFilterPoint({ client, target, x: fb.x, y: fb.y }).catch(() => {});
-    await sleep(rand(1100, 1700));
+    if (fb) await clickFilterPoint({ client, target, x: fb.x, y: fb.y, shouldStop, beforeAction });
+    await waitForSearch(rand(1100, 1700), shouldStop);
   }
   return await panelOpen({ client, target });
 }
-async function applyFilters({ client, target, filters = {}, onLog = () => {} }) {
+async function applyFilters({ client, target, filters = {}, onLog = () => {}, shouldStop = () => false, beforeAction = async () => {} }) {
+  const controls = { client, target, onLog, shouldStop, beforeAction };
+  checkSearchStopped(shouldStop);
   const want = (v, def) => (v && v !== def ? v : null);
   const picks = [['排序', want(filters.sort, '综合')], ['类型', want(filters.noteType, '不限')], ['时间', want(filters.noteTime, '不限')], ['范围', want(filters.noteRange, '不限')]].filter((x) => x[1]);
   if (!picks.length) { onLog('筛选:全部默认,无需设置'); return; }
@@ -1137,21 +1287,21 @@ async function applyFilters({ client, target, filters = {}, onLog = () => {} }) 
   const wantLabels = picks.map((x) => x[1]);
   let announcedOpen = false;
   for (const [dim, label] of picks) {
-    if (!(await openFilterPanel({ client, target, onLog }))) { onLog('筛选:面板没打开,跳过「' + label + '」'); continue; }
+    if (!(await openFilterPanel(controls))) { onLog('筛选:面板没打开,跳过「' + label + '」'); continue; }
     if (!announcedOpen) { onLog('筛选:已点开筛选面板'); announcedOpen = true; }
-    await pickTagOnce({ client, target, label, onLog });
+    await pickTagOnce({ ...controls, label });
   }
   // 2.5) 读一次真实生效状态;只对"确实没生效"的补点一次(避免重复点把已选的切回去)
-  await sleep(rand(400, 700));
-  await openFilterPanel({ client, target, onLog }).catch(() => false);
+  await waitForSearch(rand(400, 700), shouldStop);
+  await openFilterPanel(controls);
   let summary = ''; try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {}
   const missing = wantLabels.filter((l) => summary.indexOf(l) < 0);
   for (const label of missing) {
     onLog('筛选·「' + label + '」没生效,补点一次');
-    if (await openFilterPanel({ client, target, onLog })) await pickTagOnce({ client, target, label, onLog });
+    if (await openFilterPanel(controls)) await pickTagOnce({ ...controls, label });
   }
   if (missing.length) {
-    await openFilterPanel({ client, target, onLog }).catch(() => false);
+    await openFilterPanel(controls);
     try { summary = (await client.evaluate({ target, expression: ACTIVE_SUMMARY })).value || ''; } catch (e) {}
   }
   // 逐项如实汇报(以真实生效状态为准)
@@ -1160,9 +1310,9 @@ async function applyFilters({ client, target, filters = {}, onLog = () => {} }) 
   // 3) 点击面板自带的「收起」，避免遮挡后续笔记卡片。
   if (await panelOpen({ client, target })) {
     const close = await findFilterCloseBtn({ client, target });
-    if (close) await clickFilterPoint({ client, target, x: close.x, y: close.y }).catch(() => {});
+    if (close) await clickFilterPoint({ ...controls, x: close.x, y: close.y });
   }
-  await sleep(rand(1500, 2400));
+  await waitForSearch(rand(1500, 2400), shouldStop);
 }
 
 // ── 承接:抓「评论和@」通知 ── 在浏览器里跑(用 .toString 嵌入,免转义),解析每条:昵称/类型/内容/日期/主页/可回复
@@ -1420,7 +1570,7 @@ function leadTextDecision(content, cfg = {}) {
   const area = serviceAreaDecision(text, cfg);
   if (area.locationMatch === 'mismatch') return { eligible: false, reason: '异地内容' };
   if ((cfg.reply_black_words || []).some((word) => word && text.includes(word))) return { eligible: false, reason: '命中黑词' };
-  const audience = residentialLongTermAudienceDecision(text);
+  const audience = residentialLongTermAudienceDecision(text, cfg);
   if (!audience.eligible) return audience;
   if (/(中介|经纪人|房产销售|公寓管家|招租|出租|转租|房源发布|佣金|合作|房东直租|可带看|随时带看|我.{0,4}有房|我.{0,6}有.{0,4}(一居|两居|三居)|手上有|主页.{0,6}(房源|房子|实拍)|私你了|已私|我私你|私信你了)/.test(text)) return { eligible: false, reason: '供给方/同行信息' };
   const strong = /(求租|找房|想租|要租|租房需求|蹲房|有没有.{0,8}(房|一居|两居|合租|整租)|还在吗|还有吗|多少钱|价格多少|预算.{0,10}(元|千|万)|(想|求|找|要|蹲).{0,8}(一居|两居|三居|合租|整租|入住)|(一居|两居|三居|合租|整租).{0,8}(求租|找房|想租|要租))/.test(text);
@@ -1449,7 +1599,7 @@ function commenterLeadDecision({ content, nickname, parentNote, parentDecision, 
   if (!shouldInspectNoteCommenters(parentDecision, cfg)) return direct;
   // 明确异地、商业短租、房源方或同行留言，绝不因上下文而放行。
   if (/异地|非目标受众|供给方|同行/.test(String(direct.reason || ''))) return direct;
-  const parentAudience = residentialLongTermAudienceDecision(noteContextText(parentNote));
+  const parentAudience = residentialLongTermAudienceDecision(noteContextText(parentNote), cfg);
   if (!parentAudience.eligible) return { eligible: false, reason: '原笔记不属于住宅长租场景：' + parentAudience.reason };
   const text = String(content || '').replace(/\s+/g, ' ').trim();
   const contextNeed = /(?:我也|俺也|同|也).{0,4}(?:需要|想要|想租|找房|求租)|(?:我也需要|同求|求同|求一个|还在吗|还有吗|可以租吗)/.test(text);
@@ -1608,4 +1758,5 @@ async function replyOpenNoteComment({ client, target, item, text, dry = true, sh
   return { ok: true, dry: false, msg: '评论区回复已发送' };
 }
 
-module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, shouldInspectNoteCommenters, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };
+module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, waitForVerifiedSearchPage, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, shouldInspectNoteCommenters, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };
+module.exports.isSearchRecoveryError = isSearchRecoveryError;

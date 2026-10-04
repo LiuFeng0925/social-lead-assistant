@@ -148,6 +148,29 @@ class XhsCdpClient {
     return r?.data || null;
   }
 
+  // 文件上传所需的 DOM nodeId 只在同一条 CDP 会话里有效。普通 sendCommand
+  // 每条命令都会新建短连接，不能把 getDocument 的 nodeId 传到下一条命令；
+  // 因此这里把“找 input → 交文件”收在同一会话，供发布图文功能使用。
+  async setFileInputFiles({ target, selector = 'input[type="file"]', files = [] } = {}) {
+    const conn = await cdpConnectWebSocket(this._wsUrl(target));
+    const command = async (method, params, timeoutMs = 10000) => {
+      const id = this.nextId++;
+      await conn.send(JSON.stringify({ id, method, params }));
+      return waitForCommandResult(conn, id, timeoutMs);
+    };
+    try {
+      const doc = await command('DOM.getDocument', { depth: 2 });
+      const rootNodeId = doc && doc.root && doc.root.nodeId;
+      if (!rootNodeId) throw new Error('publish_dom_not_ready');
+      const found = await command('DOM.querySelectorAll', { nodeId: rootNodeId, selector });
+      const nodeId = found && Array.isArray(found.nodeIds) && found.nodeIds[0];
+      if (!nodeId) throw new Error('publish_upload_input_not_found');
+      await command('DOM.setFileInputFiles', { nodeId, files: (files || []).map(String) }, 15000);
+    } finally {
+      await conn.close().catch(() => {});
+    }
+  }
+
   // 贝塞尔曲线鼠标移动:从上次位置平滑移到目标(不瞬移),搬自 BOSS humanMouseMove
   // 往目标页面注入固定红点光标:监听 trusted 鼠标事件自动跟随(引擎 CDP 派发的是真事件);position:fixed → 滚动时停在视口
   async installCursor({ target }) {

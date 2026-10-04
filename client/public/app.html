@@ -102,6 +102,15 @@
   html.electron .app{max-width:50vw;overflow-x:hidden}
   html.electron.fullwidth .app{max-width:100vw}
   html.electron .cols > .card:first-child{display:none}
+  html.electron.fullwidth .cols > .card:first-child{display:block}
+  /* 第五页只镜像原生 App 窗口，不把图片伪装成可点击的嵌入式 App。 */
+  html.electron.native-console .app{max-width:50vw}
+  html.electron.native-console #monitor-card{display:flex;flex-direction:column;position:fixed;left:50vw;top:0;right:0;bottom:0;margin:0;border-radius:0;z-index:20;padding:16px;box-sizing:border-box}
+  html.electron.native-console #monitor-card .screen{flex:1;min-height:0;border-radius:8px}
+  html.electron.native-console #monitor-card .screen img{width:100%;height:100%;object-fit:contain;cursor:default}
+  html.native-console #cursor,html.native-console .trail{display:none}
+  #native-monitor-help[hidden]{display:none}
+  #native-monitor-help{font-size:12px;line-height:1.6;color:var(--muted);margin-top:10px}
   html.electron .row{gap:8px}
   html.electron .fld input,html.electron .fld textarea{font-size:12px}
   #cursor{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(255,39,66,.9);border:3px solid #fff;box-shadow:0 0 0 2px #ff2742,0 0 14px 5px rgba(255,39,66,.75);opacity:0;pointer-events:none;transition:left .1s,top .1s;z-index:5}
@@ -190,6 +199,8 @@
     min-height:82px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:11px 13px
   }
   .metric .l{font-size:12px;color:#697386;font-weight:650}.metric .v{font-size:26px;color:#111827;line-height:1.15}
+  /* 执行统计有 7 项。窗口较窄时自动折行，避免右侧「已回复」被裁掉。 */
+  .run-metrics{grid-template-columns:repeat(auto-fit,minmax(100px,1fr))!important}
   #m-target{color:var(--brand)!important}
   .cols{gap:14px}
   .screen{border-radius:8px;background:#111827;border:1px solid #1f2937}
@@ -255,7 +266,7 @@
   </div>
 
   <div class="main">
-    <div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">运行账号</span><button data-account="1" onclick="selectAccount(1)">账号 1</button><button data-account="2" onclick="selectAccount(2)">账号 2</button><button data-account="3" onclick="selectAccount(3)">账号 3</button><button data-account="4" onclick="selectAccount(4)">账号 4</button><button data-account="5" onclick="selectAccount(5)">发布测试</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button><div class="account-note-popover" id="account-note-popover" hidden><label for="account-label-input">账号备注名称</label><input id="account-label-input" maxlength="18" placeholder="例如：成都主号"><div class="account-note-actions"><button class="btn ghost" type="button" onclick="closeAccountLabelEditor()">取消</button><button class="btn" type="button" onclick="saveActiveAccountLabel()">保存</button></div></div></div>
+<div class="bar"><b id="pagetitle">控制台</b><div class="account-switcher" id="account-switcher"><span class="label">5 个正式账号＋1 个测试</span><button data-account="1" onclick="selectAccountTab(1)">账号 1</button><button data-account="2" onclick="selectAccountTab(2)">账号 2</button><button data-account="3" onclick="selectAccountTab(3)">账号 3</button><button data-account="4" onclick="selectAccountTab(4)">账号 4</button><button data-account="6" onclick="selectAccountTab(6)">新增账号</button><button data-account="5" onclick="selectAccountTab(5)">账号 5 · App</button></div><span class="account-hint" id="account-hint">账号 1 · 独立登录、任务和统计</span><button class="account-label-edit" onclick="editActiveAccountLabel()">✏︎ 备注</button><div class="account-note-popover" id="account-note-popover" hidden><label for="account-label-input">账号备注名称</label><input id="account-label-input" maxlength="18" placeholder="例如：成都主号"><div class="account-note-actions"><button class="btn ghost" type="button" onclick="closeAccountLabelEditor()">取消</button><button class="btn" type="button" onclick="saveActiveAccountLabel()">保存</button></div></div></div>
 
     <!-- ===== 控制台 ===== -->
     <div class="page on" id="page-console">
@@ -271,12 +282,22 @@
           <button class="btn" id="go" onclick="engineStart()">▶ 开始</button>
           <button class="btn" id="stopbtn" onclick="engineStop()" disabled style="background:#fff;border:1px solid #d6dae2;color:var(--red);margin-left:8px">⏹ 停止</button>
           <button class="btn ghost" id="refreshxhsbtn" onclick="refreshXhsBrowser()" style="margin-left:8px" title="遇到扫码验证或页面卡住时，先暂停任务再刷新右侧小红书；不清空历史记录">↻ 刷新小红书</button>
+          <button class="btn ghost" id="homexhsbtn" onclick="goXhsHome()" style="margin-left:8px" title="回到小红书首页；当前账号若有任务在跑，会先暂停">⌂ 小红书首页</button>
           <button class="btn ghost" id="clearcachebtn" onclick="clearConsoleCache()" style="margin-left:8px" title="清空当前控制台日志和待发送列表；不删除已发送记录">🧹 清空缓存</button>
           <label style="font-size:13px;color:var(--sub);margin-left:12px;cursor:pointer" title="总真发开关:开=机器真的发评论/回复(务必全新小号);关=全演练"><input type="checkbox" id="autoreal" onchange="saveLive()"> 真发(总开关)</label>
           <label style="font-size:13px;color:var(--sub);margin-left:10px;cursor:pointer" title="关闭后，任务不会查看通知、不会暂停外呼，也不会自动回复评论或@"><input type="checkbox" id="replymaster" onchange="saveReplyMaster()"> 💬 自动承接</label>
           <span class="hint" id="replymasterhint" style="font-size:12px;white-space:nowrap"></span>
           <span class="hint" id="tasksummary" style="margin-left:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
           <a href="#" onclick="showPage('tasksettings');return false" style="font-size:12px;color:var(--brand);white-space:nowrap;text-decoration:none">⚙ 任务设置</a>
+        </div>
+        <div id="native-console-tools" hidden style="margin-top:10px;padding:10px 12px;border:1px solid #d8e7ff;border-radius:9px;background:#f5f9ff">
+          <div class="row" style="align-items:center;flex-wrap:wrap">
+            <span style="font-size:13px;font-weight:700">📱 账号 5 使用 Mac 小红书 App</span>
+            <button class="btn ghost" id="native-app-btn" type="button" onclick="activateNativeApp()">打开 App</button>
+            <button class="btn ghost" type="button" onclick="showPage('tasksettings');$('native-gallery-settings').scrollIntoView({block:'center'})">管理本地房源图库</button>
+            <span class="hint" id="native-console-hint">按每篇需求选图，不再预选固定图片。图库接口未接入，当前使用本地房源库联调。</span>
+          </div>
+          <label class="hint" style="display:block;margin-top:8px;cursor:pointer"><input type="checkbox" id="native-foreground-consent"> 允许前台测试（会使用 App 前台；切换到其他应用后暂停，不是后台运行）</label>
         </div>
         <div class="pipe">
           <div class="pp" id="p-search">① 检索</div>
@@ -293,15 +314,21 @@
       </div>
 
       <div class="cols">
-        <div class="card" style="flex:1.7;min-width:0;margin-bottom:0">
+        <div class="card" id="monitor-card" style="flex:1.7;min-width:0;margin-bottom:0">
           <div style="display:flex;align-items:center;margin-bottom:8px">
-            <div style="font-size:13px;font-weight:600">📺 实时监控 · 机器正在操作的浏览器</div>
+            <div style="font-size:13px;font-weight:600" id="monitor-title">📺 实时监控 · 机器正在操作的浏览器</div>
             <span class="hint" id="caststatus" style="margin-left:auto">连接中…</span>
           </div>
           <div class="screen" id="screen">
             <img id="cast" alt="实时画面" style="display:none">
             <div id="cursor"></div>
             <div class="screen-empty" id="castempty">连接中…(画面可点击操作;红点(带尾巴)= 机器鼠标轨迹)</div>
+          </div>
+          <div id="native-monitor-help" hidden>
+            <b>Mac 小红书 App · 实时画面（只读）</b><br>
+            这里不是网页，也不是可直接点击的嵌入式 App。仅查看画面不会抢鼠标、键盘或切换窗口；App 最小化或画面不可用时不会自动唤起。<br>
+            当前原生搜索、点击、输入仍属于前台操作，尚不支持边操作电脑边持续后台跑。切换到其他应用后，下一次操作会暂停，不会把 App 抢回前台。
+            <div style="margin-top:8px"><button class="btn ghost" type="button" onclick="activateNativeApp()">打开 App 手动操作</button></div>
           </div>
         </div>
         <div class="card" style="flex:1;min-width:0;margin-bottom:0;display:flex;flex-direction:column">
@@ -387,6 +414,10 @@
           <div class="row">
             <div class="fld" style="flex:1"><label>外呼固定短句（留空才使用 AI）</label><input id="outreach_fixed_text" placeholder="例如：有房，私" style="width:100%"></div>
           </div>
+          <div class="row">
+            <div class="fld"><label>目标户型</label><select id="lead_layout_policy"><option value="any">户型不限</option><option value="one_bedroom_entire">只要一居室整租</option></select></div>
+          </div>
+          <div class="hint" style="margin:-4px 0 12px">选择“只要一居室整租”后：两居及以上、合租/找室友、单间/主卧/次卧、开间/loft 会跳过；没有明确一居室的内容也不会自动评论。</div>
           <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:2px 0 12px">
             <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="reply_under_supply_enabled"> 在房源/同行笔记下回复求租评论者</label>
             <div class="hint" style="margin-top:6px">关闭时：只在求租笔记下回复评论者。打开后：系统仍不会评论房东、中介或同行作者本人；但会读取服务区域内房源/同行笔记的评论区。评论者写“我也需要”“同求”等简短留言时，系统会结合原笔记的地区、住宅性质和租期判断。商铺、短租、外地、同行留言仍会跳过。</div>
@@ -402,6 +433,10 @@
             <div class="fld"><label>笔记类型</label><select id="f_type"><option>不限</option><option>图文</option><option>视频</option></select></div>
             <div class="fld"><label>搜索范围</label><select id="f_range"><option>不限</option><option>已看过</option><option>未看过</option><option>已关注</option></select></div>
           </div>
+          <div class="row">
+            <div class="fld"><label>搜索异常自动恢复（仅浏览器模式）</label><select id="search_home_retries"><option value="0">关闭，异常时暂停</option><option value="1" selected>返回首页重搜 1 次（默认）</option><option value="2">返回首页重搜 2 次</option></select></div>
+          </div>
+          <div class="hint" style="margin:0 0 12px">搜索页未就绪、关键词不符或搜索控件异常时，只在当前账号返回首页，再按原关键词和筛选条件重搜；成功后接着跑，不清空统计和已回复记录。达到次数上限仍失败则暂停；扫码、登录或账号安全验证不会自动重试。可随时点停止。</div>
           <div style="font-size:13px;font-weight:700;margin:18px 0 6px">📅 排班 · 时间段「每个关键词采集多少篇 / 共评多少条」</div>
             <div class="hint" style="margin-bottom:8px">默认每个时间段每天生效。需要错峰时,新增多个时间段;需要区分工作日/周末时,在该时间段里勾选适用星期。“每词采集”由你直接设置，不再由系统平均分配。例如 5 个关键词、每词采集 50 篇，一轮最多采集 250 篇；“评”仍是整个时间段的评论总配额。</div>
             <label style="cursor:pointer;display:inline-block;margin-bottom:8px"><input type="checkbox" id="sch_enabled"> 启用排班(关掉 = 不限时段,只受防封限频约束)</label>
@@ -412,6 +447,15 @@
             <button class="btn" onclick="saveTaskSettings()">保存任务设置 + 排班</button>
             <span class="hint" id="tasksavehint" style="margin-left:10px"></span>
           </div>
+          <section id="native-gallery-settings" hidden style="margin-top:24px;padding-top:18px;border-top:1px solid var(--line)">
+            <div style="font-size:14px;font-weight:700">🖼 按需求匹配房源图片 · 第 5 号 App</div>
+            <p class="hint">图库 API 尚未接入，先录入本地真实房源模拟接口。系统在大模型分类时提取需求，再按地区、预算、户型、整租/合租、租期和其他要求筛选，使用同一套房源的图片与文字。不符合、已下架、缺图或信息无法核实的房源不发送。</p>
+            <p class="hint">此模式暂用已核实房源事实生成文案，不套用上方固定外呼文案。缺少预算/户型会追问，不假设完全匹配；App 选图未核验前只保留预览，真发开关不会绕过校验。</p>
+            <div id="native-gallery-list"></div>
+            <button class="btn ghost" type="button" onclick="addNativeProperty()">＋ 添加房源</button>
+            <button class="btn" type="button" onclick="saveNativeGallery()">保存本地图库</button>
+            <span class="hint" id="native-gallery-hint" style="margin-left:8px"></span>
+          </section>
         </div>
       </div>
 
@@ -528,11 +572,26 @@ if (navigator.userAgent.indexOf('Electron') >= 0) document.documentElement.class
 let es = null, frameW = 0, frameH = 0;
 
 // 多账号版：控制台页面只保留一份，点击账号后把所有本地接口切到该账号
-// 的独立服务。五个服务、SQLite、限频和浏览器登录态彼此完全隔离。
+// 的独立服务。五个正式网页账号 + 一个 App 测试账号，六份服务和数据独立。
 const ACCOUNT_PORT_BASE = 3100;
-const ACCOUNT_COUNT = 5;
+const ACCOUNT_COUNT = 6;
 let activeAccountId = Math.max(1, Math.min(ACCOUNT_COUNT, Number(localStorage.getItem('xhs-active-account') || 1)));
-let accountLabels = {};
+function readCachedAccountLabels() {
+  const labels = {};
+  try {
+    const saved = JSON.parse(localStorage.getItem('xhs-account-labels-v1') || '{}');
+    for (let id = 1; id <= ACCOUNT_COUNT; id++) {
+      if (typeof saved[id] === 'string' && saved[id].trim()) labels[id] = saved[id].trim().slice(0, 18);
+    }
+  } catch (_) {}
+  return labels;
+}
+let accountLabels = readCachedAccountLabels();
+const accountAvailability = {};
+function cacheAccountLabels() {
+  try { localStorage.setItem('xhs-account-labels-v1', JSON.stringify(accountLabels)); } catch (_) {}
+}
+let nativeGalleryProperties = [];
 const nativeFetch = window.fetch.bind(window);
 const NativeEventSource = window.EventSource;
 function accountApiUrl(input) {
@@ -546,19 +605,34 @@ function renderAccountSwitcher() {
   document.querySelectorAll('#account-switcher button[data-account]').forEach(function (btn) {
     const id = Number(btn.dataset.account);
     btn.classList.toggle('on', id === activeAccountId);
-    btn.textContent = accountLabels[id] || (id === 5 ? '发布测试' : ('账号 ' + id));
+    btn.textContent = accountLabels[id] || (id === 5 ? '账号 5 · App' : (id === 6 ? '新增账号' : ('账号 ' + id)));
+    btn.title = accountAvailability[id] === false ? '此账号服务暂时离线，账号名称和历史记录仍保留' : (id === 5 ? '独立 App 测试账号' : '正式运行账号，登录和数据独立');
+    if (accountAvailability[id] === false) btn.textContent += ' · 离线';
   });
-  $('account-hint').textContent = (accountLabels[activeAccountId] || (activeAccountId === 5 ? '发布测试' : ('账号 ' + activeAccountId))) + (activeAccountId === 5 ? ' · 独立登录与发布项目测试空间' : ' · 独立登录、任务和统计');
+  $('account-hint').textContent = (accountLabels[activeAccountId] || (activeAccountId === 5 ? '账号 5 · App' : (activeAccountId === 6 ? '新增账号' : ('账号 ' + activeAccountId)))) + (activeAccountId === 5 ? ' · 完整控制台，执行端为 Mac App' : ' · 独立登录、任务和统计');
+  const nativeMode = activeAccountId === 5;
+  if ($('native-console-tools')) $('native-console-tools').hidden = !nativeMode;
+  if ($('native-monitor-help')) $('native-monitor-help').hidden = !nativeMode;
+  if ($('monitor-title')) $('monitor-title').textContent = nativeMode ? '📱 Mac 小红书 App · 只读实时画面' : '📺 实时监控 · 机器正在操作的浏览器';
+  if ($('refreshxhsbtn')) $('refreshxhsbtn').textContent = nativeMode ? '↻ 重新打开 App' : '↻ 刷新小红书';
+  if ($('native-gallery-settings')) $('native-gallery-settings').hidden = !nativeMode;
 }
 async function loadAccountLabels() {
   const rows = await Promise.all(Array.from({ length: ACCOUNT_COUNT }, function (_, index) { return index + 1; }).map(async function (id) {
     try {
-      const data = await nativeFetch('http://127.0.0.1:' + (ACCOUNT_PORT_BASE + id) + '/api/config').then(function (r) { return r.json(); });
-      return [id, data && data.config && String(data.config.account_label || '').trim()];
-    } catch (e) { return [id, '']; }
+      const data = await nativeFetch('http://127.0.0.1:' + (ACCOUNT_PORT_BASE + id) + '/api/config', { signal: AbortSignal.timeout(4000) }).then(function (r) { return r.json(); });
+      if (!data || !data.ok || !data.config) return [id, null];
+      return [id, String(data.config.account_label || '').trim().slice(0, 18)];
+    } catch (e) { return [id, null]; }
   }));
-  accountLabels = {};
-  rows.forEach(function (row) { if (row[1]) accountLabels[row[0]] = row[1]; });
+  rows.forEach(function ([id, label]) {
+    accountAvailability[id] = label !== null;
+    // Offline is not an empty label: retain the last known name, including 文.
+    if (label === null) return;
+    if (label) accountLabels[id] = label;
+    else delete accountLabels[id];
+  });
+  cacheAccountLabels();
   renderAccountSwitcher();
 }
 function editActiveAccountLabel() {
@@ -572,14 +646,16 @@ function closeAccountLabelEditor() {
   $('account-note-popover').hidden = true;
 }
 function saveActiveAccountLabel() {
+  const accountId = activeAccountId;
   const value = String($('account-label-input').value || '').trim().slice(0, 18);
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ account_label: value })))
     .then(function (r) { return r.json(); }).then(function (data) {
       if (!data.ok) { alert('备注保存失败：' + (data.msg || '未知错误')); return; }
-      if (value) accountLabels[activeAccountId] = value;
-      else delete accountLabels[activeAccountId];
+      if (value) accountLabels[accountId] = value;
+      else delete accountLabels[accountId];
+      cacheAccountLabels();
       renderAccountSwitcher();
-      closeAccountLabelEditor();
+      if (activeAccountId === accountId) closeAccountLabelEditor();
     }).catch(function () { alert('备注保存失败，请稍后重试。'); });
 }
 function selectAccount(id) {
@@ -592,7 +668,7 @@ function selectAccount(id) {
   localStorage.setItem('xhs-active-account', String(id));
   renderAccountSwitcher();
   if (window.electronView) window.electronView.selectAccount(id);
-  $('log').textContent = '已切换到账号 ' + id + '。该账号的登录、任务、限频、历史和统计均独立保存。';
+  $('log').textContent = '已切换到账号 ' + id + '。该账号的登录、任务、限频、历史和统计均独立保存。' + (id === 5 ? ' 当前由 Mac 小红书 App 执行。' : '');
   $('results').innerHTML = '';
   $('runstats').textContent = '加载该账号执行统计中…';
   ['m-total','m-seek','m-supply','m-target'].forEach(function (key) { $(key).textContent = '–'; });
@@ -604,8 +680,17 @@ function selectAccount(id) {
   connectStream();
   connectMonitor();
 }
+function selectAccountTab(id) {
+  selectAccount(id);
+  showPage('console');
+}
 renderAccountSwitcher();
 if (window.electronView) window.electronView.selectAccount(activeAccountId);
+// 初次恢复第五页时也要应用显隐规则，而不只在点击账号后应用。
+const initialShowsBrowser = activeAccountId !== 5;
+document.documentElement.classList.toggle('fullwidth', !initialShowsBrowser);
+document.documentElement.classList.toggle('native-console', activeAccountId === 5);
+if (window.electronView) window.electronView.setVisible(initialShowsBrowser);
 loadAccountLabels();
 
 var _cfg = {};
@@ -618,13 +703,63 @@ async function loadTaskSettings() {
   const c = await getCfg();
   setVal('kw', c.task_keyword); setVal('dir', c.task_direction); setVal('outreach_fixed_text', c.outreach_fixed_text); setVal('max', c.task_max);
   setVal('f_sort', c.task_sort); setVal('f_time', c.task_note_time); setVal('f_type', c.task_note_type); setVal('f_range', c.task_note_range);
+  setVal('search_home_retries', c.search_home_retries == null || c.search_home_retries === '' || !Number.isFinite(Number(c.search_home_retries)) ? 1 : Math.max(0, Math.min(2, Math.floor(Number(c.search_home_retries)))));
   setVal('rescan', c.rescan_minutes);
+  setVal('lead_layout_policy', c.lead_layout_policy || 'any');
   if ($('reply_under_supply_enabled')) $('reply_under_supply_enabled').checked = c.reply_under_supply_enabled === true;
   if ($('task_llm_classification_enabled')) $('task_llm_classification_enabled').checked = !!(c.lead_model && c.lead_model.llmClassificationEnabled);
   if ($('sch_enabled')) $('sch_enabled').checked = c.schedule_enabled !== false;
   if ($('slot_pacing')) $('slot_pacing').value = c.slot_pacing || 'even';
   if ($('schedule-form')) { const _sch = (Array.isArray(c.schedule) && c.schedule.length === 7) ? c.schedule : defSchedule(); renderSchedule(_sch); markConflicts(); }
   updateTaskSummary();
+  if (activeAccountId === 5) loadNativeGallery();
+}
+const nativeGalleryUrl = 'http://127.0.0.1:3105/api/native/gallery';
+async function loadNativeGallery() {
+  if (activeAccountId !== 5) return;
+  try {
+    const d = await nativeFetch(nativeGalleryUrl).then(r => r.json());
+    if (activeAccountId !== 5) return;
+    if (!d.ok) throw new Error(d.msg);
+    nativeGalleryProperties = d.catalog.properties || [];
+    renderNativeGallery();
+    $('native-gallery-hint').textContent = nativeGalleryProperties.length ? '已保存 ' + nativeGalleryProperties.length + ' 套房源' : '图库为空；请录入真实房源及对应图片，未配置时不会发图。';
+  } catch (e) { $('native-gallery-hint').textContent = '读取失败：' + e.message; }
+}
+function addNativeProperty() {
+  if (activeAccountId !== 5) return;
+  nativeGalleryProperties.push({ id: 'local-' + Date.now(), title: '', city: '', district: '', locations: [], rent: null, bedrooms: null, rentalType: 'entire', minLeaseMonths: null, purpose: 'residential', available: true, features: [], images: [] });
+  renderNativeGallery();
+}
+function setNativeProperty(i, key, value) {
+  const p = nativeGalleryProperties[i]; if (!p) return;
+  if (['locations', 'features'].includes(key)) p[key] = value.split(/[,，、;；\n]+/).map(s => s.trim()).filter(Boolean);
+  else if (['rent', 'bedrooms', 'minLeaseMonths', 'maxLeaseMonths'].includes(key)) p[key] = value === '' ? null : Number(value);
+  else p[key] = value;
+}
+function renderNativeGallery() {
+  const field = (p, i, key, label, type = 'text', placeholder = '') => '<label class="fld" style="min-width:140px;flex:1">' + label + '<input type="' + type + '" value="' + attr(p[key] ?? '') + '" placeholder="' + attr(placeholder) + '" onchange="setNativeProperty(' + i + ',\'' + key + '\',this.value)"></label>';
+  $('native-gallery-list').innerHTML = nativeGalleryProperties.map((p, i) => '<div style="padding:12px;border:1px solid var(--line);border-radius:9px;margin:10px 0">'
+    + '<div class="row" style="flex-wrap:wrap">' + field(p, i, 'title', '房源名称') + field(p, i, 'city', '城市', 'text', '例如：石家庄') + field(p, i, 'district', '区县', 'text', '例如：桥西区') + '</div>'
+    + '<div class="row" style="flex-wrap:wrap">' + field({ ...p, locations: (p.locations || []).join('，') }, i, 'locations', '位置 / 已确认别名', 'text', '小区、商圈，用逗号分隔') + field(p, i, 'rent', '月租（元）', 'number') + field(p, i, 'bedrooms', '卧室数量', 'number') + '</div>'
+    + '<div class="row" style="flex-wrap:wrap"><label class="fld">租赁方式<select onchange="setNativeProperty(' + i + ',\'rentalType\',this.value)"><option value="entire"' + (p.rentalType === 'entire' ? ' selected' : '') + '>整租</option><option value="shared"' + (p.rentalType === 'shared' ? ' selected' : '') + '>合租</option></select></label>' + field(p, i, 'minLeaseMonths', '最短租期（月）', 'number') + field(p, i, 'maxLeaseMonths', '最长租期（月，可空）', 'number') + field(p, i, 'availableFrom', '可入住日期（可空）', 'date') + '</div>'
+    + '<div class="row">' + field({ ...p, features: (p.features || []).join('，') }, i, 'features', '已核实的条件', 'text', '例如：独卫、可养猫；不要填写无法确认的条件') + '</div>'
+    + '<div class="row" style="align-items:center;flex-wrap:wrap"><label><input type="checkbox"' + (p.available ? ' checked' : '') + ' onchange="setNativeProperty(' + i + ',\'available\',this.checked)"> 仍可出租</label><button class="btn ghost" type="button" onclick="chooseNativePropertyImage(' + i + ')">选择这套房源的图片</button><span class="hint" style="overflow-wrap:anywhere">' + esc((p.images || []).join('、') || '未选择图片') + '</span><button class="btn ghost" type="button" onclick="nativeGalleryProperties.splice(' + i + ',1);renderNativeGallery()">移除房源</button></div></div>').join('');
+}
+async function chooseNativePropertyImage(i) {
+  const p = nativeGalleryProperties[i];
+  if (!p || activeAccountId !== 5 || !window.electronView || !window.electronView.nativeXhsChooseImage) return;
+  const data = await window.electronView.nativeXhsChooseImage();
+  if (data.ok && activeAccountId === 5 && nativeGalleryProperties[i] === p) { p.images = [data.path]; renderNativeGallery(); }
+}
+async function saveNativeGallery() {
+  if (activeAccountId !== 5) return;
+  const hint = $('native-gallery-hint'); hint.textContent = '保存中…';
+  try {
+    const d = await nativeFetch(nativeGalleryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 1, properties: nativeGalleryProperties }) }).then(r => r.json());
+    if (!d.ok) throw new Error(d.msg);
+    hint.textContent = '✓ 已保存 ' + d.count + ' 套；每篇笔记将重新按需求匹配。';
+  } catch (e) { hint.textContent = '✗ ' + e.message; }
 }
 async function loadModelSettings() {
   const c = await getCfg();
@@ -861,7 +996,9 @@ function saveTaskSettings() {
     schedule_enabled: ($('sch_enabled') ? $('sch_enabled').checked : true), slot_pacing: ($('slot_pacing') ? $('slot_pacing').value : 'even'), schedule: _schedule,
     task_keyword: $('kw').value, task_direction: $('dir').value, outreach_fixed_text: $('outreach_fixed_text').value,
     task_sort: $('f_sort').value, task_note_time: $('f_time').value, task_note_type: $('f_type').value, task_note_range: $('f_range').value,
+    search_home_retries: Math.max(0, Math.min(2, Number($('search_home_retries').value))),
     rescan_minutes: Math.max(1, Number($('rescan').value) || 15),
+    lead_layout_policy: $('lead_layout_policy') ? $('lead_layout_policy').value : 'any',
     reply_under_supply_enabled: $('reply_under_supply_enabled') ? $('reply_under_supply_enabled').checked : false,
     lead_model: taskLeadModel, scan_quota_mode: 'per_keyword'
   };
@@ -922,9 +1059,10 @@ function saveSchedule() {
   fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify(data))).then(r => r.json()).then(function () {});
 }
 function showPage(p) {
-  const isConsole = (p === 'console');
-  if (window.electronView) window.electronView.setVisible(isConsole); // 只有控制台显示监视器
-  document.documentElement.classList.toggle('fullwidth', !isConsole); // 其他页签铺平
+  const showsBrowser = p === 'console' && activeAccountId !== 5;
+  if (window.electronView) window.electronView.setVisible(showsBrowser);
+  document.documentElement.classList.toggle('fullwidth', !showsBrowser); // 其他页签铺平
+  document.documentElement.classList.toggle('native-console', p === 'console' && activeAccountId === 5);
   document.querySelectorAll('.page').forEach(e => e.classList.remove('on'));
   $('page-' + p).classList.add('on');
   document.querySelectorAll('.side .nav').forEach(e => e.classList.toggle('on', e.dataset.p === p));
@@ -936,6 +1074,116 @@ function showPage(p) {
   if (p === 'modelsettings') loadModelSettings();
   if (p === 'inbox') loadInbox();
   if (p === 'replyrules') loadReplyRules();
+  if (p === 'console' && activeAccountId === 5) loadNativeConsoleStatus();
+}
+async function loadNativeConsoleStatus() {
+  const hint = $('native-console-hint');
+  if (!hint || !window.electronView || !window.electronView.nativeXhsStatus) {
+    if (hint) hint.textContent = '原生 App 控制仅在桌面版软件中可用。';
+    return;
+  }
+  try {
+    const data = await window.electronView.nativeXhsStatus();
+    hint.textContent = data.ok ? ('✓ ' + data.message) : ('✗ ' + data.message);
+    const cfg = await getCfg();
+    if ($('autoreal')) $('autoreal').checked = cfg.live_send === true;
+    if (window.electronView.nativeXhsTaskStatus) renderNativeTaskStatus(await window.electronView.nativeXhsTaskStatus());
+  } catch (e) { hint.textContent = '✗ 无法检查原生 App 状态。'; }
+}
+async function runNativeAction(method, buttonId, busyText) {
+  if (activeAccountId !== 5) { alert('请先点击顶部的“账号 5 · App”。'); return; }
+  const btn = $(buttonId); const hint = $('native-console-hint');
+  if (!window.electronView || !window.electronView[method]) { hint.textContent = '✗ 请在桌面版软件中使用原生 App 模式。'; return; }
+  if (btn) btn.disabled = true; hint.textContent = busyText;
+  try {
+    const data = await window.electronView[method]();
+    hint.textContent = data.ok ? ('✓ ' + data.message) : ('✗ ' + data.message);
+  } catch (e) { hint.textContent = '✗ 无法打开原生小红书 App，请稍后再试。'; }
+  if (btn) btn.disabled = false;
+}
+function activateNativeApp() { return runNativeAction('nativeXhsActivate', 'native-app-btn', '正在打开原生小红书 App…'); }
+function goNativeXhsHome() { return runNativeAction('nativeXhsHome', 'homexhsbtn', '正在回到原生小红书首页…'); }
+function nativePhase(status) {
+  const phase = { prepare_image: 'generate', search: 'search', scan: 'search', open: 'search', classify: 'match', gallery: 'match', compose: 'generate', send: 'generate', preview: 'done', waiting: 'done', done: 'done' }[status && status.phase] || 'done';
+  setPhase(phase);
+}
+let nativeLastDecisionKey = '';
+function renderNativeTaskStatus(status) {
+  status = status || {};
+  if (activeAccountId !== 5) return;
+  _machineRunning = !!status.running;
+  $('go').disabled = _machineRunning;
+  $('stopbtn').disabled = !_machineRunning;
+  if ($('clearcachebtn')) $('clearcachebtn').disabled = _machineRunning;
+  $('go').textContent = _machineRunning ? '● 运行中' : '▶ 开始';
+  nativePhase(status);
+  renderStats({ total: Number(status.seen) || 0, targetCount: Number(status.useful) || 0 });
+  if ($('rcount')) $('rcount').textContent = '· 已回复 ' + (Number(status.replied) || 0) + ' · 暂无匹配图片 ' + (Number(status.unmatched) || 0) + ' · 调用/执行失败 ' + (Number(status.failed) || 0);
+  if ($('tasksummary')) $('tasksummary').textContent = (status.keyword ? ('当前：' + status.keyword) : '') + (status.keywordTotal ? (' · 关键词 ' + status.keywordIndex + '/' + status.keywordTotal) : '') + ' · 已判断 ' + (Number(status.judged) || 0);
+  if ($('native-console-hint') && status.message) $('native-console-hint').textContent = status.message;
+  const item = status.lastDecision;
+  const itemKey = item && [status.runId, item.id, status.judged, status.replied, item.plan && item.plan.status, item.plan && item.plan.imagePath, status.phase].join('|');
+  if (item && itemKey && itemKey !== nativeLastDecisionKey) {
+    nativeLastDecisionKey = itemKey;
+    const d = item.decision || {};
+    const noteKey = String(status.runId) + '|' + item.id;
+    let div = Array.from($('results').children).find(el => el.dataset.nativeNote === noteKey);
+    if (!div) { div = document.createElement('div'); div.className = 'note'; div.dataset.nativeNote = noteKey; $('results').prepend(div); }
+    div.innerHTML = '<h4>' + (d.eligible ? '<span class="badge b-ok">有用</span>' : '<span class="badge b-warn">无用</span>') + ' ' + esc(item.title || '无标题') + '</h4>'
+      + '<div class="meta">' + esc(item.author || '') + ' · ' + esc(d.categoryName || '不明') + ' · 地区' + esc(d.locationMatch || 'unknown') + '</div>'
+      + '<div class="hint" style="white-space:pre-wrap;margin-top:6px">判断：' + esc(d.decisionReason || d.reason || '未提供理由') + (item.comment ? '\n拟回复：' + esc(item.comment) : '') + (item.plan ? '\n选图结果：' + esc(item.plan.reason || item.plan.status) + (item.plan.imagePath ? '\n匹配图片：' + esc(item.plan.imagePath) : '') : '') + '</div>';
+    if (item.plan && item.plan.imagePath) {
+      const img = document.createElement('img');
+      img.alt = '按本篇需求匹配的房源图片（本地预览，未代表已发送）';
+      img.src = 'http://127.0.0.1:3105/api/native/reply-image?run_id=' + encodeURIComponent(status.runId) + '&note_id=' + encodeURIComponent(item.id) + '&keyword=' + encodeURIComponent(item.keyword);
+      img.style.cssText = 'max-width:240px;max-height:200px;object-fit:contain;margin-top:8px;border-radius:8px';
+      div.appendChild(img);
+    }
+    loadRecords(); loadRunStats(status.runId || '');
+  }
+  if (!status.running && status.runId) loadRunStats(status.runId);
+}
+function appendNativeLog(row) {
+  if (activeAccountId !== 5 || !row) return;
+  addLog('[' + (row.time || '') + '] ' + (row.message || ''));
+}
+async function startNativeTask() {
+  const hint = $('native-console-hint');
+  if (!window.electronView || !window.electronView.nativeXhsTaskStart) { hint.textContent = '新版原生引擎尚未加载，请重启软件后测试。'; return; }
+  if (!$('native-foreground-consent').checked) { hint.textContent = '当前尚不支持后台无干扰运行。只有接受前台测试并勾选后才会启动；未启动任务。'; return; }
+  const runtime = await window.electronView.nativeXhsStatus();
+  if (!runtime.foregroundPause) { hint.textContent = '前台保护尚未加载，请在其他账号任务停止后重启软件；本次没有启动。'; return; }
+  const cfg = await getCfg();
+  $('log').textContent = '';
+  $('results').innerHTML = '';
+  nativeLastDecisionKey = '';
+  const data = await window.electronView.nativeXhsTaskStart({ liveSend: cfg.live_send === true, continuous: true, allowForeground: $('native-foreground-consent').checked });
+  hint.textContent = (data.ok ? '✓ ' : '✗ ') + (data.message || '');
+  renderNativeTaskStatus(data.status);
+}
+async function stopNativeTask() {
+  if (!window.electronView || !window.electronView.nativeXhsTaskStop) return;
+  renderNativeTaskStatus((await window.electronView.nativeXhsTaskStop()).status);
+}
+if (window.electronView && window.electronView.onNativeXhsStatus) window.electronView.onNativeXhsStatus(renderNativeTaskStatus);
+if (window.electronView && window.electronView.onNativeXhsLog) window.electronView.onNativeXhsLog(appendNativeLog);
+async function goXhsHome() {
+  if (activeAccountId === 5) {
+    if (_machineRunning && window.electronView && window.electronView.nativeXhsTaskStop) await window.electronView.nativeXhsTaskStop();
+    await goNativeXhsHome();
+    return;
+  }
+  const hint = null;
+  if (hint) hint.textContent = '正在回到小红书首页…';
+  try {
+    const data = await fetch('/api/browser/home').then(function (r) { return r.json(); });
+    const msg = data.ok ? ('✓ ' + data.msg) : ('✗ ' + (data.msg || '返回首页失败'));
+    if (hint) hint.textContent = msg;
+    else alert(msg);
+  } catch (e) {
+    if (hint) hint.textContent = '✗ 返回首页失败，请稍后再试。';
+    else alert('返回首页失败，请稍后再试。');
+  }
 }
 async function loadReplyRules() {
   const c = await getCfg();
@@ -1235,7 +1483,7 @@ function renderRunStats(d) {
     ['scanned_count','judged_count','useful_count','useless_count','failed_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
     return acc;
   }, { scanned_count: 0, judged_count: 0, useful_count: 0, useless_count: 0, failed_count: 0, reply_count: 0, pending_count: 0 });
-  const summary = '<div class="mgrid" style="grid-template-columns:repeat(7,1fr);margin:0 0 10px">'
+  const summary = '<div class="mgrid run-metrics" style="margin:0 0 10px">'
     + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['无用', totals.useless_count], ['调用失败', totals.failed_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
     + '</div>';
   const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>无用</td><td>调用失败</td><td>已回复</td><td>待判断</td></tr>'
@@ -1258,6 +1506,11 @@ let _stream = null, _machineRunning = false;
 function connectStream() {
   if (_stream) return;
   $('log').textContent = '';
+  if (activeAccountId === 5) {
+    _stream = { close: function () {} };
+    loadNativeConsoleStatus();
+    return;
+  }
   _stream = new EventSource('/api/engine/stream');
   _stream.addEventListener('log', e => { const o = JSON.parse(e.data); addLog('[' + o.t + '] ' + o.m); });
   _stream.addEventListener('status', e => applyMachineStatus(JSON.parse(e.data)));
@@ -1275,19 +1528,33 @@ function applyMachineStatus(s) {
   const pm = { search: 'search', reply: 'match', comment: 'generate', starting: 'search' };
   setPhase(_machineRunning ? (pm[s.phase] || 'search') : 'done');
 }
-function engineStart() {
+async function engineStart() {
   if ($('autoreal') && $('autoreal').checked && !confirm('⚠ 真发已开!机器会真的发评论/回复(务必全新小号)。确认开始?')) return;
   $('go').disabled = true;
+  if (activeAccountId === 5) {
+    await startNativeTask();
+    return;
+  }
   fetch('/api/engine/start').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); }).catch(()=>{ $('go').disabled = false; });
 }
 function engineStop() {
   $('stopbtn').disabled = true;
+  if (activeAccountId === 5) { stopNativeTask(); return; }
   fetch('/api/engine/stop').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); });
 }
-function refreshXhsBrowser() {
+async function refreshXhsBrowser() {
   const b = $('refreshxhsbtn');
   const old = b.textContent;
   b.disabled = true; b.textContent = '刷新中…';
+  if (activeAccountId === 5) {
+    if (_machineRunning) await window.electronView.nativeXhsTaskStop();
+    try {
+      const d = await window.electronView.nativeXhsActivate();
+      addLog(d.message || '已重新打开 Mac 小红书 App');
+    } catch (e) { alert('重新打开 App 失败，请稍后再试。'); }
+    b.disabled = false; b.textContent = old;
+    return;
+  }
   fetch('/api/browser/refresh', { method: 'POST' }).then(r => r.json()).then(d => {
     if (d.status) applyMachineStatus(d.status);
     if (!d.ok) { alert('刷新失败：' + (d.msg || '未知错误')); return; }
@@ -1300,6 +1567,19 @@ function clearConsoleCache() {
   if (_machineRunning) { alert('请先停止任务，再清空缓存。'); return; }
   if (!confirm('清空当前控制台的实时日志和待发送列表？\n\n已发送记录会保留，避免重复发送。')) return;
   const b = $('clearcachebtn'); b.disabled = true;
+  if (activeAccountId === 5 && window.electronView && window.electronView.nativeXhsTaskClear) {
+    window.electronView.nativeXhsTaskClear().then(function (nativeResult) {
+      if (!nativeResult.ok) throw new Error(nativeResult.message || '清空失败');
+      return fetch('/api/engine/clear-cache').then(function (r) { return r.json(); });
+    }).then(function (d) {
+      if (!d.ok) throw new Error(d.msg || '清空失败');
+      $('log').textContent = '已清空第 5 号控制台缓存；评论记录和采集记录仍保留。';
+      $('results').innerHTML = ''; $('rcount').textContent = '';
+      ['m-total','m-seek','m-supply','m-target'].forEach(function (id) { $(id).textContent = '0'; });
+      setPhase('done');
+    }).catch(function (e) { alert(e.message || '清空失败'); }).finally(function () { b.disabled = _machineRunning; });
+    return;
+  }
   fetch('/api/engine/clear-cache').then(r => r.json()).then(d => {
     if (!d.ok) { alert('清空失败：' + (d.msg || '未知错误')); return; }
     $('log').textContent = '已清空控制台缓存。';
@@ -1346,11 +1626,51 @@ function doSend(i, dry) {
 let _monitor = null;
 function connectMonitor() {
   if (_monitor) { try { _monitor.close(); } catch (e) {} }
+  const monitorAccount = activeAccountId;
+  const cast = $('cast'); cast.style.display = 'none'; cast.removeAttribute('src');
+  frameW = 0; frameH = 0;
+  $('cursor').style.opacity = '0';
+  $('castempty').style.display = 'block';
+  $('castempty').textContent = monitorAccount === 5 ? '正在读取 App 窗口（只读，不会切换窗口）…' : '正在连接账号 ' + monitorAccount + ' 的浏览器…';
+  $('caststatus').textContent = '连接中…';
+  if (activeAccountId === 5) {
+    let closed = false;
+    let timer = null;
+    const monitor = { close: function () { closed = true; if (timer) clearTimeout(timer); } };
+    const isCurrent = () => !closed && activeAccountId === monitorAccount && _monitor === monitor;
+    const refresh = async function () {
+      if (!isCurrent()) return;
+      try {
+        if (!$('page-console').classList.contains('on')) return;
+        if (!window.electronView || !window.electronView.nativeXhsCapture) throw new Error('请在桌面版软件中查看 App 画面');
+        const runtime = window.electronView.nativeXhsStatus ? await window.electronView.nativeXhsStatus() : {};
+        if (!isCurrent()) return;
+        if (runtime.passiveCapture !== true) throw new Error('只读 App 监控尚未加载。请在其他账号任务停止后重启软件；当前不会调用旧版抢前台的监控。');
+        const frame = await window.electronView.nativeXhsCapture();
+        if (!isCurrent()) return;
+        if (!frame.ok || !frame.image) throw new Error(frame.message || 'App 未打开、已最小化或画面暂不可用；不会自动唤起。');
+        const img = $('cast'); img.src = 'data:image/png;base64,' + frame.image; img.style.display = 'block';
+        const ce = $('castempty'); if (ce) ce.style.display = 'none';
+        $('caststatus').textContent = '● App 实时画面 · 只读';
+      } catch (e) {
+        if (!isCurrent()) return;
+        $('cast').style.display = 'none'; $('cast').removeAttribute('src');
+        $('caststatus').textContent = '○ App 画面不可用';
+        $('castempty').style.display = 'block'; $('castempty').textContent = e.message;
+      } finally {
+        if (isCurrent()) timer = setTimeout(refresh, 2200);
+      }
+    };
+    _monitor = monitor;
+    refresh();
+    return;
+  }
   const mes = _monitor = new EventSource('/api/screencast');
-  mes.addEventListener('hello', e => { const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接 · 账号 ' + activeAccountId : ('连接失败:'+(h.msg||'')); });
-  mes.addEventListener('frame', e => { const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH; const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block'; const ce = $('castempty'); if (ce) ce.style.display = 'none'; });
-  mes.addEventListener('pointer', e => { const p = JSON.parse(e.data); showCursor(p.x, p.y, p.type); });
-  mes.onerror = () => { if (mes === _monitor) $('caststatus').textContent = '○ 账号 ' + activeAccountId + ' 重连中…'; };
+  const isCurrent = () => mes === _monitor && activeAccountId === monitorAccount;
+  mes.addEventListener('hello', e => { if (!isCurrent()) return; const h = JSON.parse(e.data); $('caststatus').textContent = h.ok ? '● 已连接 · 账号 ' + monitorAccount : ('连接失败:'+(h.msg||'')); });
+  mes.addEventListener('frame', e => { if (!isCurrent()) return; const f = JSON.parse(e.data); frameW = f.w || frameW; frameH = f.h || frameH; const img = $('cast'); img.src = 'data:image/jpeg;base64,' + f.d; img.style.display = 'block'; const ce = $('castempty'); if (ce) ce.style.display = 'none'; });
+  mes.addEventListener('pointer', e => { if (!isCurrent()) return; const p = JSON.parse(e.data); showCursor(p.x, p.y, p.type); });
+  mes.onerror = () => { if (isCurrent()) $('caststatus').textContent = '○ 账号 ' + monitorAccount + ' 重连中…'; };
 }
 let _trail = [], _trailI = 0;
 function ensureTrail() {
@@ -1371,6 +1691,7 @@ function showCursor(x, y, type) {
   }
 }
 $('cast').addEventListener('click', e => {
+  if (activeAccountId === 5) return;
   if (!frameW || !frameH || !e.target.clientWidth) return;
   const x = Math.round(e.offsetX / e.target.clientWidth * frameW), y = Math.round(e.offsetY / e.target.clientHeight * frameH);
   showCursor(x, y); fetch('/api/click?x=' + x + '&y=' + y).catch(() => {});
@@ -1383,12 +1704,12 @@ function loadRecords() {
     $('recstats').textContent = '已评论 ' + d.stats.commented + ' · 看过笔记 ' + d.stats.notes + ' · 潜客 ' + d.stats.leads;
     $('reccomments').innerHTML = d.comments.length ? d.comments.map(c =>
       '<div class="note" style="padding:9px 12px"><div style="font-size:13px;font-weight:600">' + esc(c.note_title || '(无标题)') +
-      ' <span class="badge ' + (c.status === 'sent' ? 'b-ok' : 'b-warn') + '">' + esc(c.status) + '</span> <a href="' + esc(c.note_url) + '" target="_blank">🔗 打开笔记</a></div>' +
+      ' <span class="badge ' + (c.status === 'sent' ? 'b-ok' : 'b-warn') + '">' + esc(c.status) + '</span>' + (c.note_url ? ' <a href="' + esc(c.note_url) + '" target="_blank">🔗 打开笔记</a>' : ' <span class="hint">· App 采集</span>') + '</div>' +
       '<div style="font-size:12.5px;margin:4px 0">' + esc(c.content) + '</div>' +
       '<div class="time-row"><span class="time-label"><b>评论发送：</b>' + esc(formatLocalSecond(c.created_at) || '时间未知') + '</span><span class="time-label"><b>笔记发布时间：</b>暂未采集到</span></div></div>'
     ).join('') : '<div class="hint">(还没有评论记录,去控制台跑一轮并发送)</div>';
     $('recnotes').innerHTML = d.notes.length ? ('<table class="rec"><tr><td>标题</td><td>作者</td><td>笔记分类</td><td>赞/评</td><td>首次采集</td><td>最近采集</td><td></td></tr>' +
-      d.notes.map(n => '<tr><td>' + esc((n.title||'(无标题)').slice(0,30)) + '</td><td>' + esc(n.author||'') + '</td><td>' + esc(n.intent||'') + '</td><td>' + esc(n.likes||'') + '/' + esc(n.comments||'') + '</td><td>' + esc(formatLocalSecond(n.first_seen_at) || '未知') + '</td><td>' + esc(formatLocalSecond(n.last_seen_at) || '未知') + '</td><td><a href="' + esc(n.url) + '" target="_blank">🔗</a></td></tr>').join('') + '</table>') : '<div class="hint">(还没有采集记录)</div>';
+      d.notes.map(n => '<tr><td>' + esc((n.title||'(无标题)').slice(0,30)) + '</td><td>' + esc(n.author||'') + '</td><td>' + esc(n.intent||'') + '</td><td>' + esc(n.likes||'') + '/' + esc(n.comments||'') + '</td><td>' + esc(formatLocalSecond(n.first_seen_at) || '未知') + '</td><td>' + esc(formatLocalSecond(n.last_seen_at) || '未知') + '</td><td>' + (n.url ? '<a href="' + esc(n.url) + '" target="_blank">🔗</a>' : '<span class="hint">App</span>') + '</td></tr>').join('') + '</table>') : '<div class="hint">(还没有采集记录)</div>';
   }).catch(() => {});
 }
 renderAllDateFilters();
@@ -1397,11 +1718,21 @@ loadRunStats();
 
 // 登录状态检测 + 引导
 function checkLogin() {
+  if (activeAccountId === 5 && window.electronView && window.electronView.nativeXhsStatus) {
+    return window.electronView.nativeXhsStatus().then(function (d) {
+      const ready = !!(d && d.ok); $('loginbar').style.display = ready ? 'none' : 'block'; return ready;
+    }).catch(function () { $('loginbar').style.display = 'block'; return false; });
+  }
   return fetch('/api/login-status').then(r => r.json()).then(d => {
     const logged = d.ok && d.loggedIn; $('loginbar').style.display = logged ? 'none' : 'block'; return logged;
   }).catch(() => false);
 }
 function triggerLogin() {
+  if (activeAccountId === 5) {
+    $('loginhint').textContent = '正在打开 Mac 小红书 App，请在 App 内完成登录。';
+    if (window.electronView && window.electronView.nativeXhsActivate) window.electronView.nativeXhsActivate();
+    return;
+  }
   $('loginhint').textContent = '正在让机器点开登录、弹出扫码框…';
   fetch('/api/trigger-login').then(r => r.json()).then(d => {
     $('loginhint').textContent = d.ok ? (d.msg || '已打开登录流程') : ('✗ ' + d.msg);

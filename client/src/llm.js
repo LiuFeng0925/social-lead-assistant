@@ -2,6 +2,7 @@
 // 国产 LLM,可切换 provider。火山方舟 / 阿里百炼都兼容 OpenAI 的 chat/completions 协议。
 // 默认不开;在「任务设置」填 provider + model + api_key 并勾选启用后,评论改由大模型按对方正文+你的方向生成。
 const https = require('https');
+const { buildRentalDemandInstructions, normalizeRentalDemand } = require('./rental-demand');
 
 const PROVIDERS = {
   ark: { host: 'ark.cn-beijing.volces.com', path: '/api/v3/chat/completions', label: '火山方舟(豆包)' },
@@ -144,7 +145,7 @@ async function classifyNotePublisher({ note, localWords, provider, model, apiKey
   return parseNoteClassificationContent(content);
 }
 
-function buildNoteCategoryClassificationMessages({ note, leadModel = {} }) {
+function buildNoteCategoryClassificationMessages({ note, leadModel = {}, extractDemand = false }) {
   const title = String((note && note.title) || '').trim();
   const desc = String((note && note.desc) || '').trim();
   const author = String((note && note.author) || '').trim();
@@ -180,7 +181,8 @@ function buildNoteCategoryClassificationMessages({ note, leadModel = {} }) {
     'locationEvidence 必须是标题或正文里的地点原文。判断目标需求地/房源地，不要把上班地、通勤地误当成目标地点。',
     'slotValues 的键必须使用上面配置的信息 key，值只能来自标题和正文；无法确定就填空字符串，禁止猜测。',
     '只输出一个 JSON 对象，不要 Markdown，不要解释。格式：',
-    '{"categoryId":"上面某个分类ID","city":"城市或空字符串","district":"区县或空字符串","location":"具体位置或空字符串","locationMatch":"match|mismatch|unknown","matchedServiceArea":"匹配时填服务区域原值，否则空字符串","locationConfidence":0到1之间的小数,"locationEvidence":"标题或正文中的地点原文","slotValues":{"配置的信息key":"提取值或空字符串"},"confidence":0到1之间的小数,"reason":"一句话分类理由","evidence":"来自标题或正文的分类依据"}'
+    '{"categoryId":"上面某个分类ID","city":"城市或空字符串","district":"区县或空字符串","location":"具体位置或空字符串","locationMatch":"match|mismatch|unknown","matchedServiceArea":"匹配时填服务区域原值，否则空字符串","locationConfidence":0到1之间的小数,"locationEvidence":"标题或正文中的地点原文","slotValues":{"配置的信息key":"提取值或空字符串"},"confidence":0到1之间的小数,"reason":"一句话分类理由","evidence":"来自标题或正文的分类依据"}',
+    extractDemand === true ? buildRentalDemandInstructions() : ''
   ].filter(Boolean).join('\n');
   const user = [
     '【发布者昵称】' + (author || '未知'),
@@ -192,8 +194,11 @@ function buildNoteCategoryClassificationMessages({ note, leadModel = {} }) {
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }
 
-function normalizeNoteCategoryClassification(value, categories = []) {
+function normalizeNoteCategoryClassification(value, categories = [], { extractDemand = false, note = {} } = {}) {
   const raw = value && typeof value === 'object' ? value : {};
+  if (extractDemand === true && (!raw.rentalDemand || typeof raw.rentalDemand !== 'object' || Array.isArray(raw.rentalDemand))) {
+    throw new Error('大模型分类未返回租房需求对象 rentalDemand');
+  }
   const requested = String(raw.categoryId || raw.category_id || raw.category || '').trim();
   const list = Array.isArray(categories) ? categories : [];
   const picked = list.find((category) => String(category.id || '').trim() === requested)
@@ -226,10 +231,10 @@ function normalizeNoteCategoryClassification(value, categories = []) {
     locationConfidence: Number.isFinite(locationConfidenceNumber) ? Math.max(0, Math.min(1, locationConfidenceNumber)) : 0,
     locationEvidence: String(raw.locationEvidence || raw.location_evidence || '').replace(/\s+/g, ' ').trim().slice(0, 240),
     slotValues
-  });
+  }, extractDemand === true ? { rentalDemand: normalizeRentalDemand(raw.rentalDemand, note) } : {});
 }
 
-function parseNoteCategoryClassificationContent(content, categories) {
+function parseNoteCategoryClassificationContent(content, categories, options) {
   let text = String(content || '').trim();
   text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   const start = text.indexOf('{');
@@ -238,13 +243,13 @@ function parseNoteCategoryClassificationContent(content, categories) {
   let parsed;
   try { parsed = JSON.parse(text.slice(start, end + 1)); }
   catch (e) { throw new Error('大模型分类 JSON 解析失败'); }
-  return normalizeNoteCategoryClassification(parsed, categories);
+  return normalizeNoteCategoryClassification(parsed, categories, options);
 }
 
-async function classifyNoteCategory({ note, localWords, leadModel, provider, model, apiKey, requestChat = postChat }) {
+async function classifyNoteCategory({ note, localWords, leadModel, provider, model, apiKey, extractDemand = false, requestChat = postChat }) {
   const ep = PROVIDERS[provider] || PROVIDERS.ark;
   const categories = Array.isArray(leadModel && leadModel.categories) ? leadModel.categories : [];
-  const baseMessages = buildNoteCategoryClassificationMessages({ note, leadModel });
+  const baseMessages = buildNoteCategoryClassificationMessages({ note, leadModel, extractDemand });
   let formatError = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const messages = attempt === 0 ? baseMessages : baseMessages.concat([{
@@ -256,7 +261,7 @@ async function classifyNoteCategory({ note, localWords, leadModel, provider, mod
       messages,
       response_format: { type: 'json_object' },
       temperature: 0.1,
-      max_tokens: 800
+      max_tokens: extractDemand === true ? 2400 : 800
     };
     // DeepSeek V4 defaults to high-effort thinking. For short structured
     // extraction this can consume the output budget before the final JSON.
@@ -268,7 +273,7 @@ async function classifyNoteCategory({ note, localWords, leadModel, provider, mod
     const content = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
     try {
       if (!content) throw new Error('大模型分类没有返回内容');
-      return parseNoteCategoryClassificationContent(content, categories);
+      return parseNoteCategoryClassificationContent(content, categories, { extractDemand, note });
     } catch (error) {
       formatError = error;
       if (attempt === 1) throw error;

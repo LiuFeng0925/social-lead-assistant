@@ -49,6 +49,29 @@ test('comment lead detection only accepts residential long-term renters', () => 
   assert.match(leadTextDecision('工作过渡，想租3个月').reason, /1到3个月短租/);
 });
 
+test('one-bedroom entire-rental policy rejects incompatible or unspecified layouts', () => {
+  const cfg = { lead_layout_policy: 'one_bedroom_entire' };
+  assert.equal(leadTextDecision('想长租石家庄一居室整租，下月入住', cfg).eligible, true);
+  assert.equal(leadTextDecision('求租套一，准备长期住', cfg).eligible, true);
+  assert.equal(leadTextDecision('不要合租，只想整租一室一厅', cfg).eligible, true);
+  assert.equal(leadTextDecision('两居不考虑，只要一居整租', cfg).eligible, true);
+  assert.match(leadTextDecision('想长租两居室，预算5000', cfg).reason, /两居室及以上/);
+  assert.match(leadTextDecision('求租主卧合租，长期住', cfg).reason, /合租、单间/);
+  assert.match(leadTextDecision('找房长租，预算3000', cfg).reason, /目标户型未确认/);
+  assert.match(leadTextDecision('求租开间loft，长期住', cfg).reason, /开间或loft/);
+});
+
+test('vague commenter inherits only from a one-bedroom entire-rental parent under the layout policy', () => {
+  const cfg = { reply_under_supply_enabled: true, lead_local_words: ['石家庄'], lead_layout_policy: 'one_bedroom_entire' };
+  const parentDecision = { role: 'supply', eligible: false, locationMatch: 'match' };
+  const qualified = { title: '石家庄桥西区一居室房东直租', desc: '住宅整租，长期出租' };
+  const twoBedroom = { title: '石家庄桥西区两居室整租', desc: '长期出租' };
+  assert.equal(commenterLeadDecision({ content: '我也需要', nickname: '普通用户', parentNote: qualified, parentDecision, cfg }).eligible, true);
+  assert.equal(commenterLeadDecision({ content: '我也需要', nickname: '普通用户', parentNote: twoBedroom, parentDecision, cfg }).eligible, false);
+  assert.equal(commenterLeadDecision({ content: '我想合租主卧', nickname: '普通用户', parentNote: qualified, parentDecision, cfg }).eligible, false);
+  assert.equal(commenterLeadDecision({ content: '想整租一居', nickname: '普通用户', parentNote: twoBedroom, parentDecision, cfg }).eligible, true);
+});
+
 test('comment lead detection rejects agents and property listings', () => {
   assert.equal(leadTextDecision('房东直租，精装两居随时带看').eligible, false);
   assert.equal(leadTextDecision('我是中介，有房源可以合作').eligible, false);

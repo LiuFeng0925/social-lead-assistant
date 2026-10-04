@@ -41,6 +41,13 @@ test('select all includes the explicit Chromium editing command', async () => {
   assert.deepEqual(sequences[0].commands[0].params.commands, ['SelectAll']);
 });
 
+test('file uploads keep DOM lookup and set-file commands in one CDP session', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/cdp/xhs-cdp-client'), 'utf8');
+  assert.match(source, /async setFileInputFiles/);
+  assert.match(source, /DOM\.getDocument/);
+  assert.match(source, /DOM\.setFileInputFiles/);
+});
+
 test('a click keeps mouse press and release in one CDP session', async () => {
   const client = new XhsCdpClient();
   const commands = [];

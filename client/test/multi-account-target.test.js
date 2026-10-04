@@ -6,12 +6,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { XhsCdpClient } = require('../src/cdp/xhs-cdp-client');
 
-test('fifth isolated account is reserved for publishing tests', () => {
+test('fifth isolated account reuses the full console with a native App executor', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
   const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.match(main, /const ACCOUNT_COUNT = 5/);
+  assert.match(main, /const ACCOUNT_COUNT = 6/);
   assert.match(ui, /data-account="5"/);
-  assert.match(ui, /发布测试/);
+  assert.match(ui, /账号 5 · App/);
+  assert.match(ui, /id="page-console"/);
+  assert.match(ui, /id="page-comments"/);
+  assert.match(ui, /id="page-notes"/);
+  assert.equal(ui.includes('id="page-publish"'), false);
+  assert.match(ui, /nativeXhsTaskStart/);
 });
 
 function clientWithTargets(targets, names) {

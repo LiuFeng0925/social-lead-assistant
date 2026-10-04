@@ -494,10 +494,12 @@ const DEFAULT_CONFIG = {
   task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
   outreach_fixed_text: '',           // 外呼固定短句；留空才使用 AI/模板生成
   lead_local_words: [],              // 可服务区域；命中明确外地城市时整篇跳过
+  lead_layout_policy: 'any',        // 目标户型：默认不限；可在界面单独收紧为一居室整租
   reply_under_supply_enabled: false, // 是否在服务区内房源/同行笔记下回复明确求租评论者
   task_max: 40,
   scan_quota_mode: 'per_keyword',
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
+  search_home_retries: 1,            // 浏览器搜索异常时返回首页重搜；0 关闭，最多 2 次
   // ── 评论生成 LLM(可切换 provider:ark 火山方舟 / dashscope 阿里百炼)。默认关=用内置话术模板;填 key 并启用后,评论改由大模型按对方正文+方向生成 ──
   llm_enabled: false, llm_provider: 'ark', llm_model: '', llm_api_key: '',
   // ── 获客模型:笔记分类、提槽和分类后的处理动作。租房只是默认模板,可在「获客模型」页改成其他行业 ──

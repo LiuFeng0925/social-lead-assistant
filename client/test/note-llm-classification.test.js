@@ -84,6 +84,32 @@ test('residential audience guard rejects commercial and explicit short-term rent
   assert.equal(residential.eligible, true);
 });
 
+test('detailed note classification applies the configured one-bedroom entire-rental send guard', async () => {
+  const cfg = {
+    lead_layout_policy: 'one_bedroom_entire',
+    lead_local_words: ['石家庄'],
+    lead_model: {
+      llmClassificationEnabled: false,
+      categories: [
+        { id: 'tenant', name: '租户', action: 'comment', keywords: ['求租', '想租'] },
+        { id: 'unknown', name: '不明', action: 'record', fallback: true }
+      ]
+    }
+  };
+  const oneBedroom = await engine.classifyDetailedNote({ title: '石家庄求租一居室', desc: '本人想整租，长期住' }, cfg);
+  const twoBedroom = await engine.classifyDetailedNote({ title: '石家庄求租两居', desc: '本人想长租' }, cfg);
+  const shared = await engine.classifyDetailedNote({ title: '石家庄求租合租主卧', desc: '本人想长租' }, cfg);
+  const unknownLayout = await engine.classifyDetailedNote({ title: '石家庄求租', desc: '本人想长租住宅' }, cfg);
+
+  assert.equal(oneBedroom.eligible, true);
+  assert.equal(twoBedroom.eligible, false);
+  assert.match(twoBedroom.decisionReason, /两居室及以上/);
+  assert.equal(shared.eligible, false);
+  assert.match(shared.decisionReason, /合租、单间/);
+  assert.equal(unknownLayout.eligible, false);
+  assert.match(unknownLayout.decisionReason, /目标户型未确认/);
+});
+
 test('llm category prompt includes every category prompt and the complete body', () => {
   const fullBody = '标题没说身份，但正文明确写本人想在长阳租一居。';
   const leadModel = {

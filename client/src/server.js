@@ -6,7 +6,9 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const engine = require('./engine');
+const { createSseWriter, selectSseReplay } = require('./sse-writer');
 const { startScreencast } = require('./cdp/screencast');
 const db = require('./db');
 const throttle = require('./throttle');
@@ -16,6 +18,9 @@ const { readLoginStatus, recoverInteractiveAccess } = require('./login-status');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 const { parseKeywords, uniqueNotes, keywordScanPlan } = require('./keyword-utils');
 const { launchChromeForCdp } = require('./browser-launch');
+const { runPublishTest } = require('./publish-test');
+const { buildReplyPlan, demandSummary, saveReplyPlan } = require('./native-reply-plan');
+const { validateCatalog } = require('./rental-gallery');
 const {
   COMMENT_COMPOSER_PROBE: PROBE,
   pickCommentInput,
@@ -32,6 +37,8 @@ const CHROME_PROFILE = path.join(__dirname, '..', '.xhs-chrome-profile');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
+const nativeAssessments = new Map();
+const NATIVE_GALLERY_PATH = path.join(process.env.XHS_DATA_DIR ? path.resolve(process.env.XHS_DATA_DIR) : path.join(__dirname, '..', 'data'), 'native-gallery.json');
 
 function formatCategoryCounts(byIntent) {
   const rows = Object.entries(byIntent || {}).filter(([, v]) => Number(v) > 0);
@@ -51,7 +58,7 @@ function formatClassificationFacts(decision) {
   return rows.length ? rows.join('；') : '正文未提取到明确地区/预算/位置等信息';
 }
 
-async function scanKeywords({ client, target, keywordText, filters, maxNotes, onLog, shouldStop }) {
+async function scanKeywords({ client, target, keywordText, filters, maxNotes, maxHomeRetries = 1, onLog, shouldStop }) {
   const keywords = parseKeywords(keywordText);
   const eachMax = Math.max(1, Math.floor(Number(maxNotes) || 1));
   const collected = [];
@@ -59,7 +66,8 @@ async function scanKeywords({ client, target, keywordText, filters, maxNotes, on
     if (shouldStop()) break;
     const keyword = keywords[index];
     onLog(`关键词 ${index + 1}/${keywords.length}: ${keyword}`);
-    const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: eachMax, onLog, shouldStop });
+    const notes = await engine.scanClean({ client, target, keyword, filters, maxNotes: eachMax, maxHomeRetries, onLog, shouldStop });
+    if (shouldStop()) return [];
     collected.push(...notes);
   }
   const notes = uniqueNotes(collected);
@@ -70,20 +78,47 @@ async function scanKeywords({ client, target, keywordText, filters, maxNotes, on
 let lastRun = null; // { client, target, results }
 let runState = { running: false, cancelled: false }; // 任务停止开关
 const monitors = new Set(); // 实时监控的 SSE 推送函数
+const MAX_MONITOR_CLIENTS = 4;
+const MAX_LOG_CLIENTS = 8;
 function broadcastPointer(p) { monitors.forEach((s) => { try { s('pointer', p); } catch (e) {} }); }
 let sharedCast = null; // 单一共享 screencast:所有 monitor 共用一份,避免互相 start/stop 打架
 function broadcastFrame(p) { monitors.forEach((s) => { try { s('frame', p); } catch (e) {} }); }
 async function ensureScreencast(client, target) {
   if (sharedCast) return;
-  sharedCast = { handle: null, lastFrame: null }; // 先占位(同步),防并发重复启动
+  const cast = { handle: null, lastFrame: null };
+  sharedCast = cast; // 先占位(同步),防并发重复启动
   try {
-    sharedCast.handle = await startScreencast({ target, endpoint: ENDPOINT, onFrame: (data, meta) => { const p = { d: data, w: meta.deviceWidth || 0, h: meta.deviceHeight || 0 }; sharedCast.lastFrame = p; broadcastFrame(p); } });
-  } catch (e) { sharedCast = null; throw e; }
+    const handle = await startScreencast({ target, endpoint: ENDPOINT,
+      onFrame: (data, meta) => {
+        if (sharedCast !== cast || monitors.size === 0) return;
+        const p = { d: data, w: meta.deviceWidth || 0, h: meta.deviceHeight || 0 };
+        cast.lastFrame = p; broadcastFrame(p);
+      },
+      onStopped: () => {
+        if (sharedCast !== cast) return;
+        sharedCast = null; cast.lastFrame = null;
+        // End stale image streams; EventSource reconnects and creates one new cast.
+        for (const send of [...monitors]) if (send.disconnect) send.disconnect();
+      }
+    });
+    if (sharedCast !== cast || monitors.size === 0) {
+      handle.stop(); cast.lastFrame = null;
+      if (sharedCast === cast) sharedCast = null;
+    } else cast.handle = handle;
+  } catch (e) {
+    cast.lastFrame = null;
+    if (sharedCast === cast) {
+      sharedCast = null;
+      // Concurrent subscribers may already have reused the pending cast.
+      // Fail every stale stream, not just the request that began connecting.
+      for (const send of [...monitors]) if (send.disconnect) send.disconnect();
+    }
+    throw e;
+  }
 }
 
-function sse(res) {
-  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
-  return (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+function sse(res, options) {
+  return createSseWriter(res, options);
 }
 
 async function handleRun(req, res, q) {
@@ -93,14 +128,15 @@ async function handleRun(req, res, q) {
   const filters = { sort: q.get('sort') || cfg.task_sort || '综合', noteTime: q.get('note_time') || cfg.task_note_time || '不限', noteType: q.get('note_type') || cfg.task_note_type || '不限', noteRange: q.get('note_range') || cfg.task_note_range || '不限' };
   const direction = q.get('direction') || cfg.task_direction || '我是房源方,结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式';
   const send = sse(res);
-  runState = { running: true, cancelled: false };
+  const currentRun = runState = { running: true, cancelled: false };
+  const shouldStop = () => currentRun.cancelled || !currentRun.running || runState !== currentRun;
   try {
     send('log', '连接 CDP…');
     const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
     send('log', '已接管:' + (target.title || target.url));
     send('phase', { phase: 'search' });
-    const notes = await scanKeywords({ client, target, keywordText: keyword, filters, maxNotes: max, onLog: (m) => send('log', m), shouldStop: () => runState.cancelled });
-    if (runState.cancelled) { send('log', '⏹ 任务已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
+    const notes = await scanKeywords({ client, target, keywordText: keyword, filters, maxNotes: max, maxHomeRetries: cfg.search_home_retries, onLog: (m) => send('log', m), shouldStop });
+    if (shouldStop()) { send('log', '⏹ 任务已停止'); send('done', { stopped: true }); res.end(); currentRun.running = false; return; }
     send('phase', { phase: 'match' });
     const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} }); // 存采集历史(看过哪些笔记,带意向/地区)
@@ -111,7 +147,7 @@ async function handleRun(req, res, q) {
     const results = [];
     const todo = fresh.slice(0, DETAIL_N);
     for (let i = 0; i < todo.length; i++) {
-      if (runState.cancelled) { send('log', '⏹ 任务已停止'); break; }
+      if (shouldStop()) { send('log', '⏹ 任务已停止'); break; }
       const t = todo[i];
       send('log', `读详情 + 生成 ${i + 1}/${todo.length}:${t.title || '(无标题)'}`);
       let d;
@@ -161,6 +197,7 @@ async function handleRun(req, res, q) {
     send('log', '✗ 出错:' + e.message);
     send('done', { error: e.message });
   }
+  currentRun.running = false;
   res.end();
 }
 
@@ -237,30 +274,42 @@ async function handleSend(req, res, q) {
 }
 
 async function handleScreencast(req, res) {
+  if (monitors.size >= MAX_MONITOR_CLIENTS) { res.writeHead(429); res.end('monitor_client_limit'); return; }
   const send = sse(res);
+  send.disconnect = () => res.destroy();
   monitors.add(send);
+  // Register before any await: switching tabs during connection setup must also
+  // remove the subscriber and dispose a late-arriving screencast handle.
+  const release = () => {
+    monitors.delete(send);
+    if (monitors.size === 0 && sharedCast) {
+      const old = sharedCast; sharedCast = null; old.lastFrame = null;
+      if (old.handle) { try { old.handle.stop(); } catch (_) {} }
+    }
+  };
+  res.once('close', release);
+  res.once('error', release);
   try {
     let client, target;
     if (lastRun && lastRun.target) { client = lastRun.client; target = lastRun.target; }
     else { const c = await engine.connect(ENDPOINT, broadcastPointer); client = c.client; target = c.target; lastRun = { client, target, results: [] }; }
+    if (send.isClosed()) return;
     send('hello', { ok: true });
     // 一连上就给画面:有共享最近帧直接发,否则现拍一张
     if (sharedCast && sharedCast.lastFrame) { send('frame', sharedCast.lastFrame); }
     else {
       try {
         const img = await client.screenshot({ target });
+        if (send.isClosed()) return;
         let wh = {};
         try { const vp = await client.evaluate({ target, expression: 'JSON.stringify({w:window.innerWidth,h:window.innerHeight})' }); wh = JSON.parse((vp && vp.value) || '{}'); } catch (e) {}
         if (img) send('frame', { d: img, w: wh.w || 1280, h: wh.h || 800 });
       } catch (e) {}
     }
     // 单一共享 screencast,帧广播给所有 monitor(多个连接不再各自 start/stop 打架)
+    if (send.isClosed()) return;
     await ensureScreencast(client, target);
-  } catch (e) { send('hello', { ok: false, msg: e.message }); }
-  req.on('close', () => {
-    monitors.delete(send);
-    if (monitors.size === 0 && sharedCast && sharedCast.handle) { try { sharedCast.handle.stop(); } catch (e) {} sharedCast = null; }
-  });
+  } catch (e) { send('hello', { ok: false, msg: e.message }); res.end(); release(); }
 }
 
 async function handleClick(req, res, q) {
@@ -357,6 +406,171 @@ async function handleThrottle(req, res) {
 async function handleSaveConfig(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try { const data = JSON.parse(q.get('data') || '{}'); db.setConfig(data); res.end(JSON.stringify({ ok: true })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+
+function readJsonBody(req, maxBytes = 12000) {
+  return new Promise((resolve, reject) => {
+    let body = ''; let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) { reject(new Error('请求内容过长')); req.destroy(); return; }
+      body += chunk;
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body || '{}')); } catch (e) { reject(new Error('请求格式错误')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+// 第 5 号原生 App 引擎通过屏幕 OCR 传入当前笔记的可见标题和正文。
+// 本接口只复用现有获客模型做判断与生成，原生 App 操作和发送仍由 Electron 主进程单独控制。
+async function handleNativeAppAssess(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '原生 App 测试仅限第 5 个账号。' })); return; }
+  try {
+    const raw = await readJsonBody(req, 64000);
+    const title = String(raw.title || '').trim().slice(0, 160);
+    const desc = String(raw.desc || '').trim().slice(0, 6000);
+    const author = String(raw.author || '').trim().slice(0, 80);
+    if (!title && !desc) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: '请先粘贴笔记标题或正文。' })); return; }
+    const cfg = db.getConfig();
+    if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim() || !engine.isLlmNoteClassificationEnabled(cfg)) {
+      res.statusCode = 409;
+      res.end(JSON.stringify({ ok: false, msg: '请先在第 5 个账号的「模型设置」启用 AI，并在「获客模型」开启大模型分类。' }));
+      return;
+    }
+    const note = { id: String(raw.id || 'native-app-preview'), title, desc, author, tags: [] };
+    const decision = await engine.classifyDetailedNote(note, { ...cfg, native_extract_demand: true });
+    if (decision.error) {
+      res.end(JSON.stringify({ ok: false, model_failed: true, msg: '大模型调用失败' }));
+      return;
+    }
+    nativeAssessments.set(note.id, { note, decision });
+    if (nativeAssessments.size > 100) nativeAssessments.delete(nativeAssessments.keys().next().value);
+    res.end(JSON.stringify({ ok: true, decision }));
+  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) })); }
+}
+
+async function handleNativeGallery(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '图库联调仅限第 5 号 App。' })); return; }
+  try {
+    if (req.method === 'POST') {
+      const catalog = validateCatalog(await readJsonBody(req, 512000));
+      fs.mkdirSync(path.dirname(NATIVE_GALLERY_PATH), { recursive: true });
+      fs.writeFileSync(NATIVE_GALLERY_PATH + '.tmp', JSON.stringify(catalog, null, 2));
+      fs.renameSync(NATIVE_GALLERY_PATH + '.tmp', NATIVE_GALLERY_PATH);
+      res.end(JSON.stringify({ ok: true, count: catalog.properties.length }));
+    } else if (req.method === 'GET') {
+      const catalog = fs.existsSync(NATIVE_GALLERY_PATH) ? validateCatalog(JSON.parse(fs.readFileSync(NATIVE_GALLERY_PATH, 'utf8'))) : { version: 1, properties: [] };
+      res.end(JSON.stringify({ ok: true, source: 'local', catalog }));
+    } else { res.statusCode = 405; res.end(JSON.stringify({ ok: false, msg: '请求方式不支持' })); }
+  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+
+async function handleNativeReplyPlan(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '按需选图仅限第 5 号 App。' })); return; }
+  try {
+    const raw = await readJsonBody(req);
+    const assessed = nativeAssessments.get(String(raw.noteId || ''));
+    if (!assessed) throw new Error('当前笔记需求尚未判断，请重新读取笔记');
+    const plan = await buildReplyPlan({ decision: assessed.decision, catalogPath: NATIVE_GALLERY_PATH, check: engine.check });
+    const summary = demandSummary(plan.demand || {});
+    const decision = { ...assessed.decision, decisionReason: (assessed.decision.decisionReason || assessed.decision.reason || '') + '\n需求：' + summary + '\n图库：' + plan.reason + (plan.property ? '；房源编号=' + plan.property.id : '') };
+    saveReplyPlan(db.open(), { runId: raw.runId, noteId: assessed.note.id, keyword: raw.keyword || '', plan });
+    db.recordTaskRunDecision({ runId: raw.runId, keyword: raw.keyword, note: assessed.note, decision });
+    res.end(JSON.stringify({ ok: true, plan, decision }));
+  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+
+function handleNativeReplyImage(req, res, params) {
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(); return; }
+  try {
+    const row = db.open().prepare('select plan_json from native_reply_plans where run_id=? and note_id=? and keyword=?')
+      .get(Number(params.get('run_id')) || 0, params.get('note_id') || '', params.get('keyword') || '');
+    const plan = row && JSON.parse(row.plan_json);
+    if (!plan || !plan.imagePath) throw new Error('no_image');
+    const stat = fs.statSync(plan.imagePath);
+    if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('bad_image');
+    const data = fs.readFileSync(plan.imagePath);
+    if (plan.imageSha256 && crypto.createHash('sha256').update(data).digest('hex') !== plan.imageSha256) throw new Error('image_changed');
+    let type = '';
+    if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) type = 'image/png';
+    else if (data[0] === 255 && data[1] === 216 && data[2] === 255) type = 'image/jpeg';
+    else if (['GIF87a', 'GIF89a'].includes(data.toString('ascii', 0, 6))) type = 'image/gif';
+    else if (data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP') type = 'image/webp';
+    if (!type) throw new Error('unsupported_preview');
+    res.setHeader('Content-Type', type);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(data);
+  } catch (_) { res.statusCode = 404; res.end('匹配图片无法预览'); }
+}
+
+// 第 5 号账号沿用原有控制台、配置与 SQLite 记录，只把实际操作端换成
+// Mac 小红书 App。Electron 原生执行器通过这两个本机接口读取运行参数并
+// 回写采集、判断、评论和每轮统计，因此页面上的原有功能无需另做一套。
+async function handleNativeAppConfig(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '原生 App 模式仅用于第 5 个账号。' })); return; }
+  try {
+    const cfg = db.getConfig();
+    const gate = throttle.status();
+    res.end(JSON.stringify({
+      ok: true,
+      keywords: parseKeywords(cfg.task_keyword),
+      maxNotes: throttle.currentScanLimit(cfg),
+      rescanMinutes: Math.max(1, Number(cfg.rescan_minutes) || 15),
+      liveSend: cfg.live_send === true,
+      scheduleEnabled: cfg.schedule_enabled !== false,
+      inWork: gate.inWork,
+      workReason: gate.workReason || ''
+    }));
+  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) })); }
+}
+
+async function handleNativeAppRecord(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '原生 App 模式仅用于第 5 个账号。' })); return; }
+  try {
+    const raw = await readJsonBody(req, 128000);
+    const action = String(raw.action || '');
+    const note = raw.note || {};
+    const keyword = String(raw.keyword || '').trim() || '未标记关键词';
+    const runId = Number(raw.runId) || 0;
+    let result = {};
+    if (action === 'start') {
+      nativeAssessments.clear();
+      result.runId = db.createTaskRun({ live: raw.live === true });
+    } else if (action === 'scan') {
+      if (!note.id) throw new Error('native_note_id_missing');
+      db.upsertNote(note);
+      db.addTaskRunScan(runId, keyword, 1);
+    } else if (action === 'decision') {
+      if (!note.id) throw new Error('native_note_id_missing');
+      db.upsertNote(Object.assign({}, note, { intent: (raw.decision && (raw.decision.categoryName || raw.decision.label)) || note.intent || '' }));
+      db.recordTaskRunDecision({ runId, keyword, note, decision: raw.decision || { eligible: false }, replyCount: 0 });
+    } else if (action === 'sent') {
+      if (!note.id) throw new Error('native_note_id_missing');
+      db.insertComment({ noteId: note.id, noteTitle: note.title, noteUrl: note.url, content: raw.comment, images: raw.imagePath, status: 'sent' });
+      db.recordTaskRunDecision({ runId, keyword, note, decision: raw.decision || { eligible: true }, replyCount: 1 });
+    } else if (action === 'reply-plan') {
+      if (!note.id || !raw.plan) throw new Error('native_reply_plan_missing');
+      saveReplyPlan(db.open(), { runId, noteId: note.id, keyword, plan: raw.plan });
+      db.recordTaskRunDecision({ runId, keyword, note, decision: raw.decision });
+    } else if (action === 'commented') {
+      result.commented = note.id ? db.hasCommented(note.id) : false;
+    } else if (action === 'gate') {
+      result.gate = throttle.canComment();
+    } else if (action === 'finish') {
+      db.finishTaskRun(runId, String(raw.status || 'stopped'));
+    } else {
+      throw new Error('native_record_action_invalid');
+    }
+    res.end(JSON.stringify({ ok: true, ...result }));
+  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) })); }
 }
 
 async function handleLoginStatus(req, res) {
@@ -560,11 +774,11 @@ async function drainInbox({ client, target, cfg, dry, send }) {
 const logBus = { buffer: [], clients: new Set() };
 function _ts() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
 function emitLog(msg) {
-  const line = { t: _ts(), m: String(msg) };
+  const line = { t: _ts(), m: String(msg).slice(0, 4000) };
   logBus.buffer.push(line); if (logBus.buffer.length > 800) logBus.buffer.shift();
-  for (const res of logBus.clients) { try { res.write('event: log\ndata: ' + JSON.stringify(line) + '\n\n'); } catch (e) {} }
+  for (const send of logBus.clients) { try { send('log', line); } catch (e) {} }
 }
-function emitEvent(type, data) { for (const res of logBus.clients) { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'); } catch (e) {} } }
+function emitEvent(type, data) { for (const send of logBus.clients) { try { send(type, data); } catch (e) {} } }
 function busSend(type, data) { if (type === 'log') emitLog(data); else emitEvent(type, data); }
 
 const OUTBOUND_FRESH_BATCH_SIZE = 8;
@@ -621,8 +835,11 @@ async function machineLoop(runId) {
   if (machine.retrySourceRunId) emitLog(`重试任务:只处理第 ${machine.retrySourceRunId} 轮的 ${machine.retryTotal} 篇大模型失败笔记`);
   while (machine.running && machine.runId === runId) {
     try {
-      await machineCycle();
+      await machineCycle(runId);
     } catch (e) {
+      // An old async scan may finish after Stop → Start. It must not pause the
+      // new run or change its keyword position, results or statistics.
+      if (!machine.running || machine.runId !== runId) break;
       if (engine.isAccountSecurityError(e)) {
         emitLog('🛡 小红书要求账号安全验证，任务已自动暂停，不再刷新或切换关键词');
         machine.running = false;
@@ -636,8 +853,8 @@ async function machineLoop(runId) {
         }
         break;
       }
-      if (engine.isSearchPageMismatchError(e)) {
-        emitLog('⚠ 搜索页或关键词不对，任务已暂停；未采集当前页任何卡片');
+      if (engine.isSearchRecoveryError(e) || engine.isSearchPageMismatchError(e)) {
+        emitLog('⚠ ' + (engine.isSearchRecoveryError(e) ? (e.userMessage || e.message) : '搜索页或关键词不对，任务已暂停') + '；未采集异常页面，已有统计和回复记录保留');
         machine.running = false;
         emitEvent('status', machineStatus());
         break;
@@ -657,10 +874,13 @@ async function _ensureConn() {
   machine.client = client; machine.target = target;
   try { await client.installCursor({ target }); } catch (e) {}
 }
-async function machineCycle() {
+async function machineCycle(runId = machine.runId) {
+  const shouldStop = () => !machine.running || machine.runId !== runId;
+  if (shouldStop()) return;
   const cfg = db.getConfig();
   const dry = cfg.live_send !== true;
   await _ensureConn();
+  if (shouldStop()) return;
   const client = machine.client, target = machine.target;
   // ① 承接(承接排班 + 红点)——全程优先
   if (cfg.reply_enabled !== false && throttle.inReplyWindow(cfg)) {
@@ -677,7 +897,7 @@ async function machineCycle() {
       machine.lastInboxCheck = Date.now(); emitEvent('status', machineStatus());
     }
   }
-  if (!machine.running) return;
+  if (shouldStop()) return;
   // ② 外呼(主排班 + 配额)
   if (!throttle.inWorkWindow(cfg)) { emitLog('外呼:不在排班时段,待命中(承接仍在线)…'); machine.phase = 'idle'; emitEvent('status', machineStatus()); await _sleepI(rand(45000, 90000)); return; }
   const gate = throttle.canComment({ ignoreGap: true });
@@ -701,9 +921,11 @@ async function machineCycle() {
     }
     machine.phase = 'search'; emitEvent('status', machineStatus());
     try {
-      await _scanNextKeywordTargets(cfg);
+      await _scanNextKeywordTargets(cfg, runId);
     } catch (e) {
+      if (shouldStop()) return;
       if (engine.isAccountSecurityError(e)) throw e;
+      if (engine.isSearchRecoveryError(e)) throw e;
       if (engine.isSearchPageMismatchError(e)) throw e;
       if (isCdpConnectionError(e)) { resetMachineConnection(); emitLog('浏览器连接已失效,下一轮自动重连'); }
       emitLog('检索出错:' + e.message);
@@ -711,6 +933,7 @@ async function machineCycle() {
       return;
     }
   }
+  if (shouldStop()) return;
   const t = machine.targets.shift();
   if (!t) {
     emitLog(machine.scanCycleActive ? '本关键词暂无合适目标,继续下一个关键词' : '本轮关键词已扫完,等待下一轮');
@@ -720,7 +943,9 @@ async function machineCycle() {
   await _processOutbound(cfg, t, dry);
   await _sleepI(rand(1500, 4000));
 }
-async function _scanNextKeywordTargets(cfg) {
+async function _scanNextKeywordTargets(cfg, runId = machine.runId) {
+  const shouldStop = () => !machine.running || machine.runId !== runId;
+  if (shouldStop()) return;
   const client = machine.client, target = machine.target;
   const signature = parseKeywords(cfg.task_keyword).join('\u0000');
   if (!machine.scanCycleActive || machine.keywordSignature !== signature) {
@@ -739,8 +964,11 @@ async function _scanNextKeywordTargets(cfg) {
   const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
   const searchLimit = machine.retrySourceRunId ? Math.max(40, Math.min(240, plan.quota * 3)) : plan.quota;
   const scanned = plan.quota > 0
-    ? await engine.scanClean({ client, target, keyword: plan.keyword, maxNotes: searchLimit, onLog: (m) => emitLog(m), shouldStop: () => !machine.running, filters })
+    ? await engine.scanClean({ client, target, keyword: plan.keyword, maxNotes: searchLimit, maxHomeRetries: cfg.search_home_retries, onLog: (m) => { if (!shouldStop()) emitLog(m); }, shouldStop, filters })
     : [];
+  // A cancelled recovery returns no notes, not a completed empty keyword.
+  // Keep the current keyword and all counters untouched until a valid scan.
+  if (shouldStop()) return;
   const alreadyCollected = Number(machine.keywordCollected.get(plan.keyword)) || 0;
   const remaining = Math.max(0, plan.quota - alreadyCollected);
   const notes = scanned.filter((note) => {
@@ -753,7 +981,7 @@ async function _scanNextKeywordTargets(cfg) {
   const keywordCollected = alreadyCollected + notes.length;
   machine.keywordCollected.set(plan.keyword, keywordCollected);
   machine.scanCollected += notes.length;
-  db.addTaskRunScan(machine.runId, plan.keyword, notes.length);
+  db.addTaskRunScan(runId, plan.keyword, notes.length);
   const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
   tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
   // 检索页只有标题；不能再按标题或评论数提前过滤。每篇都打开详情读取正文后分类。
@@ -905,7 +1133,8 @@ async function _processOutbound(cfg, t, dry) {
 
 async function handleAutoRun(req, res, q) {
   const send = sse(res);
-  runState = { running: true, cancelled: false };
+  const currentRun = runState = { running: true, cancelled: false };
+  const shouldStop = () => currentRun.cancelled || !currentRun.running || runState !== currentRun;
   const cfg = db.getConfig();
   const dryParam = q.get('dry');
   const dry = dryParam != null ? (dryParam !== '0') : (cfg.auto_send_dry_run !== false);
@@ -916,8 +1145,8 @@ async function handleAutoRun(req, res, q) {
     lastRun = { client, target, results: [] };
     try { await client.installCursor({ target }); } catch (e) {}
     const filters = { sort: cfg.task_sort, noteTime: cfg.task_note_time, noteType: cfg.task_note_type, noteRange: cfg.task_note_range };
-    const notes = await scanKeywords({ client, target, keywordText: cfg.task_keyword, maxNotes: throttle.currentScanLimit(cfg), onLog: (m) => send('log', m), shouldStop: () => runState.cancelled, filters });
-    if (runState.cancelled) { send('log', '⏹ 已停止'); send('done', { stopped: true }); res.end(); runState.running = false; return; }
+    const notes = await scanKeywords({ client, target, keywordText: cfg.task_keyword, maxNotes: throttle.currentScanLimit(cfg), maxHomeRetries: cfg.search_home_retries, onLog: (m) => send('log', m), shouldStop, filters });
+    if (shouldStop()) { send('log', '⏹ 已停止'); send('done', { stopped: true }); res.end(); currentRun.running = false; return; }
     send('phase', { phase: 'match' });
     const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
     tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
@@ -927,7 +1156,7 @@ async function handleAutoRun(req, res, q) {
     send('phase', { phase: 'generate' });
     let sent = 0, done = 0, lastInboxCheck = 0;
     for (const t of fresh) {
-      if (runState.cancelled) { send('log', '⏹ 已停止'); break; }
+      if (shouldStop()) { send('log', '⏹ 已停止'); break; }
       // 承接第一优先级:每篇前先「看」通知红点(纯读 DOM,不动鼠标),有未读就插队回复再回外呼
       if (cfg.reply_enabled !== false) {
         let due = false;
@@ -936,7 +1165,7 @@ async function handleAutoRun(req, res, q) {
         if (due) { try { await drainInbox({ client, target, cfg, dry, send }); } catch (e) { send('log', '承接出错(忽略):' + e.message); } }
         lastInboxCheck = Date.now();
       }
-      if (runState.cancelled) { send('log', '⏹ 已停止'); break; }
+      if (shouldStop()) { send('log', '⏹ 已停止'); break; }
       const gate = throttle.canComment({ ignoreGap: true }); // 不卡固定间隔,浏览本身就是自然间隔
       if (!gate.ok) {
         send('log', '⛔ ' + gate.reason);
@@ -962,7 +1191,7 @@ async function handleAutoRun(req, res, q) {
     send('log', '✗ 出错:' + e.message);
     send('done', { error: e.message });
   }
-  runState.running = false;
+  currentRun.running = false;
   res.end();
 }
 
@@ -996,6 +1225,42 @@ async function handleBrowserRefresh(req, res) {
   }
 }
 
+// 用户主动回到小红书首页。若当前账号的自动任务仍在跑，先停止它，避免
+// 浏览器被任务与人工导航同时操作；草稿、历史和登录态不会被清除。
+async function handleBrowserHome(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  let paused = false;
+  try {
+    if (machine.running) { stopMachine(); paused = true; }
+    if (runState.running) { runState.cancelled = true; paused = true; }
+    await sleep(250);
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    await client.navigate({ target, url: 'https://www.xiaohongshu.com/' });
+    resetMachineConnection();
+    emitLog((paused ? '任务已暂停；' : '') + '已按用户操作回到小红书首页');
+    res.end(JSON.stringify({ ok: true, paused, msg: paused ? '任务已暂停，已回到小红书首页' : '已回到小红书首页' }));
+  } catch (e) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) }));
+  }
+}
+
+// 发布功能的第一阶段只允许第五个「发布测试」账号使用：进入图文编辑器、
+// 上传本地测试图并填写内容；此接口中没有任何点击“发布”的实现。
+async function handlePublishTest(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '请切换到顶部的「发布测试」账号后再运行。' })); return; }
+  if (machine.running || runState.running) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '发布测试前请先停止第五个账号正在执行的任务。' })); return; }
+  try {
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    lastRun = { client, target, results: (lastRun && lastRun.results) || [] };
+    const result = await runPublishTest({ client, target, onLog: emitLog });
+    res.end(JSON.stringify(result));
+  } catch (e) {
+    res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) }));
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   // 控制台切换账号时会请求另一个本地账号服务。仅限本机端口，开放 CORS
   // 让 EventSource 和 fetch 可以无刷新切换，绝不对外网监听。
@@ -1021,6 +1286,14 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/engine/retry-failed') { const retryRunId = Number(u.searchParams.get('run_id')) || 0; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine({ retryRunId }), status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
   if (u.pathname === '/api/browser/refresh') { await handleBrowserRefresh(req, res); return; }
+  if (u.pathname === '/api/browser/home') { await handleBrowserHome(req, res); return; }
+  if (u.pathname === '/api/publish/test') { await handlePublishTest(req, res); return; }
+  if (u.pathname === '/api/native/app-assess') { await handleNativeAppAssess(req, res); return; }
+  if (u.pathname === '/api/native/gallery') { await handleNativeGallery(req, res); return; }
+  if (u.pathname === '/api/native/reply-plan') { await handleNativeReplyPlan(req, res); return; }
+  if (u.pathname === '/api/native/reply-image') { handleNativeReplyImage(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/native/app-config') { await handleNativeAppConfig(req, res); return; }
+  if (u.pathname === '/api/native/app-record') { await handleNativeAppRecord(req, res); return; }
   if (u.pathname === '/api/engine/clear-cache') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     if (!clearMachineCache()) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '任务仍在运行，请先停止' })); return; }
@@ -1029,11 +1302,16 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/engine/run-stats') { await handleRunStats(req, res, u.searchParams); return; }
   if (u.pathname === '/api/engine/status') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stream') {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    logBus.clients.add(res);
-    for (const line of logBus.buffer) { res.write('event: log\ndata: ' + JSON.stringify(line) + '\n\n'); }
-    res.write('event: status\ndata: ' + JSON.stringify(machineStatus()) + '\n\n');
-    req.on('close', () => { logBus.clients.delete(res); });
+    if (logBus.clients.size >= MAX_LOG_CLIENTS) { res.writeHead(429); res.end('log_client_limit'); return; }
+    // Initial replay runs synchronously, before even a healthy client can drain
+    // the HTTP buffer. Allow 800 bounded logs plus status, but retain the 4 MiB
+    // total transport limit for clients that remain slow during live delivery.
+    const send = sse(res, { maxQueuedEvents: 1024 });
+    logBus.clients.add(send);
+    const release = () => logBus.clients.delete(send);
+    res.once('close', release); res.once('error', release);
+    for (const line of selectSseReplay(logBus.buffer)) { if (!send('log', line)) break; }
+    send('status', machineStatus());
     return;
   }
   if (u.pathname === '/api/login-status') { await handleLoginStatus(req, res); return; }

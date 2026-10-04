@@ -1,16 +1,21 @@
 'use strict';
 
-// Electron 多账号版：一个管理窗口 + 五个隔离 BrowserView + 五个独立本地任务服务。
+// Electron 多账号版：一个管理窗口 + 五个隔离 BrowserView + 六个独立本地任务服务。
 // 每个服务各自持有 SQLite、配置、限频、任务循环和 SSE 日志；BrowserView 则通过
 // 不同 partition 保存五份独立登录态。账号之间不共享 cookie、任务或统计。
 
-const { app, BrowserWindow, BrowserView, ipcMain, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, powerSaveBlocker, dialog, session } = require('electron');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { xhsZoomFactor } = require('../src/view-scale');
+const nativeXhs = require('./native-xhs');
+const { NativeXhsTask } = require('./native-xhs-task');
+const { usesBrowser } = require('./account-surface');
+const { clearBrowserCachesOnRequest } = require('./cache-maintenance');
 
-const ACCOUNT_COUNT = 5;
+// 1–4 为正式网页获客号，5 为原生 App 测试空间，6 为新增的正式网页获客号。
+const ACCOUNT_COUNT = 6;
 const UI_PORT_BASE = 3100;
 const CDP_PORT = 9333;
 
@@ -23,6 +28,14 @@ let taskWakeLockId = null;
 const accountViews = new Map();
 const accountWorkers = new Map();
 const runningAccounts = new Set();
+const nativeTask = new NativeXhsTask({ accountPort: UI_PORT_BASE + 5 });
+
+nativeTask.on('status', (status) => {
+  if (status && status.running) runningAccounts.add('native-5'); else runningAccounts.delete('native-5');
+  syncTaskWakeLock();
+  if (win && !win.isDestroyed()) win.webContents.send('native-xhs:status-event', status);
+});
+nativeTask.on('log', (row) => { if (win && !win.isDestroyed()) win.webContents.send('native-xhs:log-event', row); });
 
 function accountMeta(id) {
   return {
@@ -76,7 +89,7 @@ function markBrowserAccount(view, marker) {
 function layoutBrowserView() {
   if (!win) return;
   for (const view of accountViews.values()) win.removeBrowserView(view);
-  if (!browserVisible) return;
+  if (!browserVisible || !usesBrowser(activeAccountId)) return;
   const view = accountViews.get(activeAccountId);
   if (!view) return;
   const [w, h] = win.getContentSize();
@@ -133,21 +146,52 @@ ipcMain.on('view-visible', (e, visible) => {
   layoutBrowserView();
 });
 ipcMain.on('account-selected', (e, accountId) => selectAccount(accountId));
+ipcMain.handle('native-xhs:status', () => ({ ...nativeXhs.status(), surfaceVersion: 2, passiveCapture: true, foregroundPause: true }));
+ipcMain.handle('native-xhs:activate', () => nativeXhs.activate());
+ipcMain.handle('native-xhs:home', () => nativeXhs.goHome());
+ipcMain.handle('native-xhs:publish', () => nativeXhs.openPublish());
+ipcMain.handle('native-xhs:search', (e, keyword) => nativeXhs.search(keyword));
+ipcMain.handle('native-xhs:task-status', () => nativeTask.snapshot());
+ipcMain.handle('native-xhs:task-start', (e, options) => nativeTask.start(options || {}));
+ipcMain.handle('native-xhs:task-stop', () => nativeTask.stop());
+ipcMain.handle('native-xhs:task-clear', () => nativeTask.clear());
+ipcMain.handle('native-xhs:capture', async () => {
+  try {
+    const result = await nativeXhs.captureWindow({ passive: true });
+    if (result.ok === false) return result;
+    return { ok: true, image: fs.readFileSync(result.imagePath).toString('base64') };
+  } catch (_) {
+    return { ok: false, message: '暂时无法读取 App 窗口；不会自动打开或切换窗口。请手动打开 App 后查看。' };
+  }
+});
+ipcMain.handle('native-xhs:choose-image', async () => {
+  const result = await dialog.showOpenDialog(win, {
+    title: '选择这套真实房源对应的图片', properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+  });
+  return { ok: !result.canceled && !!result.filePaths[0], path: result.filePaths[0] || '' };
+});
 
-app.whenReady().then(() => {
-  // 先启动五个独立任务服务，再创建五个隔离登录页面。
+app.whenReady().then(async () => {
+  // 仅显式维护启动清缓存。包含账号 5 旧网页分区，不删除 Cookie、设置、图库或数据库。
+  await clearBrowserCachesOnRequest({
+    argv: process.argv, session,
+    accounts: Array.from({ length: ACCOUNT_COUNT }, (_, index) => accountMeta(index + 1))
+  });
+  // 先启动六个独立任务服务，再创建五个正式账号的隔离登录页面（第 5 号是 App 测试）。
   for (let id = 1; id <= ACCOUNT_COUNT; id++) startWorker(id);
 
   win = new BrowserWindow({
     width: 1520,
     height: 960,
-    title: '小红书获客 · 五账号并发版',
+    title: '小红书获客 · 多账号并发版',
     webPreferences: { preload: path.join(__dirname, 'preload.js') }
   });
   win.once('ready-to-show', () => { win.show(); win.focus(); win.moveTop(); });
   win.on('resize', layoutBrowserView);
 
   for (let id = 1; id <= ACCOUNT_COUNT; id++) {
+    if (!usesBrowser(id)) continue;
     const meta = accountMeta(id);
     const webPreferences = { backgroundThrottling: false };
     if (meta.partition) webPreferences.partition = meta.partition;
@@ -161,7 +205,7 @@ app.whenReady().then(() => {
   }
   layoutBrowserView();
 
-  // 账号 1 是原有单账号数据的升级入口；账号 5 预留给发布笔记测试。
+  // 账号 1 是原有单账号数据的升级入口；账号 5 预留给原生 App 测试；账号 6 为新增网页获客号。
   setTimeout(() => win.loadURL(`http://127.0.0.1:${UI_PORT_BASE + 1}`), 900);
 });
 

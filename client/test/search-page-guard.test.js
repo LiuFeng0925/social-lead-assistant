@@ -53,9 +53,9 @@ test('page UI search clicks, replaces text and clicks submit without direct navi
   const client = {
     async evaluate({ expression }) {
       if (expression.includes('document.title')) return { value: JSON.stringify({ url: 'https://www.xiaohongshu.com/explore', title: '小红书' }) };
-      if (expression.includes('button[type="submit"]')) return { value: JSON.stringify({ x: 690, y: 36 }) };
+      if (expression === engine.SEARCH_SUBMIT_PROBE) return { value: JSON.stringify({ x: 690, y: 36 }) };
       probeCount++;
-      return { value: JSON.stringify({ x: 419, y: 36, value: probeCount > 1 ? '武侯区求租' : '', placeholder: '搜索' }) };
+      return { value: JSON.stringify({ x: 419, y: 36, value: probeCount > 1 ? '武侯区求租' : '', placeholder: '搜索', focused: true }) };
     },
     async click(point) { calls.push(['click', point.x, point.y]); },
     async selectAll() { calls.push(['selectAll']); },
@@ -94,8 +94,8 @@ test('page UI search retries a search term that was appended instead of replacin
   const client = {
     async evaluate({ expression }) {
       if (expression.includes('document.title')) return { value: JSON.stringify({ url: 'https://www.xiaohongshu.com/explore', title: '小红书' }) };
-      if (expression.includes('button[type="submit"]')) return { value: JSON.stringify({ x: 690, y: 36 }) };
-      return { value: JSON.stringify({ x: 419, y: 36, value: selectCount >= 2 ? '金牛区求租' : '武侯区求租金牛区求租', placeholder: '搜索' }) };
+      if (expression === engine.SEARCH_SUBMIT_PROBE) return { value: JSON.stringify({ x: 690, y: 36 }) };
+      return { value: JSON.stringify({ x: 419, y: 36, value: selectCount >= 2 ? '金牛区求租' : '武侯区求租金牛区求租', placeholder: '搜索', focused: true }) };
     },
     async click() { calls.push('click'); },
     async selectAll() { selectCount++; calls.push('selectAll'); },
