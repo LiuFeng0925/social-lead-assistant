@@ -40,6 +40,34 @@ const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
 const nativeAssessments = new Map();
 const NATIVE_GALLERY_PATH = path.join(process.env.XHS_DATA_DIR ? path.resolve(process.env.XHS_DATA_DIR) : path.join(__dirname, '..', 'data'), 'native-gallery.json');
 
+const REFRESH_ACTIVE_COMMENT_INPUT = `(function(){
+  var el=document.querySelector('[data-sla-comment-editor="active"]');
+  if(!el)return false;
+  try{el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:null}));}
+  catch(e){el.dispatchEvent(new Event('input',{bubbles:true}));}
+  el.dispatchEvent(new Event('change',{bubbles:true}));
+  return true;
+})()`;
+
+async function readCommentComposerProbe(client, target) {
+  try { return JSON.parse((await client.evaluate({ target, expression: PROBE })).value); }
+  catch (e) { return { inputs: [], sendBtns: [] }; }
+}
+
+async function waitForCommentSendProbe({ client, target, expectedText, timeoutMs = 4200 }) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = { inputs: [], sendBtns: [] };
+  let inputMatches = false;
+  while (Date.now() < deadline) {
+    latest = await readCommentComposerProbe(client, target);
+    inputMatches = inputHasExpectedText(pickCommentInput(latest), expectedText);
+    const button = inputMatches ? pickEnabledSendButton(latest) : null;
+    if (button) return { probe: latest, inputMatches: true, button };
+    await sleep(350);
+  }
+  return { probe: latest, inputMatches, button: null };
+}
+
 function formatCategoryCounts(byIntent) {
   const rows = Object.entries(byIntent || {}).filter(([, v]) => Number(v) > 0);
   return rows.length ? rows.map(([k, v]) => `${k} ${v}`).join(' / ') : '无分类';
@@ -235,8 +263,7 @@ async function handleSend(req, res, q) {
     }
     await client.wheelScroll({ target, x: 600, y: 400, totalDeltaY: 600 }).catch(() => {}); // trusted 滚轮(拟人)
     await sleep(rand(900, 1600));
-    const pr = await client.evaluate({ target, expression: PROBE });
-    let probe; try { probe = JSON.parse(pr.value); } catch (e) { probe = { inputs: [], sendBtns: [] }; }
+    const probe = await readCommentComposerProbe(client, target);
     const input = pickCommentInput(probe);
     if (!input) { await closeAndEnd({ ok: false, msg: '没定位到笔记底部评论框' }); return; }
     if (dry) { await closeAndEnd({ ok: true, dry: true, msg: 'dry-run:已定位评论框并关闭详情(未发送)' }); return; }
@@ -247,11 +274,11 @@ async function handleSend(req, res, q) {
     await client.click({ target, x: input.x, y: input.y });
     await sleep(rand(700, 1300));
     await client.typeText({ target, text: comment });
-    await sleep(rand(1200, 2000));
-    const pr2 = await client.evaluate({ target, expression: PROBE });
-    let probe2; try { probe2 = JSON.parse(pr2.value); } catch (e) { probe2 = { inputs: [], sendBtns: [] }; }
-    if (!inputHasExpectedText(pickCommentInput(probe2), comment)) { await closeAndEnd({ ok: false, msg: '文字没有进入目标评论框,为避免点错已停止发送' }); return; }
-    const btn = pickEnabledSendButton(probe2);
+    await client.evaluate({ target, expression: REFRESH_ACTIVE_COMMENT_INPUT }).catch(() => {});
+    await sleep(rand(700, 1100));
+    const ready = await waitForCommentSendProbe({ client, target, expectedText: comment });
+    if (!ready.inputMatches) { await closeAndEnd({ ok: false, code: 'typed_text_mismatch', msg: '文字没有进入目标评论框,为避免点错已停止发送' }); return; }
+    const btn = ready.button;
     if (!btn) { await closeAndEnd({ ok: false, msg: '评论已输入但没找到发送按钮' }); return; }
     await client.click({ target, x: btn.x, y: btn.y });
     await sleep(1800);
@@ -260,7 +287,7 @@ async function handleSend(req, res, q) {
     try {
       const sentProbe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value);
       const sentInput = pickCommentInput(sentProbe);
-      okSent = sentProbe.success === true || (!!sentInput && !normalizeText(sentInput.text));
+      okSent = !!sentInput && !normalizeText(sentInput.text);
     } catch (e) {}
     if (okSent) {
       try { db.insertComment({ noteId: r.id, noteTitle: r.title, noteUrl: r.url, content: comment, status: 'sent' }); } catch (e) {}
@@ -632,35 +659,34 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
   try {
     if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
     let uncertainAccess = false;
-    let probe = { inputs: [], sendBtns: [] };
-    try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
-    if (!pickCommentInput(probe)) { await client.wheelScroll({ target, x: 600, y: 500, totalDeltaY: 420 }).catch(() => {}); await sleep(rand(700, 1300)); try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {} }
+    let probe = await readCommentComposerProbe(client, target);
+    if (!pickCommentInput(probe)) { await client.wheelScroll({ target, x: 600, y: 500, totalDeltaY: 420 }).catch(() => {}); await sleep(rand(700, 1300)); probe = await readCommentComposerProbe(client, target); }
     const input = pickCommentInput(probe);
-    if (!input) return { ok: false, msg: '没定位到笔记底部评论框' };
-    if (dry) return { ok: true, msg: '演练:已定位评论框(未发送)' };
+    if (!input) return { ok: false, code: 'composer_not_found', msg: '没定位到笔记底部评论框' };
+    if (dry) return { ok: true, code: 'dry_run', msg: '演练:已定位评论框(未发送)' };
     if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
       const access = await recoverInteractiveAccess({ client, target, onLog });
       if (!access.ok && !access.allowWriteProbe) {
-        return { ok: false, accountBlocked: true, msg: access.reason || '账号需要人工登录/验证' };
+        return { ok: false, code: 'account_blocked', accountBlocked: true, msg: access.reason || '账号需要人工登录/验证' };
     }
     uncertainAccess = !access.ok;
     if (access.recovered) {
-      try { probe = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) { probe = { inputs: [], sendBtns: [] }; }
+      probe = await readCommentComposerProbe(client, target);
     }
     if (uncertainAccess) onLog(access.reason + '；只尝试写入目标评论框，写入校验成功才会点发送');
     const activeInput = pickCommentInput(probe);
-    if (!activeInput) return { ok: false, msg: '页面恢复后没有重新定位到笔记评论框' };
-    if (normalizeText(activeInput.text)) return { ok: false, msg: '评论框已有未发送内容,为避免误发已跳过' };
+    if (!activeInput) return { ok: false, code: 'composer_not_found', msg: '页面恢复后没有重新定位到笔记评论框' };
+    if (normalizeText(activeInput.text)) return { ok: false, code: 'input_occupied', msg: '评论框已有未发送内容,为避免误发已跳过' };
     await client.click({ target, x: activeInput.x, y: activeInput.y });
     await sleep(rand(700, 1300));
     await client.typeText({ target, text: comment });
-    await sleep(rand(1200, 2000));
+    await client.evaluate({ target, expression: REFRESH_ACTIVE_COMMENT_INPUT }).catch(() => {});
+    await sleep(rand(700, 1100));
     if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped_before_send' };
-    let probe2 = { inputs: [], sendBtns: [] };
-    try { probe2 = JSON.parse((await client.evaluate({ target, expression: PROBE })).value); } catch (e) {}
-    if (!inputHasExpectedText(pickCommentInput(probe2), comment)) return { ok: false, msg: uncertainAccess ? '写入探测未通过，登录浮层/限制仍在，未点发送' : '文字没有进入目标评论框,为避免点错已停止发送' };
-    const btn = pickEnabledSendButton(probe2);
-    if (!btn) return { ok: false, msg: '评论已输入但没找到发送按钮' };
+    const ready = await waitForCommentSendProbe({ client, target, expectedText: comment });
+    if (!ready.inputMatches) return { ok: false, code: 'typed_text_mismatch', msg: uncertainAccess ? '写入探测未通过，登录浮层/限制仍在，未点发送' : '文字没有进入目标评论框,为避免点错已停止发送' };
+    const btn = ready.button;
+    if (!btn) return { ok: false, code: 'send_button_not_found', msg: '评论已输入但没找到发送按钮' };
     await client.click({ target, x: btn.x, y: btn.y });
     await sleep(1800);
     let okSent = false;
@@ -671,9 +697,9 @@ async function commentOnOpenNote({ client, target, note, comment, dry, onLog = (
     } catch (e) {}
     if (okSent) {
       try { db.insertComment({ noteId: note.id, noteTitle: note.title, noteUrl: note.url, content: comment, status: 'sent' }); } catch (e) {}
-      return { ok: true, msg: '已发送✓(已确认成功)' };
+      return { ok: true, code: 'sent', msg: '已发送✓(已确认成功)' };
     }
-    return { ok: false, msg: uncertainAccess ? '已尝试写入/发送，但登录状态仍不确定，本条不自动重试以免重复' : '点了发送但没确认成功(可能未登录/被拦)' };
+    return { ok: false, code: 'send_unconfirmed', msg: uncertainAccess ? '已尝试写入/发送，但登录状态仍不确定，本条不自动重试以免重复' : '点了发送但没确认成功(可能未登录/被拦)' };
   } catch (e) {
     return { ok: false, msg: e.message };
   }
@@ -1004,7 +1030,7 @@ async function _scanNextKeywordTargets(cfg, runId = machine.runId) {
   emitLog('本关键词当前批次 ' + notes.length + ' 篇,' + formatCategoryCounts(byIntent) + ',全部打开详情读取标题+正文');
 }
 
-async function engageOpenNote({ client, target, note, detail, cfg, dry, log, result, shouldStop = () => false }) {
+async function engageOpenNote({ client, target, note, detail, cfg, dry, log, result, delivery = () => {}, shouldStop = () => false }) {
   let sent = 0, done = 0, accountBlocked = false;
   if (shouldStop()) return { sent, done, stopped: true };
   const merged = Object.assign({}, note, {
@@ -1044,7 +1070,10 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
         done++;
         if (response.ok && !dry) sent++;
         if (response.accountBlocked) return { sent, done, decision: authorDecision, accountBlocked: true };
-      }
+      } else delivery({ targetType: 'author', targetKey: merged.author || '', status: 'copy_invalid', reason: '评论文案合规校验未通过' });
+    } else {
+      log('作者跳过:这篇笔记已经成功评论过');
+      delivery({ targetType: 'author', targetKey: merged.author || '', status: 'already_commented', reason: '本地已有成功发送记录' });
     }
   } else {
     log('作者跳过:' + authorDecision.decisionReason + '；仅触达已确认的求租笔记作者');
@@ -1079,14 +1108,14 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
   for (const item of leads) {
     if (shouldStop()) break;
     const key = [note.id, item.user_link || item.nick, item.content].join('|');
-    if (processedOutboundLeads.has(key)) { log('评论者跳过(本次已处理):' + item.nick); continue; }
+    if (processedOutboundLeads.has(key)) { log('评论者跳过(本次已处理):' + item.nick); delivery({ targetType: 'commenter', targetKey: key, status: 'duplicate_in_run', reason: '本轮已处理' }); continue; }
     processedOutboundLeads.add(key);
     const prepared = { type: 'comment', nick: item.nick, content: item.content, basis_text: '来自《' + (note.title || '无标题') + '》评论区', can_auto_reply: true };
     const text = String(cfg.outreach_fixed_text || '').trim() || await engine.makeReply(prepared, cfg);
-    if (!engine.check(text).ok) { log('评论者跳过(文案合规不过):' + item.nick); continue; }
+    if (!engine.check(text).ok) { log('评论者跳过(文案合规不过):' + item.nick); delivery({ targetType: 'commenter', targetKey: key, status: 'copy_invalid', reason: '回复文案合规校验未通过' }); continue; }
     if (!dry) {
       const gate = throttle.canComment({ ignoreGap: true });
-      if (!gate.ok) { log('评论区回复停止:' + gate.reason); break; }
+      if (!gate.ok) { log('评论区回复停止:' + gate.reason); delivery({ targetType: 'commenter', targetKey: key, status: 'rate_limited', reason: gate.reason }); break; }
     }
     log((dry ? '[草稿] ' : '') + '回复求租评论者 ' + item.nick + ':' + text);
     if (!dry) {
@@ -1094,6 +1123,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
       if (!access.ok && !access.allowWriteProbe) {
         log('⚠ ' + (access.reason || '账号需要人工登录/验证') + '，已停止本账号真发');
         accountBlocked = true;
+        delivery({ targetType: 'commenter', targetKey: key, status: 'account_blocked', reason: access.reason || '账号需要人工登录/验证' });
         break;
       }
       if (!access.ok) log('  ' + access.reason + '；先精确写入这条回复，校验通过才点发送');
@@ -1117,7 +1147,20 @@ async function _processOutbound(cfg, t, dry) {
   try {
     await engine.readDetail({ client, target, note: t, browse, onLog: (m) => emitLog('  ' + m), shouldStop: () => !machine.running, onBeforeClose: async ({ detail }) => {
       if (!machine.running) return;
-      const totals = await engageOpenNote({ client, target, note: t, detail, cfg, dry, shouldStop: () => !machine.running, log: (m) => emitLog('  ' + m), result: (lead) => emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', target_type: lead.targetType, nickname: lead.nick, source_content: lead.content, comment: lead.text, ok: lead.response.ok, dry }) });
+      const keyword = t.sourceKeyword || '未标记关键词';
+      const recordDelivery = (lead) => db.recordTaskRunDelivery({
+        runId: machine.runId,
+        keyword,
+        noteId: t.id,
+        targetType: lead.targetType,
+        targetKey: lead.targetKey || lead.nick || lead.content || '',
+        status: lead.status || (lead.response && lead.response.code) || (lead.response && lead.response.ok ? 'sent' : 'error'),
+        reason: lead.reason || (lead.response && (lead.response.msg || lead.response.detail)) || ''
+      });
+      const totals = await engageOpenNote({ client, target, note: t, detail, cfg, dry, shouldStop: () => !machine.running, log: (m) => emitLog('  ' + m), delivery: recordDelivery, result: (lead) => {
+        recordDelivery(lead);
+        emitEvent('result', { id: t.id, url: t.url, title: t.title || '无标题', target_type: lead.targetType, nickname: lead.nick, source_content: lead.content, comment: lead.text, ok: lead.response.ok, dry });
+      } });
       machine.done += totals.done;
       machine.sent += totals.sent;
       if (totals.accountBlocked) {

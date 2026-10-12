@@ -168,6 +168,8 @@ test('lead model page edits and saves service areas with the model', () => {
   assert.ok(html.includes('id="lm_service_areas"'), 'service-area input should be visible in the lead model page');
   assert.ok(html.includes("setVal('lm_service_areas'"), 'saved service areas should load into the editor');
   assert.ok(html.includes("lead_local_words: serviceAreas"), 'saving the lead model should persist service areas');
+  assert.ok(html.includes('id="lm_location_aliases"'), 'commute-landmark mapping should be visible in the lead model page');
+  assert.ok(html.includes('lead_location_aliases: locationAliases'), 'saving the lead model should persist commute-landmark mappings');
   assert.ok(html.includes('交给模型做地理诊断'), 'the UI should explain that llm mode performs a geographic diagnosis');
 });
 

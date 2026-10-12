@@ -90,7 +90,14 @@ function findNoteCardExpr(note) {
       if (href.indexOf('/explore/') >= 0 && r.width === 0) score += 100;
       if (!best || score < best.score || (score === best.score && r.top < best.r.top)) best = { score: score, href: href, r: r };
     }
-    if (best) return JSON.stringify({ ok: true, noteId: noteId, href: best.href, x: Math.round(best.r.x + best.r.width / 2), y: Math.round(best.r.y + best.r.height / 2) });
+    if (best) {
+      var x = Math.round(best.r.x + best.r.width / 2), y = Math.round(best.r.y + best.r.height / 2);
+      var hit = null, hitLink = null, hitHref = '';
+      try { hit = document.elementFromPoint(x, y); hitLink = hit && hit.closest ? hit.closest('a[href]') : null; hitHref = hrefOf(hitLink); } catch(e) {}
+      // 个人资料悬浮卡等浮层盖住笔记时，绝不点击旧坐标。
+      if (!hitLink || (noteId && hitHref.indexOf(noteId) < 0)) return JSON.stringify({ ok: false, noteId: noteId, reason: 'note_card_covered' });
+      return JSON.stringify({ ok: true, noteId: noteId, href: best.href, x: x, y: y });
+    }
     return JSON.stringify({ ok: false, noteId: noteId, reason: 'note_card_not_found' });
   })()`;
 }
@@ -120,7 +127,9 @@ function detailStateExpr(note) {
     var currentMatches = !!(noteId && cur === noteId);
     var inExplore = href.indexOf('/explore/') >= 0;
     var inSearchDetail = !!(noteId && (href.indexOf('/search_result/' + noteId) >= 0 || href.indexOf('/search_result_ai/' + noteId) >= 0));
-    return JSON.stringify({ open: !!(inExplore || inSearchDetail || urlMatches), ready: !!(urlMatches || hasDetailMap || currentMatches), urlMatches: urlMatches, hasDetailMap: hasDetailMap, currentNoteId: cur });
+    // noteDetailMap 会长期缓存看过的笔记，不能把“缓存里存在”当成当前弹窗已打开。
+    // 只信当前 URL 或 currentNoteId，避免上一篇笔记残留导致串页、错判和错回。
+    return JSON.stringify({ open: !!(inExplore || inSearchDetail || urlMatches || currentMatches), ready: !!(urlMatches || currentMatches), urlMatches: urlMatches, hasDetailMap: hasDetailMap, currentMatches: currentMatches, currentNoteId: cur });
   })()`;
 }
 
@@ -289,9 +298,9 @@ async function openNoteFromList({ client, target, note, searchUrl = note && note
   await sleep(rand(900, 1600));
   const state = await waitForJson({
     client, target, expression: detailStateExpr(note), timeoutMs: 12000,
-    ok: (s) => s.open || s.ready
+    ok: (s) => s.ready
   });
-  if (!state.open && !state.ready) {
+  if (!state.ready) {
     throw new Error('note_detail_not_opened:' + noteId);
   }
   return state;

@@ -25,15 +25,26 @@ function sendCandidateScore(candidate = {}) {
   let score = 0;
   const classes = String(candidate.classes || '').toLowerCase();
   const text = String(candidate.text || '').replace(/\s+/g, '').toLowerCase();
-  const hasSubmitClass = /(^|\s)submit(\s|$)|send-button|comment-submit/.test(classes);
-  const hasSendText = text === '发送' || text === '发布' || text === 'send';
-  if (!hasSubmitClass && !hasSendText) return -100000;
+  const ariaLabel = String(candidate.ariaLabel || '').replace(/\s+/g, '').toLowerCase();
+  const title = String(candidate.title || '').replace(/\s+/g, '').toLowerCase();
+  const testId = String(candidate.testId || '').toLowerCase();
+  const type = String(candidate.type || '').toLowerCase();
+  const role = String(candidate.role || '').toLowerCase();
+  const semantic = [classes, text, ariaLabel, title, testId].join(' ');
+  const hasSubmitClass = /(^|\s)submit(\s|$)|send-button|comment-submit|publish-button|btn-send|send-btn/.test(semantic);
+  const hasSendText = [text, ariaLabel, title].some((value) => /^(发送|发布|send|submit)$/.test(value));
+  const hasSubmitType = type === 'submit';
+  if (!hasSubmitClass && !hasSendText && !hasSubmitType) return -100000;
   if (candidate.inComposer) score += 180;
   if (hasSubmitClass) score += 260;
   if (hasSendText) score += 180;
+  if (hasSubmitType) score += 120;
   if (String(candidate.tag || '').toUpperCase() === 'BUTTON') score += 40;
-  if (/cancel|取消/.test(classes + text)) score -= 1000;
+  if (role === 'button') score += 35;
+  if (candidate.hitTested) score += 45;
+  if (/cancel|取消/.test(semantic)) score -= 1000;
   if (candidate.inSearch) score -= 1200;
+  if (candidate.pointerEvents === 'none') score -= 1000;
   return score;
 }
 
@@ -47,7 +58,8 @@ function pickCommentInput(probe) {
 
 function pickEnabledSendButton(probe) {
   const buttons = probe && Array.isArray(probe.sendBtns) ? probe.sendBtns : [];
-  return buttons.find((button) => button && button.disabled !== true && String(button.ariaDisabled || '').toLowerCase() !== 'true') || null;
+  return buttons.find((button) => button && button.disabled !== true &&
+    String(button.ariaDisabled || '').toLowerCase() !== 'true' && button.pointerEvents !== 'none') || null;
 }
 
 function inputHasExpectedText(input, expectedText) {
@@ -66,7 +78,10 @@ const COMMENT_COMPOSER_PROBE = `(function(){
   function classText(el){ var value=el&&el.className; return String(value&&value.baseVal||value||''); }
   function closest(el,selector){ try{return el&&el.closest?el.closest(selector):null;}catch(e){return null;} }
   function editorText(el){ return String(el&&(el.isContentEditable?el.innerText:el.value)||'').replace(/\\s+/g,' ').trim(); }
-  var inputEls=[].slice.call(document.querySelectorAll('#content-textarea,[contenteditable="true"],textarea,p[class*="content-input"],[class*="comment-input"]'));
+  function hitTested(el){
+    try{var p=center(el),hit=document.elementFromPoint(p.x,p.y);return !!(hit&&(hit===el||el.contains(hit)||hit.contains(el)));}catch(e){return false;}
+  }
+  var inputEls=[].slice.call(document.querySelectorAll('#content-textarea,[contenteditable="true"],[role="textbox"],textarea,p[class*="content-input"],[class*="comment-input"],[class*="comment-editor"]'));
   var rankedInputs=[];
   for(var i=0;i<inputEls.length;i++){
     var el=inputEls[i];
@@ -89,23 +104,35 @@ const COMMENT_COMPOSER_PROBE = `(function(){
       if(p.x===chosen.x&&p.y===chosen.y&&editorText(inputEls[k])===chosen.text){chosenEl=inputEls[k];break;}
     }
   }
-  var composer=chosenEl&&closest(chosenEl,'.engage-bar,.engage-bar-container,[class*="engage-bar"]');
+  var oldMarkers=document.querySelectorAll('[data-sla-comment-editor="active"]');
+  for(var m=0;m<oldMarkers.length;m++) oldMarkers[m].removeAttribute('data-sla-comment-editor');
+  if(chosenEl) chosenEl.setAttribute('data-sla-comment-editor','active');
+  var composer=chosenEl&&closest(chosenEl,'.engage-bar,.engage-bar-container,[class*="engage-bar"],form,[class*="comment-composer"],[class*="comment-box"],[class*="input-wrapper"],[class*="comment-input-container"],[class*="publish-container"]');
+  if(!composer&&chosenEl){
+    var parent=chosenEl.parentElement;
+    for(var depth=0;parent&&depth<7;depth++,parent=parent.parentElement){
+      if(parent.querySelector('button,[role="button"],[aria-label*="发送"],[title*="发送"],[data-testid*="send"],[class*="submit"],[class*="send"]')){composer=parent;break;}
+    }
+  }
   if(!composer&&chosenEl) composer=closest(chosenEl,'.note-detail-mask,.note-container,[class*="note-detail"]');
   var buttonRoot=composer||document;
-  var buttonEls=[].slice.call(buttonRoot.querySelectorAll('button,[role="button"],span,div'));
+  var buttonEls=[].slice.call(buttonRoot.querySelectorAll('button,[role="button"],[type="submit"],[aria-label],[title],[data-testid],span,div'));
   var rankedButtons=[];
   for(var j=0;j<buttonEls.length;j++){
     var button=buttonEls[j];
-    var text=String(button.innerText||button.getAttribute('aria-label')||button.getAttribute('title')||'').replace(/\\s+/g,' ').trim();
+    var ariaLabel=String(button.getAttribute('aria-label')||'').trim();
+    var title=String(button.getAttribute('title')||'').trim();
+    var text=String(button.innerText||button.textContent||'').replace(/\\s+/g,' ').trim();
     var classes=classText(button);
-    var metaBtn={visible:visible(button),classes:classes,text:text,tag:button.tagName,inComposer:!!composer&&composer.contains(button),inSearch:!!closest(button,'header,[class*="search"],[class*="Search"]')};
+    var style=getComputedStyle(button);
+    var metaBtn={visible:visible(button),classes:classes,text:text,ariaLabel:ariaLabel,title:title,testId:button.getAttribute('data-testid')||'',type:button.getAttribute('type')||'',role:button.getAttribute('role')||'',tag:button.tagName,inComposer:!!composer&&composer.contains(button),inSearch:!!closest(button,'header,[class*="search"],[class*="Search"]'),pointerEvents:style.pointerEvents,hitTested:hitTested(button)};
     var buttonScore=sendCandidateScore(metaBtn);
     if(buttonScore<=0) continue;
     var buttonPoint=center(button);
-    rankedButtons.push({x:buttonPoint.x,y:buttonPoint.y,score:buttonScore,text:text,classes:classes,tag:button.tagName,disabled:!!button.disabled,ariaDisabled:button.getAttribute('aria-disabled')});
+    rankedButtons.push({x:buttonPoint.x,y:buttonPoint.y,score:buttonScore,text:text,ariaLabel:ariaLabel,title:title,classes:classes,tag:button.tagName,disabled:!!button.disabled,ariaDisabled:button.getAttribute('aria-disabled'),pointerEvents:style.pointerEvents});
   }
   rankedButtons.sort(function(a,b){return b.score-a.score;});
-  return JSON.stringify({inputs:rankedInputs.slice(0,4),sendBtns:rankedButtons.slice(0,6),success:String(document.body&&document.body.innerText||'').indexOf('评论成功')>=0});
+  return JSON.stringify({inputs:rankedInputs.slice(0,4),sendBtns:rankedButtons.slice(0,6),composerFound:!!composer,success:String(document.body&&document.body.innerText||'').indexOf('评论成功')>=0});
 })()`;
 
 module.exports = {

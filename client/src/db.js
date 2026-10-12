@@ -77,6 +77,7 @@ function open() {
       category_name text,
       location_match text,
       useful integer not null default 0,
+      review_required integer not null default 0,
       reason text,
       evidence text,
       location_evidence text,
@@ -84,12 +85,30 @@ function open() {
       decided_at text not null,
       unique (run_id, keyword, note_id)
     );
+    create table if not exists task_run_deliveries (
+      id integer primary key autoincrement,
+      run_id integer not null,
+      keyword text not null,
+      note_id text not null,
+      target_type text not null,
+      target_key text,
+      status text not null,
+      reason text,
+      created_at text not null
+    );
+    create index if not exists idx_task_run_deliveries_run on task_run_deliveries(run_id, status);
     create table if not exists config (k text primary key, v text);
   `);
   ensureInboxSchema(db);
+  ensureTaskRunDecisionSchema(db);
   ensureTaskRunReplyGuards(db);
   backfillInboxIdentities(db);
   return db;
+}
+
+function ensureTaskRunDecisionSchema(database) {
+  const cols = new Set(database.prepare('pragma table_info(task_run_decisions)').all().map((row) => row.name));
+  if (!cols.has('review_required')) database.exec('alter table task_run_decisions add column review_required integer not null default 0');
 }
 
 // 兼容仍在运行的旧服务进程：即使它用旧的“覆盖”方式写入统计，SQLite
@@ -234,21 +253,31 @@ function recordTaskRunDecision({ runId, keyword, note, decision, replyCount = 0 
   const previousReplies = previous ? Number(previous.reply_count) || 0 : 0;
   const totalReplies = previousReplies + replies;
   const useful = decision.eligible ? 1 : 0;
+  const reviewRequired = !useful && decision.reviewRequired ? 1 : 0;
   d.prepare(`insert into task_run_decisions
-    (run_id, keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at)
-    values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    (run_id, keyword, note_id, title, author, url, category_name, location_match, useful, review_required, reason, evidence, location_evidence, reply_count, decided_at)
+    values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     on conflict(run_id, keyword, note_id) do update set
       title=excluded.title, author=excluded.author, url=excluded.url,
       category_name=excluded.category_name, location_match=excluded.location_match,
-      useful=excluded.useful, reason=excluded.reason, evidence=excluded.evidence,
+      useful=excluded.useful, review_required=excluded.review_required, reason=excluded.reason, evidence=excluded.evidence,
       location_evidence=excluded.location_evidence, reply_count=excluded.reply_count, decided_at=excluded.decided_at`)
     .run(runId, key, String(note.id), note.title || '', note.author || '', note.url || '',
-      decision.categoryName || decision.label || '', decision.locationMatch || 'unknown', useful,
+      decision.categoryName || decision.label || '', decision.locationMatch || 'unknown', useful, reviewRequired,
       decision.decisionReason || decision.reason || '', decision.evidence || '', decision.locationEvidence || '', totalReplies, now());
   // 关键词汇总只累计本次新发送的数量，不做“覆盖后的差额”计算。
   d.prepare(`insert into task_run_keywords (run_id, keyword, scanned_count, reply_count) values (?,?,0,?)
     on conflict(run_id, keyword) do update set reply_count=max(0, reply_count + excluded.reply_count)`)
     .run(runId, key, replies);
+}
+
+function recordTaskRunDelivery({ runId, keyword, noteId, targetType, targetKey, status, reason } = {}) {
+  if (!Number(runId) || !String(keyword || '').trim() || !String(noteId || '').trim() || !String(status || '').trim()) return;
+  open().prepare(`insert into task_run_deliveries
+    (run_id, keyword, note_id, target_type, target_key, status, reason, created_at)
+    values (?,?,?,?,?,?,?,?)`)
+    .run(Number(runId), String(keyword).trim(), String(noteId), String(targetType || 'author'),
+      String(targetKey || '').slice(0, 300), String(status).trim(), String(reason || '').slice(0, 500), now());
 }
 
 // 旧版本曾把重复扫描后的 0 覆盖到已回复笔记上。评论发送记录是最终事实，
@@ -289,21 +318,28 @@ function taskRunReport(runId) {
   const runs = d.prepare(`select id, started_at, stopped_at, status, live from task_runs order by id desc limit 20`).all();
   const selectedId = Number(runId) || (runs[0] && runs[0].id) || 0;
   const run = selectedId ? d.prepare(`select id, started_at, stopped_at, status, live from task_runs where id=?`).get(selectedId) : null;
-  if (!run) return { run: null, runs, keywords: [], decisions: [] };
+  if (!run) return { run: null, runs, keywords: [], decisions: [], deliveries: [], summary: {} };
   rebuildTaskRunReplyCounts(run.id);
   const keywords = d.prepare(`select k.keyword, k.scanned_count,
     count(d.id) as judged_count,
     coalesce(sum(case when d.useful=1 then 1 else 0 end),0) as useful_count,
-    coalesce(sum(case when d.useful=0 and d.reason not like '%大模型分类失败%' then 1 else 0 end),0) as useless_count,
+    coalesce(sum(case when d.review_required=1 then 1 else 0 end),0) as review_count,
+    coalesce(sum(case when d.useful=0 and d.review_required=0 and d.reason not like '%大模型分类失败%' then 1 else 0 end),0) as useless_count,
     coalesce(sum(case when d.reason like '%大模型分类失败%' then 1 else 0 end),0) as failed_count,
     k.reply_count
     from task_run_keywords k left join task_run_decisions d on d.run_id=k.run_id and d.keyword=k.keyword
     where k.run_id=? group by k.run_id, k.keyword, k.scanned_count, k.reply_count order by k.rowid`).all(run.id)
     .map((row) => Object.assign(row, { pending_count: Math.max(0, Number(row.scanned_count) - Number(row.judged_count)) }));
-  const decisions = d.prepare(`select keyword, note_id, title, author, url, category_name, location_match, useful, reason, evidence, location_evidence, reply_count, decided_at,
+  const decisions = d.prepare(`select keyword, note_id, title, author, url, category_name, location_match, useful, review_required, reason, evidence, location_evidence, reply_count, decided_at,
     case when reason like '%大模型分类失败%' then 1 else 0 end as model_failed
     from task_run_decisions where run_id=? order by id desc limit 300`).all(run.id);
-  return { run, runs, keywords, decisions };
+  const deliveries = d.prepare(`select status, count(*) as count from task_run_deliveries where run_id=? group by status order by count(*) desc`).all(run.id);
+  const useful = d.prepare(`select count(*) as row_count, count(distinct note_id) as unique_count from task_run_decisions where run_id=? and useful=1`).get(run.id) || {};
+  const summary = {
+    unique_useful_count: Number(useful.unique_count) || 0,
+    duplicate_useful_count: Math.max(0, (Number(useful.row_count) || 0) - (Number(useful.unique_count) || 0))
+  };
+  return { run, runs, keywords, decisions, deliveries, summary };
 }
 
 function listFailedTaskRunDecisions(runId) {
@@ -494,6 +530,7 @@ const DEFAULT_CONFIG = {
   task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
   outreach_fixed_text: '',           // 外呼固定短句；留空才使用 AI/模板生成
   lead_local_words: [],              // 可服务区域；命中明确外地城市时整篇跳过
+  lead_location_aliases: [],         // 通勤地标到服务区域的已确认映射
   lead_layout_policy: 'any',        // 目标户型：默认不限；可在界面单独收紧为一居室整租
   reply_under_supply_enabled: false, // 是否在服务区内房源/同行笔记下回复明确求租评论者
   task_max: 40,
@@ -596,4 +633,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
+module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, recordTaskRunDelivery, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };

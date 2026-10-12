@@ -282,12 +282,18 @@ async function classifyNoteCategory({ note, localWords, leadModel, provider, mod
   throw formatError || new Error('大模型分类返回格式异常');
 }
 
-function buildServiceAreaClassificationMessages({ note, extracted = {}, localWords = [] }) {
+function buildServiceAreaClassificationMessages({ note, extracted = {}, localWords = [], locationAliases = [] }) {
   const title = String((note && note.title) || '').trim();
   const desc = String((note && note.desc) || '').trim();
   const tags = Array.isArray(note && note.tags) ? note.tags.join('、') : '';
   const serviceAreas = (Array.isArray(localWords) ? localWords : [])
     .map((word) => String(word || '').trim()).filter(Boolean);
+  const aliases = (Array.isArray(locationAliases) ? locationAliases : [])
+    .map((item) => ({
+      alias: String((item && (item.alias || item.landmark)) || '').trim(),
+      serviceArea: String((item && (item.serviceArea || item.service_area || item.target)) || '').trim()
+    }))
+    .filter((item) => item.alias && serviceAreas.includes(item.serviceArea));
   const facts = [
     extracted.city ? `城市=${extracted.city}` : '',
     extracted.district ? `区县=${extracted.district}` : '',
@@ -298,7 +304,9 @@ function buildServiceAreaClassificationMessages({ note, extracted = {}, localWor
     '你是获客任务的服务地区诊断器。分类模型已经先从标题和完整正文提取了客观地点；你只负责判断笔记里的目标求租地或房源地是否属于用户配置的服务区域，不要重新判断发布者分类。',
     '必须结合标题、完整正文、第一阶段地点事实和常识地理关系判断，不能只做字符串包含，也不能只看单个地点词。要理解行政区、村、小区、商圈、地铁站、简称和常见别名之间的归属关系。',
     '例如服务区是“朱岗子”时，“房山朱岗子村”“北京房山朱岗子”应视为同一地点；服务区是“长阳”时，“长阳地铁站”“长阳镇”可视为覆盖。反过来，上海普陀“新村路/甘泉路”不能因为字面相近而匹配北京“大宁村”。',
-    '判断的是笔记真正想租房或提供房源的位置。上班地、通勤目的地、作者IP、检索关键词都不能当作目标租房地。',
+    '判断的是笔记真正想租房或提供房源的位置。作者IP、检索关键词不能当作目标租房地。',
+    '工作地点或通勤目的地本身不等于房屋地址；但如果发布者已明确求租，并用“工作地点X + 通勤N分钟内/附近”等表达定义找房范围，X就是有效的需求区域锚点。该锚点属于服务区域、配置的地标映射或与服务区域通勤范围明确重合时，可以判为 match。仅提到单位或地点、没有表达围绕它找房时，不能据此判 match。',
+    '若提供了“地标映射”，这是用户已确认的业务覆盖关系；笔记围绕该地标明确求租时，应按映射后的服务区域判断。',
     'locationMatch 只能是 match、mismatch、unknown：能根据地理关系确认属于任一服务区域才填 match；明确在全部服务区域之外填 mismatch；正文地点不足或存在歧义填 unknown。',
     'match 时 matchedServiceArea 必须逐字填写下面服务区域中的一个原值，禁止创造新区域。mismatch 或 unknown 时必须为空字符串。',
     'locationEvidenceQuotes 必须返回 1到3 段标题或正文里的简短地点原文，每段逐字复制，不得把分散地点合并成新句子，不得改写或编造。例如正文有“武侯区”和“双楠立交”，应返回 ["武侯区","双楠立交"]。置信度不足时宁可 unknown，不要猜。',
@@ -307,6 +315,7 @@ function buildServiceAreaClassificationMessages({ note, extracted = {}, localWor
   ].join('\n');
   const user = [
     '【服务区域】' + (serviceAreas.join('、') || '未配置'),
+    '【地标映射】' + (aliases.length ? aliases.map((item) => `${item.alias} => ${item.serviceArea}`).join('；') : '未配置'),
     '【第一阶段地点事实】' + facts,
     '【标题】' + (title || '空'),
     '【完整正文】' + (desc || '空'),
@@ -354,9 +363,9 @@ function parseServiceAreaClassificationContent(content, localWords = []) {
   return normalizeServiceAreaClassification(parsed, localWords);
 }
 
-async function classifyServiceArea({ note, extracted, localWords, provider, model, apiKey, requestChat = postChat }) {
+async function classifyServiceArea({ note, extracted, localWords, locationAliases, provider, model, apiKey, requestChat = postChat }) {
   const ep = PROVIDERS[provider] || PROVIDERS.ark;
-  const baseMessages = buildServiceAreaClassificationMessages({ note, extracted, localWords });
+  const baseMessages = buildServiceAreaClassificationMessages({ note, extracted, localWords, locationAliases });
   let formatError = null;
   let retryReason = '';
   const sourceText = [note && note.title, note && note.desc]

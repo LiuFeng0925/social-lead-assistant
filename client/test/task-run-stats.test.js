@@ -29,3 +29,46 @@ test('repeated scans never erase already-sent reply statistics', () => {
   assert.equal(report.keywords[0].reply_count, 2);
   assert.equal(report.decisions[0].reply_count, 2);
 });
+
+test('run report separates unique useful notes and delivery failures', () => {
+  const runId = db.createTaskRun({ live: true });
+  const decision = { eligible: true, categoryName: '求租笔记', locationMatch: 'match', decisionReason: '符合条件' };
+  const note = { id: 'same-note', title: '求租一室' };
+  db.addTaskRunScan(runId, '关键词A', 1);
+  db.addTaskRunScan(runId, '关键词B', 1);
+  db.recordTaskRunDecision({ runId, keyword: '关键词A', note, decision });
+  db.recordTaskRunDecision({ runId, keyword: '关键词B', note, decision });
+  db.recordTaskRunDelivery({ runId, keyword: '关键词A', noteId: note.id, targetType: 'author', status: 'send_button_not_found', reason: '按钮未出现' });
+  db.recordTaskRunDelivery({ runId, keyword: '关键词A', noteId: note.id, targetType: 'commenter', targetKey: '用户甲', status: 'reply_target_mismatch', reason: '对象未确认' });
+
+  const report = db.taskRunReport(runId);
+  assert.equal(report.summary.unique_useful_count, 1);
+  assert.equal(report.summary.duplicate_useful_count, 1);
+  assert.deepEqual(Object.fromEntries(report.deliveries.map((row) => [row.status, row.count])), {
+    send_button_not_found: 1,
+    reply_target_mismatch: 1
+  });
+});
+
+test('run report counts location-review tenants separately from useless notes', () => {
+  const runId = db.createTaskRun({ live: false });
+  db.addTaskRunScan(runId, '石家庄求租', 1);
+  db.recordTaskRunDecision({
+    runId,
+    keyword: '石家庄求租',
+    note: { id: 'review-note', title: '方兆科技园求租' },
+    decision: {
+      eligible: false,
+      reviewRequired: true,
+      categoryName: '求租笔记',
+      locationMatch: 'unknown',
+      decisionReason: '地区待确认：通勤范围未映射'
+    }
+  });
+
+  const report = db.taskRunReport(runId);
+  assert.equal(report.keywords[0].review_count, 1);
+  assert.equal(report.keywords[0].useful_count, 0);
+  assert.equal(report.keywords[0].useless_count, 0);
+  assert.equal(report.decisions[0].review_required, 1);
+});

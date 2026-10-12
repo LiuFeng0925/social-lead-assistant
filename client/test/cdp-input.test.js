@@ -60,3 +60,16 @@ test('a click keeps mouse press and release in one CDP session', async () => {
   assert.equal(sequences.length, 1);
   assert.deepEqual(sequences[0].commands.map((item) => item.params.type), ['mousePressed', 'mouseReleased']);
 });
+
+test('sensitive clicks can disable coordinate jitter', async () => {
+  const client = new XhsCdpClient();
+  client.sendCommand = async () => ({});
+  client.humanMove = async () => {};
+  let sequence;
+  client.sendCommandSequence = async (request) => { sequence = request; return [{}, {}]; };
+  await client.click({ target: {}, x: 320, y: 480, jitter: false });
+  assert.equal(sequence.commands[0].params.x, 320);
+  assert.equal(sequence.commands[0].params.y, 480);
+  assert.equal(sequence.commands[1].params.x, 320);
+  assert.equal(sequence.commands[1].params.y, 480);
+});

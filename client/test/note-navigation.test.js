@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { sameSearchContext, listStateExpr, searchScrollStateExpr, resetSearchScrollExpr, isSearchListPath, decodedSearchKeyword, ensureSearchList, locateNoteCard, openNoteFromList } = require('../src/note-navigation');
+const { sameSearchContext, listStateExpr, detailStateExpr, searchScrollStateExpr, resetSearchScrollExpr, isSearchListPath, decodedSearchKeyword, ensureSearchList, locateNoteCard, openNoteFromList } = require('../src/note-navigation');
 
 test('note navigation distinguishes different keyword result pages', () => {
   const first = 'https://www.xiaohongshu.com/search_result?keyword=%E6%9C%B1%E5%B2%97%E5%AD%90%E7%A7%9F%E6%88%BF&source=web_search_result_notes';
@@ -36,6 +36,21 @@ test('AI search double-encoded keyword matches the classic search context', () =
 
 test('note opening no longer contains a direct-link fallback', () => {
   assert.doesNotMatch(String(openNoteFromList), /openDirectly|client\.navigate/);
+});
+
+test('cached detail data alone never proves that the clicked note is open', () => {
+  const expression = detailStateExpr({ id: 'expected-note' });
+  assert.doesNotMatch(expression, /ready:\s*!!\([^)]*hasDetailMap/);
+  assert.match(String(openNoteFromList), /ok:\s*\(s\)\s*=>\s*s\.ready/);
+  assert.doesNotMatch(String(openNoteFromList), /s\.open\s*\|\|\s*s\.ready/);
+});
+
+test('note-card coordinates are rejected while a hover card covers them', () => {
+  const expression = detailStateExpr({ id: 'note-1' });
+  assert.doesNotThrow(() => new Function('return ' + expression));
+  const cardExpression = require('../src/note-navigation').findNoteCardExpr({ id: 'note-1', title: '目标笔记' });
+  assert.match(cardExpression, /elementFromPoint/);
+  assert.match(cardExpression, /note_card_covered/);
 });
 
 test('AI search scrolling targets its internal results container', () => {

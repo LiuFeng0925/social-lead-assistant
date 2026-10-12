@@ -477,6 +477,13 @@
             <div class="hint">填写实际有房源、愿意承接的区域，尽量写到行政区、商圈、地铁站或村/小区。关闭大模型时按标题＋正文的关键词/区域规则判断；开启大模型时把正文提取的地点和这些服务区域交给模型做地理诊断。明确在服务区外的笔记会整篇跳过。</div>
           </div>
         </div>
+        <div class="row">
+          <div class="fld" style="flex:1">
+            <label>通勤地标映射（每行：地标 =&gt; 服务区域）</label>
+            <textarea id="lm_location_aliases" placeholder="例如：方兆科技园 => 石家庄三环内" style="width:100%"></textarea>
+            <div class="hint">用于“在某地上班、希望通勤 N 分钟内”的求租笔记。右侧服务区域必须与上方填写的某一项完全一致；明确租户命中映射后可进入目标队列。</div>
+          </div>
+        </div>
         <div style="font-size:13px;font-weight:700;margin:12px 0 6px">笔记分类</div>
         <div id="lm_categories"></div>
         <button class="btn ghost" type="button" onclick="addLeadCategory()">+ 加分类</button>
@@ -859,10 +866,22 @@ async function loadLeadModelSettings() {
   setVal('lm_name', m.name || '租房获客');
   if ($('lm_llm_classification_enabled')) $('lm_llm_classification_enabled').checked = m.llmClassificationEnabled === true;
   setVal('lm_service_areas', (Array.isArray(c.lead_local_words) ? c.lead_local_words : []).join('，'));
+  setVal('lm_location_aliases', (Array.isArray(c.lead_location_aliases) ? c.lead_location_aliases : []).map(function (item) { return String((item && item.alias) || '') + ' => ' + String((item && item.serviceArea) || ''); }).filter(function (line) { return !/^\s*=>\s*$/.test(line); }).join('\n'));
   renderLeadSlots(m.slots || []);
   renderLeadCategories(m.categories || []);
 }
 function parseWords(v) { return String(v || '').split(/[，,、\n]+/).map(function (s) { return s.trim(); }).filter(Boolean); }
+function parseLocationAliases(v, serviceAreas) {
+  const allowed = new Set(serviceAreas || []);
+  return String(v || '').split(/\r?\n/).map(function (line, i) {
+    line = line.trim();
+    if (!line) return null;
+    const parts = line.split(/\s*(?:=>|->|=|：|:)\s*/);
+    if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error('第 ' + (i + 1) + ' 行格式应为“地标 => 服务区域”');
+    if (!allowed.has(parts[1])) throw new Error('第 ' + (i + 1) + ' 行右侧“' + parts[1] + '”不在服务区域中');
+    return { alias: parts[0], serviceArea: parts[1] };
+  }).filter(Boolean);
+}
 function gatherLeadModel() {
   const slots = gatherLeadSlots();
   const categories = Array.prototype.slice.call(document.querySelectorAll('.lm-category')).map(function (row, i) {
@@ -900,7 +919,10 @@ function saveLeadModel() {
   if (!model.categories.length) { h.style.color = 'var(--red)'; h.textContent = '✗ 至少保留一个笔记分类'; return; }
   h.style.color = ''; h.textContent = '保存中…';
   const serviceAreas = parseWords($('lm_service_areas').value);
-  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ lead_model: model, lead_local_words: serviceAreas }))).then(r => r.json()).then(d => { h.textContent = d.ok ? ('✓ 已保存 ' + serviceAreas.length + ' 个服务区域,下一轮读取正文后使用' + (model.llmClassificationEnabled ? '大模型' : '关键词') + '分类') : ('✗ ' + d.msg); });
+  let locationAliases;
+  try { locationAliases = parseLocationAliases($('lm_location_aliases').value, serviceAreas); }
+  catch (e) { h.style.color = 'var(--red)'; h.textContent = '✗ 通勤地标配置有误：' + e.message; return; }
+  fetch('/api/save-config?data=' + encodeURIComponent(JSON.stringify({ lead_model: model, lead_local_words: serviceAreas, lead_location_aliases: locationAliases }))).then(r => r.json()).then(d => { h.textContent = d.ok ? ('✓ 已保存 ' + serviceAreas.length + ' 个服务区域、' + locationAliases.length + ' 个通勤地标，下一轮读取正文后使用' + (model.llmClassificationEnabled ? '大模型' : '关键词') + '分类') : ('✗ ' + d.msg); });
 }
 function toMinUI(hhmm) { const a = String(hhmm || '0:0').split(':').map(Number); return (a[0] || 0) * 60 + (a[1] || 0); }
 const WD2 = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -1480,26 +1502,31 @@ function renderRunStats(d) {
   if (!run) { out.innerHTML = '还没有执行统计，开始一次任务后会在这里显示。'; return; }
   const keywords = d.keywords || [];
   const totals = keywords.reduce(function (acc, row) {
-    ['scanned_count','judged_count','useful_count','useless_count','failed_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
+    ['scanned_count','judged_count','useful_count','review_count','useless_count','failed_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
     return acc;
-  }, { scanned_count: 0, judged_count: 0, useful_count: 0, useless_count: 0, failed_count: 0, reply_count: 0, pending_count: 0 });
+  }, { scanned_count: 0, judged_count: 0, useful_count: 0, review_count: 0, useless_count: 0, failed_count: 0, reply_count: 0, pending_count: 0 });
+  const deliveryCounts = (d.deliveries || []).reduce(function (acc, row) { acc[row.status] = Number(row.count) || 0; return acc; }, {});
+  const runSummary = d.summary || {};
   const summary = '<div class="mgrid run-metrics" style="margin:0 0 10px">'
-    + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['无用', totals.useless_count], ['调用失败', totals.failed_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
+    + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['去重有用', Number(runSummary.unique_useful_count) || 0], ['重复有用', Number(runSummary.duplicate_useful_count) || 0], ['地区待确认', totals.review_count], ['无用', totals.useless_count], ['调用失败', totals.failed_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
     + '</div>';
-  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>无用</td><td>调用失败</td><td>已回复</td><td>待判断</td></tr>'
-    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.failed_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
+  const deliveryLabels = { sent: '发送成功', dry_run: '演练定位', send_button_not_found: '发送按钮未找到', composer_not_found: '评论框未找到', reply_target_mismatch: '回复对象未确认', reply_send_not_found: '回复发送按钮未找到', send_unconfirmed: '发送未确认', already_commented: '已评论跳过', duplicate_in_run: '本轮重复', copy_invalid: '文案校验未过', rate_limited: '触发限频', account_blocked: '账号受限', typed_text_mismatch: '输入校验失败', input_occupied: '输入框有残留', error: '其他失败' };
+  const deliveryRows = Object.keys(deliveryCounts).length ? Object.keys(deliveryCounts).map(function (status) { return '<span class="badge ' + (status === 'sent' ? 'b-ok' : 'b-warn') + '" style="margin:0 6px 6px 0">' + esc(deliveryLabels[status] || status) + ' ' + deliveryCounts[status] + '</span>'; }).join('') : '<span class="hint">本轮还没有产生发送动作。</span>';
+  const delivery = '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">发送结果拆分</div><div>' + deliveryRows + '</div>';
+  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>地区待确认</td><td>无用</td><td>调用失败</td><td>已回复</td><td>待判断</td></tr>'
+    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.review_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.failed_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
     + '</table>' : '<div class="hint">当前这轮还没有检索到笔记。</div>';
   const decisions = (d.decisions || []).map(function (item) {
     if (Number(item.model_failed)) {
       const failedTitle = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
       return '<details class="basis-detail"><summary><span class="badge b-bad">调用失败</span>' + esc(item.keyword) + ' · ' + failedTitle + '</summary><div>大模型调用失败</div></details>';
     }
-    const tag = Number(item.useful) ? '<span class="badge b-ok">有用</span>' : '<span class="badge b-warn">无用</span>';
+    const tag = Number(item.useful) ? '<span class="badge b-ok">有用</span>' : (Number(item.review_required) ? '<span class="badge b-warn">地区待确认</span>' : '<span class="badge b-warn">无用</span>');
     const title = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
     const facts = [item.reason ? '判断：' + item.reason : '', item.evidence ? '分类依据：' + item.evidence : '', item.location_evidence ? '地点依据：' + item.location_evidence : ''].filter(Boolean).map(esc).join('\n');
     return '<details class="basis-detail"><summary>' + tag + esc(item.keyword) + ' · ' + title + ' · ' + esc(item.category_name || '未分类') + ' · 地区' + esc(item.location_match || 'unknown') + (Number(item.reply_count) ? ' · 已回复 ' + Number(item.reply_count) : '') + '</summary><div style="white-space:pre-wrap">' + (facts || '未提供更多判断依据') + '</div></details>';
   }).join('');
-  out.innerHTML = '<div class="hint" style="margin-bottom:8px">开始：' + esc(formatLocalSecond(run.started_at) || '') + '　状态：' + (run.status === 'running' ? '运行中' : '已停止') + (run.live ? '　真发' : '　演练') + '</div>' + summary + table + '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">判断明细</div>' + (decisions || '<div class="hint">尚未完成笔记判断。</div>');
+  out.innerHTML = '<div class="hint" style="margin-bottom:8px">开始：' + esc(formatLocalSecond(run.started_at) || '') + '　状态：' + (run.status === 'running' ? '运行中' : '已停止') + (run.live ? '　真发' : '　演练') + '</div>' + summary + delivery + table + '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">判断明细</div>' + (decisions || '<div class="hint">尚未完成笔记判断。</div>');
 }
 // ── 常驻机器:总开关 + 实时日志流(关网页/刷新都不影响机器,只反映状态)──
 let _stream = null, _machineRunning = false;

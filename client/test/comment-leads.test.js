@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, shouldCommentNoteAuthor, shouldInspectNoteCommenters } = require('../src/engine');
+const { leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, shouldCommentNoteAuthor, shouldInspectNoteCommenters, _openNoteReplyComposerFn, _openNoteReplySendFn, _openNoteReplySentFn } = require('../src/engine');
 
 test('outreach only comments a confirmed tenant note author', () => {
   assert.equal(shouldCommentNoteAuthor({ role: 'tenant', eligible: true }), true);
@@ -132,6 +132,7 @@ test('comment-area reply fails closed when the composer is not bound to the inte
       return { value: JSON.stringify({ verified: false, count: 0 }) };
     },
     humanMove: async () => {},
+    moveCursorVisual: async () => {},
     click: async () => { clicks++; },
     typeText: async () => { typed = true; }
   };
@@ -152,4 +153,20 @@ test('comment-area reply fails closed when the composer is not bound to the inte
   assert.equal(typed, false, 'text must never be typed into an unverified top-level composer');
   assert.ok(expressions[0].includes('66a0feb3000000002401dd30'), 'exact commenter profile must participate in row matching');
   assert.ok(expressions[1].includes('今天你睡了吗'), 'composer verification must require the intended nickname');
+});
+
+test('comment-area reply keeps an exact row token through composer, send and confirmation', () => {
+  const composer = String(_openNoteReplyComposerFn);
+  const send = String(_openNoteReplySendFn);
+  const sent = String(_openNoteReplySentFn);
+  assert.match(composer, /data-sla-reply-row/);
+  assert.match(composer, /data-sla-reply-scope/);
+  assert.match(composer, /document\.activeElement/);
+  assert.match(composer, /new_focused_editor/);
+  assert.match(send, /data-sla-reply-bound/);
+  assert.match(send, /reply_text_not_in_target_input/);
+  assert.match(send, /data-sla-reply-send/);
+  assert.match(sent, /input_cleared|input_closed/);
+  assert.match(String(replyOpenNoteComment), /send_unconfirmed/);
+  assert.match(String(replyOpenNoteComment), /jitter:\s*false/);
 });

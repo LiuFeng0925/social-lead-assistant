@@ -16,6 +16,13 @@ const { SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, SEARCH_INPUT_DIAGNOSTIC_PROBE }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
 
+// 头像和昵称会在真实鼠标悬停后弹出个人资料卡。滚动列表时内容会从静止
+// 鼠标下方经过，所以把真实鼠标停在视口左上角的非交互边缘。
+async function parkPointerAway({ client, target, delayMs = 120 }) {
+  await client.humanMove({ target, toX: 2, toY: 2 }).catch(() => {});
+  if (delayMs > 0) await sleep(delayMs);
+}
+
 // ── 页面内表达式(已验证) ──
 const FEEDS_PICK = `(function(){
   var s = window.__INITIAL_STATE__; var f = s && s.search && s.search.feeds; var arr = [];
@@ -93,20 +100,64 @@ function sortVisualNotes(notes, rowTolerance = 36) {
   });
 }
 
-const DETAIL_EXTRACT = `(function(){
+function detailExtractExpr(expectedId) {
+  return `(function(){
   try{
-    var s=window.__INITIAL_STATE__||{}; var n=s.note||{}; var map=n.noteDetailMap||{};
-    var cur=n.currentNoteId; if(cur&&typeof cur==='object') cur=(cur.value!=null?cur.value:cur._value); cur=cur!=null?String(cur):'';
-    var id=(cur&&map[cur])?cur:Object.keys(map)[0];
-    if(!id) return JSON.stringify({ok:false});
-    var note=(map[id]&&(map[id].note||map[id]))||{}; var it=note.interactInfo||{}; var user=note.user||{};
+    function unwrap(v){
+      var n=0;
+      while(v&&typeof v==='object'&&n++<6){
+        if(Object.prototype.hasOwnProperty.call(v,'value')){v=v.value;continue;}
+        if(Object.prototype.hasOwnProperty.call(v,'_value')){v=v._value;continue;}
+        if(Object.prototype.hasOwnProperty.call(v,'_rawValue')){v=v._rawValue;continue;}
+        break;
+      }
+      return v;
+    }
+    var expected=${JSON.stringify(String(expectedId || ''))};
+    var s=window.__INITIAL_STATE__||{}; var n=unwrap(s.note)||{}; var map=unwrap(n.noteDetailMap)||{};
+    var cur=unwrap(n.currentNoteId); cur=cur!=null?String(cur):'';
+    var entry=expected&&map?unwrap(map[expected]):null;
+    if(!expected||!entry) return JSON.stringify({ok:false,reason:'expected_detail_missing',expectedId:expected,currentNoteId:cur});
+    if(cur&&cur!==expected) return JSON.stringify({ok:false,reason:'current_note_mismatch',expectedId:expected,currentNoteId:cur});
+    var note=unwrap(entry.note||entry)||{}; var it=unwrap(note.interactInfo)||{}; var user=unwrap(note.user)||{};
     var tags=[]; try{ var tl=note.tagList||[]; for(var i=0;i<tl.length;i++){ var nm=tl[i]&&tl[i].name; if(nm) tags.push(String(nm)); } }catch(e){}
-    return JSON.stringify({ ok:true, id:String(id), title:String(note.title||''), desc:String(note.desc||''),
+    return JSON.stringify({ ok:true, id:expected, title:String(note.title||''), desc:String(note.desc||''),
       type:String(note.type||''), author:String(user.nickname||user.nickName||''), ip:String(note.ipLocation||''),
       likes:String(it.likedCount==null?'':it.likedCount), comments:String(it.commentCount==null?'':it.commentCount),
       tags:tags.slice(0,15) });
   }catch(e){ return JSON.stringify({ok:false,error:String((e&&e.message)||e)}); }
 })()`;
+}
+
+function detailSignature(detail) {
+  if (!detail || !detail.ok) return '';
+  return [detail.id, detail.title, detail.desc, detail.author, detail.comments].map((v) => String(v == null ? '' : v)).join('\u001f');
+}
+
+async function readStableExpectedDetail({ client, target, noteId, attempts = 10, delayMs = 400 }) {
+  let lastSignature = '';
+  let stableCount = 0;
+  let last = { ok: false, reason: 'detail_not_read' };
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const result = await client.evaluate({ target, expression: detailExtractExpr(noteId) });
+      last = JSON.parse(result.value);
+    } catch (error) {
+      last = { ok: false, reason: 'detail_extract_error', error: error.message };
+    }
+    const signature = detailSignature(last);
+    if (last.ok && String(last.id) === String(noteId) && signature) {
+      stableCount = signature === lastSignature ? stableCount + 1 : 1;
+      lastSignature = signature;
+      if (stableCount >= 2) return last;
+    } else {
+      stableCount = 0;
+      lastSignature = '';
+    }
+    if (i + 1 < attempts) await sleep(delayMs);
+  }
+  return last;
+}
 
 // 当前详情页里已经加载出来的评论。只读取 DOM，不调用或逆向平台接口。
 function _commentScanFn() {
@@ -305,6 +356,8 @@ function applyResidentialAudienceGuard(decision, note, model, cfg = {}) {
   if (audience.eligible) return Object.assign({}, decision, { audienceMatch: 'match' });
   return Object.assign({}, decision, {
     eligible: false,
+    reviewRequired: false,
+    classificationStatus: 'useless',
     audienceMatch: 'mismatch',
     reason: audience.reason,
     decisionReason: audience.reason,
@@ -384,15 +437,45 @@ function roleFromCategory(category) {
   return 'other';
 }
 
+function normalizeLocationAliases(value, serviceAreas = []) {
+  const configured = new Set((Array.isArray(serviceAreas) ? serviceAreas : [])
+    .map((area) => String(area || '').trim()).filter(Boolean));
+  return (Array.isArray(value) ? value : []).map((item) => ({
+    alias: String((item && (item.alias || item.landmark)) || '').trim(),
+    serviceArea: String((item && (item.serviceArea || item.service_area || item.target)) || '').trim()
+  })).filter((item) => item.alias.length >= 2 && configured.has(item.serviceArea));
+}
+
+function locationAliasDecision(note, cfg = {}) {
+  const sourceText = [note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])]
+    .map((value) => String(value || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+  const aliases = normalizeLocationAliases(cfg.lead_location_aliases, cfg.lead_local_words);
+  const hit = aliases.find((item) => sourceText.toLowerCase().includes(item.alias.toLowerCase()));
+  if (!hit) return null;
+  return {
+    locationMatch: 'match',
+    matchedServiceArea: hit.serviceArea,
+    locationConfidence: 1,
+    locationEvidence: hit.alias,
+    reason: `已按获客模型地标映射确认：${hit.alias} => ${hit.serviceArea}`
+  };
+}
+
 function categoryClassificationDecision({ category, confidence, reason, evidence, locationMatch, demandLocation, city, district, location, matchedServiceArea, locationConfidence, locationEvidence, slotValues, method, cfg, error }) {
   const c = category || { id: 'unknown', name: '不明', action: 'record', fallback: true };
   const conf = Number.isFinite(Number(confidence)) ? Math.max(0, Math.min(1, Number(confidence))) : 0;
   const hasServiceAreas = Array.isArray(cfg && cfg.lead_local_words) && cfg.lead_local_words.some(Boolean);
+  const role = roleFromCategory(c);
   let eligible = String(c.action || 'skip') === 'comment';
+  let reviewRequired = false;
   let decisionReason = String(reason || '未提供分类理由');
   if (!eligible) decisionReason = `${c.name || c.id}：${decisionReason}`;
   else if (locationMatch === 'mismatch') { eligible = false; decisionReason = `明确不在服务区：${decisionReason}`; }
-  else if (hasServiceAreas && locationMatch !== 'match') { eligible = false; decisionReason = `地点未确认属于服务区：${decisionReason}`; }
+  else if (hasServiceAreas && locationMatch !== 'match') {
+    eligible = false;
+    reviewRequired = locationMatch === 'unknown' && role === 'tenant' && (method !== 'llm' || conf >= 0.65);
+    decisionReason = `${reviewRequired ? '地区待确认' : '地点未确认属于服务区'}：${decisionReason}`;
+  }
   else if (method === 'llm' && conf < 0.65) { eligible = false; decisionReason = `模型置信度不足：${decisionReason}`; }
   return {
     categoryId: String(c.id || 'unknown'),
@@ -401,7 +484,7 @@ function categoryClassificationDecision({ category, confidence, reason, evidence
     categoryFallback: !!c.fallback,
     categoryReplyStrategy: String(c.replyStrategy || ''),
     label: String(c.name || c.id || '不明'),
-    role: roleFromCategory(c),
+    role,
     classificationMethod: method,
     classificationMethodLabel: method === 'llm' ? '大模型' : '关键词',
     confidence: conf,
@@ -418,6 +501,8 @@ function categoryClassificationDecision({ category, confidence, reason, evidence
     decisionReason,
     evidence: Array.isArray(evidence) ? evidence.join('、') : String(evidence || ''),
     eligible,
+    reviewRequired,
+    classificationStatus: eligible ? 'useful' : (reviewRequired ? 'review' : 'useless'),
     error: error || ''
   };
 }
@@ -428,7 +513,8 @@ function classifyDetailedNoteByKeywords(note, cfg = {}) {
   const category = model.categories.find((item) => item.id === tagged.category_id)
     || model.categories.find((item) => item.fallback)
     || model.categories[model.categories.length - 1];
-  const area = serviceAreaDecision([note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' '), cfg);
+  let area = serviceAreaDecision([note && note.title, note && note.desc, ...(note && Array.isArray(note.tags) ? note.tags : [])].join(' '), cfg);
+  if (roleFromCategory(category) === 'tenant') area = locationAliasDecision(note, cfg) || area;
   const decision = categoryClassificationDecision({
     category,
     confidence: tagged.category_confidence,
@@ -512,6 +598,7 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
         note,
         extracted: raw,
         localWords: cfg.lead_local_words,
+        locationAliases: cfg.lead_location_aliases,
         provider: cfg.llm_provider,
         model: cfg.llm_model,
         apiKey: cfg.llm_api_key
@@ -521,7 +608,10 @@ async function classifyDetailedNoteByLlm(note, cfg = {}) {
       locationError = e && e.message ? e.message : String(e);
     }
   }
-  const locationDecision = validateLlmLocation(locationRaw, note, cfg);
+  let locationDecision = validateLlmLocation(locationRaw, note, cfg);
+  if (locationDecision.locationMatch === 'unknown' && roleFromCategory(category) === 'tenant') {
+    locationDecision = locationAliasDecision(note, cfg) || locationDecision;
+  }
   const decision = categoryClassificationDecision({
     category,
     confidence: raw.confidence,
@@ -942,12 +1032,22 @@ async function scanCleanOnce({ client, target, keyword, maxNotes = 60, maxRounds
 async function readDetail({ client, target, note, onLog = () => {}, browse = {}, onBeforeClose = null, shouldStop = () => false }) {
   if (!note || !note.id) throw new Error('read_detail_note_required');
   const b = Object.assign({ imagesMin: 2, imagesMax: 5, bodyMin: 1500, bodyMax: 5000, cScrollMin: 2, cScrollMax: 5, cDwellMin: 1800, cDwellMax: 4500 }, browse || {});
-  const openState = await openNoteFromList({ client, target, note, onLog });
+  let openState = await openNoteFromList({ client, target, note, onLog });
   let preserveSecurityPage = false;
   try {
     for (let k = 0; k < 12; k++) { if (shouldStop()) break; await sleep(800); await assertNoAccountSecurityPage({ client, target }); const rs = await client.evaluate({ target, expression: 'document.readyState' }); if (rs && rs.value === 'complete') break; }
     await sleep(rand(900, 1800));
-    let detail; try { const r = await client.evaluate({ target, expression: DETAIL_EXTRACT }); detail = JSON.parse(r.value); } catch (e) { detail = { ok: false, error: e.message }; }
+    let detail = await readStableExpectedDetail({ client, target, noteId: note.id });
+    if (!detail.ok || String(detail.id || '') !== String(note.id)) {
+      onLog('  笔记身份未对上，关闭残留弹窗后重开一次:' + String(detail.reason || 'unknown'));
+      await closeCurrentNote({ client, target, note, onLog, openedDirectly: !!(openState && openState.openedDirectly) }).catch(() => {});
+      openState = await openNoteFromList({ client, target, note, onLog });
+      await sleep(rand(900, 1500));
+      detail = await readStableExpectedDetail({ client, target, noteId: note.id });
+    }
+    if (!detail.ok || String(detail.id || '') !== String(note.id)) {
+      throw new Error('note_detail_identity_mismatch:' + note.id + ':' + String(detail.reason || 'unknown'));
+    }
     // ③ 图文按实际张数看图:点右箭头切图,直到轮播 transform 不再变化(已是最后一张)就停,绝不超过实际图片数
     try {
       if (b.imagesMax > 0 && (detail && detail.type !== 'video')) {
@@ -972,17 +1072,16 @@ async function readDetail({ client, target, note, onLog = () => {}, browse = {},
     } catch (e) {}
     // ③ 正文随机停留(像在读)
     await sleep(rand(b.bodyMin, b.bodyMax));
-    // ② 往下滑读评论:随机几下,每下停留几秒读,鼠标偶尔游走
+    // ② 往下滑读评论。真实鼠标固定停在安全边缘，避免头像/昵称悬浮卡。
     try {
       const cs = rand(b.cScrollMin, b.cScrollMax + 1);
+      await parkPointerAway({ client, target });
       for (let k = 0; k < cs; k++) {
         if (shouldStop()) break;
-        await client.humanMove({ target, toX: rand(180, 560), toY: rand(340, 680) }).catch(() => {}); // 滚前鼠标先滑到评论区(有目的)
-        await sleep(rand(300, 700));
         await client.wheelScroll({ target, x: rand(380, 640), y: rand(360, 620), totalDeltaY: rand(300, 700) }).catch(() => {});
+        await parkPointerAway({ client, target });
         onLog(`  往下读评论 ${k + 1}/${cs}`);
         await sleep(rand(b.cDwellMin, b.cDwellMax)); // 滑动后停留读(已加长)
-        if (Math.random() < 0.6) { await client.humanMove({ target, toX: rand(160, 520), toY: rand(320, 720) }).catch(() => {}); await sleep(rand(500, 1200)); } // 偶尔鼠标再滑,像在看某条评论
       }
     } catch (e) {}
     try {
@@ -1383,10 +1482,10 @@ async function scanInbox({ client, target, onLog = () => {}, max = 40, recentDay
     if (items.length >= max) break;
     // 已经滚到"超出近 N 天"的老评论了，停止往下翻
     if (recentDays > 0 && items.length && inboxUtils.shouldStopForRecentWindow(items[items.length - 1].date, recentDays)) break;
-    // 拟人:滚动前鼠标先滑到内容区(和浏览页面同款)
-    await client.humanMove({ target, toX: rand(260, 680), toY: rand(340, 640) }).catch(() => {});
-    await sleep(rand(250, 600));
+    // 通知里头像密集，真实鼠标不在内容区停留，防止连续弹出个人资料卡。
+    await parkPointerAway({ client, target });
     await client.wheelScroll({ target, x: rand(400, 700), y: rand(360, 600), totalDeltaY: rand(500, 900) }).catch(() => {});
+    await parkPointerAway({ client, target });
     await sleep(rand(900, 1500));
   }
   if (recentDays > 0) items = items.filter(function (it) {
@@ -1515,12 +1614,13 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   if (res === 'norep') return { ok: false, msg: '这条不能回复(可能原评论已删)' };
   let rep = null; try { rep = JSON.parse(res); } catch (e) {}
   if (!rep || !Number.isFinite(rep.x)) return { ok: false, msg: '定位回复按钮失败' };
-  // 拟人:鼠标滑到「回复」按钮(看得见)
-  await client.humanMove({ target, toX: rep.x, toY: rep.y }).catch(() => {});
-  await sleep(rand(400, 800));
-  if (dry) return { ok: true, msg: '演练:鼠标已移到「回复」(未点开)' };
+  if (dry) {
+    if (client.moveCursorVisual) await client.moveCursorVisual({ target, toX: rep.x, toY: rep.y }).catch(() => {});
+    return { ok: true, msg: '演练:已定位「回复」(未点开)' };
+  }
   // 真发:鼠标点「回复」→ 内联输入框
-  await client.click({ target, x: rep.x, y: rep.y }).catch(() => {});
+  await parkPointerAway({ client, target });
+  await client.click({ target, x: rep.x, y: rep.y, jitter: false }).catch(() => {});
   let inp = null;
   const composerExpr = '(' + _inboxReplyComposerProbeFn.toString() + ')(' + JSON.stringify(item.nick || '') + ')';
   for (let attempt = 0; attempt < 8 && !inp; attempt++) {
@@ -1529,7 +1629,7 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   }
   if (!inp) return { ok: false, msg: '回复框没出现' };
   // 鼠标点输入框聚焦 → 逐字打字
-  await client.click({ target, x: inp.x, y: inp.y });
+  await client.click({ target, x: inp.x, y: inp.y, jitter: false });
   await sleep(rand(500, 900));
   await client.typeText({ target, text: text });
   await sleep(rand(900, 1500));
@@ -1537,7 +1637,7 @@ async function replyInboxItem({ client, target, item, text, dry = true, onLog = 
   const sendExpr = '(' + _inboxSendProbeFn.toString() + ')(' + JSON.stringify(text) + ')';
   try { const found = JSON.parse((await client.evaluate({ target, expression: sendExpr })).value || '{}'); if (found.ok) send = found; } catch (e) {}
   if (!send) return { ok: false, msg: '没找到发送按钮' };
-  await client.click({ target, x: send.x, y: send.y });
+  await client.click({ target, x: send.x, y: send.y, jitter: false });
   let okSent = false;
   const sentExpr = '(' + _inboxSentProbeFn.toString() + ')(' + JSON.stringify(text) + ')';
   for (let attempt = 0; attempt < 12 && !okSent; attempt++) {
@@ -1620,6 +1720,26 @@ function _openNoteReplyFindFn(nick, head, userLink) {
     var r = el.getBoundingClientRect();
     return r.width > 2 && r.height > 2;
   }
+  function detailScope(el) {
+    var node = el;
+    var fallback = null;
+    while (node && node !== document.documentElement) {
+      var classes = String(node.className || '');
+      var eligible = node.getAttribute && (node.getAttribute('role') === 'dialog' || /note-detail|noteDetail/.test(classes));
+      if (eligible) {
+        fallback = node;
+        if (node.querySelector && node.querySelector('textarea,input,[contenteditable=true],[role=textbox]')) return node;
+      }
+      node = node.parentElement;
+    }
+    return fallback;
+  }
+  function visibleInputCount(scope) {
+    var nodes = (scope || document).querySelectorAll('textarea,input,[contenteditable=true],[role=textbox]');
+    var count = 0;
+    for (var i = 0; i < nodes.length; i++) if (visible(nodes[i])) count++;
+    return count;
+  }
   var expectedProfile = profilePath(userLink);
   var links = document.querySelectorAll('a[href*="/user/profile"]');
   for (var i = 0; i < links.length; i++) {
@@ -1642,22 +1762,28 @@ function _openNoteReplyFindFn(nick, head, userLink) {
     var token = 'sla-reply-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     best.setAttribute('data-sla-reply-target', token);
     box.setAttribute('data-sla-reply-row', token);
+    var scope = detailScope(box) || box.parentElement;
+    if (scope) scope.setAttribute('data-sla-reply-scope', token);
     var r = best.getBoundingClientRect();
     return JSON.stringify({
       x: Math.round(r.left + r.width / 2),
       y: Math.round(r.top + r.height / 2),
       token: token,
-      profilePath: profilePath(link.getAttribute('href'))
+      profilePath: profilePath(link.getAttribute('href')),
+      visibleInputCount: visibleInputCount(scope)
     });
   }
   return 'notfound';
 }
 
-function _openNoteReplyComposerFn(nick, token) {
+function _openNoteReplyComposerFn(nick, token, beforeInputCount) {
   function visible(el) {
     if (!el || el.offsetParent === null) return false;
     var r = el.getBoundingClientRect();
     return r.width > 80 && r.height > 15;
+  }
+  function containsOrIs(parent, child) {
+    return !!(parent && child && (parent === child || (parent.contains && parent.contains(child))));
   }
   function replyContext(el) {
     var attrs = [el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.getAttribute('data-placeholder')]
@@ -1671,28 +1797,45 @@ function _openNoteReplyComposerFn(nick, token) {
     }
     return { attrs: attrs, nearby: nearby };
   }
-  var nodes = document.querySelectorAll('textarea,[contenteditable=true]');
+  var row = document.querySelector('[data-sla-reply-row="' + token + '"]');
+  var control = document.querySelector('[data-sla-reply-target="' + token + '"]');
+  var scope = document.querySelector('[data-sla-reply-scope="' + token + '"]');
+  if (!row || !control || !scope || !visible(row)) {
+    return JSON.stringify({ verified: false, reason: 'reply_source_lost' });
+  }
+  var nodes = scope.querySelectorAll('textarea,input,[contenteditable=true],[role=textbox]');
+  var visibleNodes = [];
+  for (var i = 0; i < nodes.length; i++) if (visible(nodes[i])) visibleNodes.push(nodes[i]);
   var matches = [], seen = [];
-  for (var i = 0; i < nodes.length; i++) {
-    var el = nodes[i];
-    if (!visible(el)) continue;
+  var newlyAppeared = visibleNodes.length > Number(beforeInputCount || 0);
+  for (var i = 0; i < visibleNodes.length; i++) {
+    var el = visibleNodes[i];
     var ctx = replyContext(el);
-    seen.push((ctx.attrs || '(无提示)').slice(0, 80));
-    var targetNamed = ctx.attrs.indexOf(nick) >= 0 ||
-      (ctx.nearby.indexOf(nick) >= 0 && ctx.nearby.indexOf('回复') >= 0);
-    if (targetNamed) matches.push({ el: el, ctx: ctx });
+    var active = document.activeElement;
+    var focused = containsOrIs(el, active) || containsOrIs(active, el);
+    var sameRow = containsOrIs(row, el);
+    var hasNick = !!String(nick || '').trim();
+    var targetNamed = hasNick && (ctx.attrs.indexOf(nick) >= 0 ||
+      (ctx.nearby.indexOf(nick) >= 0 && ctx.nearby.indexOf('回复') >= 0));
+    var controlActivated = control.getAttribute('aria-expanded') === 'true' || /(^|\s)(active|selected|replying)(\s|$)/i.test(String(control.className || ''));
+    var evidence = targetNamed ? 'target_named' : sameRow && focused ? 'same_row_focused' :
+      focused && newlyAppeared ? 'new_focused_editor' : focused && controlActivated ? 'activated_control_focused' : '';
+    seen.push({ hint: (ctx.attrs || '(无提示)').slice(0, 80), focused: focused, sameRow: sameRow, evidence: evidence });
+    if (evidence) matches.push({ el: el, ctx: ctx, evidence: evidence });
   }
   if (matches.length !== 1) {
-    return JSON.stringify({ verified: false, count: matches.length, visibleInputs: seen.slice(0, 5) });
+    return JSON.stringify({ verified: false, reason: 'reply_target_mismatch', count: matches.length, visibleInputs: seen.slice(0, 5) });
   }
   var input = matches[0].el;
   input.setAttribute('data-sla-reply-input', token);
+  input.setAttribute('data-sla-reply-bound', matches[0].evidence);
   var r = input.getBoundingClientRect();
   return JSON.stringify({
     verified: true,
     x: Math.round(r.left + r.width / 2),
     y: Math.round(r.top + r.height / 2),
-    context: (matches[0].ctx.attrs || matches[0].ctx.nearby).slice(0, 120)
+    context: (matches[0].ctx.attrs || matches[0].ctx.nearby).slice(0, 120),
+    evidence: matches[0].evidence
   });
 }
 
@@ -1700,63 +1843,91 @@ function _openNoteReplySendFn(nick, token, expectedText) {
   function visible(el) {
     if (!el || el.offsetParent === null) return false;
     var r = el.getBoundingClientRect();
-    return r.width > 2 && r.height > 2;
+    if (r.width <= 2 || r.height <= 2) return false;
+    var cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || Number(cs.opacity || 1) <= 0 || cs.pointerEvents === 'none') return false;
+    var x = Math.max(0, Math.min(innerWidth - 1, r.left + r.width / 2));
+    var y = Math.max(0, Math.min(innerHeight - 1, r.top + r.height / 2));
+    var hit = document.elementFromPoint(x, y);
+    return !!(hit && (hit === el || el.contains(hit) || hit.contains(el)));
   }
-  var nodes = document.querySelectorAll('textarea,[contenteditable=true]');
+  function normalized(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+  function semanticSend(el) {
+    var text = normalized(el.innerText || el.textContent || el.value).toLowerCase();
+    var meta = [el.className, el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-testid'), el.getAttribute('type'), el.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    return text === '发送' || text === '发布' || text === 'send' || /(^|[-_\s])(send|submit|publish)([-_\s]|$)/.test(meta) || el.getAttribute('type') === 'submit';
+  }
+  var row = document.querySelector('[data-sla-reply-row="' + token + '"]');
+  var control = document.querySelector('[data-sla-reply-target="' + token + '"]');
+  var scope = document.querySelector('[data-sla-reply-scope="' + token + '"]');
+  if (!row || !control || !scope || !visible(row)) return JSON.stringify({ verified: false, reason: 'reply_source_lost' });
+  var nodes = scope.querySelectorAll('textarea,input,[contenteditable=true],[role=textbox]');
   var input = null;
   for (var i = 0; i < nodes.length; i++) {
     if (nodes[i].getAttribute('data-sla-reply-input') === token) { input = nodes[i]; break; }
   }
   if (!input || !visible(input)) return JSON.stringify({ verified: false, reason: 'reply_input_lost' });
   var typed = input.tagName === 'TEXTAREA' || input.tagName === 'INPUT' ? String(input.value || '') : String(input.innerText || input.textContent || '');
-  if (typed.indexOf(expectedText) < 0) return JSON.stringify({ verified: false, reason: 'reply_text_not_in_target_input' });
-  var attrs = [input.getAttribute('placeholder'), input.getAttribute('aria-label'), input.getAttribute('data-placeholder')]
-    .filter(Boolean).join(' ');
+  if (normalized(typed) !== normalized(expectedText)) return JSON.stringify({ verified: false, reason: 'reply_text_not_in_target_input' });
+  if (!input.getAttribute('data-sla-reply-bound')) return JSON.stringify({ verified: false, reason: 'reply_binding_lost' });
   var box = input;
-  for (var k = 0; k < 6 && box; k++, box = box.parentElement) {
-    var nearby = String(box.innerText || '').replace(/\s+/g, ' ').trim();
-    var targetNamed = attrs.indexOf(nick) >= 0 || (nearby.indexOf(nick) >= 0 && nearby.indexOf('回复') >= 0);
-    if (!targetNamed) continue;
-    var controls = box.querySelectorAll('button,span,div');
+  for (var k = 0; k < 8 && box && scope.contains(box); k++, box = box.parentElement) {
+    var controls = box.querySelectorAll('button,[role=button],input[type=submit],span,div');
     for (var j = 0; j < controls.length; j++) {
       var el = controls[j];
-      if (el.childElementCount !== 0 || (el.textContent || '').trim() !== '发送' || !visible(el)) continue;
+      if (!semanticSend(el) || !visible(el)) continue;
       var r = el.getBoundingClientRect();
+      el.setAttribute('data-sla-reply-send', token);
       return JSON.stringify({ verified: true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
     }
   }
   return JSON.stringify({ verified: false, reason: 'scoped_reply_send_not_found' });
 }
 
+function _openNoteReplySentFn(token, expectedText) {
+  function normalized(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+  var input = document.querySelector('[data-sla-reply-input="' + token + '"]');
+  if (!input || !input.isConnected || input.offsetParent === null) return JSON.stringify({ confirmed: true, evidence: 'input_closed' });
+  var value = input.tagName === 'TEXTAREA' || input.tagName === 'INPUT' ? input.value : (input.innerText || input.textContent || '');
+  if (!normalized(value)) return JSON.stringify({ confirmed: true, evidence: 'input_cleared' });
+  return JSON.stringify({ confirmed: false, reason: normalized(value) === normalized(expectedText) ? 'typed_text_still_present' : 'unconfirmed_state' });
+}
+
 async function replyOpenNoteComment({ client, target, item, text, dry = true, shouldStop = () => false }) {
-  if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
+  if (shouldStop()) return { ok: false, stopped: true, code: 'machine_stopped', msg: 'machine_stopped' };
+  await parkPointerAway({ client, target });
   const head = String(item.content || '').slice(0, 12);
   const expr = '(' + _openNoteReplyFindFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(head) + ',' + JSON.stringify(item.user_link || '') + ')';
   let raw = ''; try { raw = String((await client.evaluate({ target, expression: expr })).value || ''); } catch (e) {}
   let point = null; try { point = JSON.parse(raw); } catch (e) {}
-  if (!point || !Number.isFinite(point.x)) return { ok: false, msg: '没找到评论区这条留言的回复按钮' };
-  await client.humanMove({ target, toX: point.x, toY: point.y }).catch(() => {});
-  await sleep(rand(350, 750));
-  if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped' };
-  await client.click({ target, x: point.x, y: point.y });
+  if (!point || !Number.isFinite(point.x)) return { ok: false, code: 'reply_control_not_found', msg: '没找到评论区这条留言的回复按钮' };
+  if (shouldStop()) return { ok: false, stopped: true, code: 'machine_stopped', msg: 'machine_stopped' };
+  await client.click({ target, x: point.x, y: point.y, jitter: false });
   await sleep(rand(800, 1300));
   let input = null;
-  const inputExpr = '(' + _openNoteReplyComposerFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(point.token || '') + ')';
+  const inputExpr = '(' + _openNoteReplyComposerFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(point.token || '') + ',' + JSON.stringify(point.visibleInputCount || 0) + ')';
   try { input = JSON.parse((await client.evaluate({ target, expression: inputExpr })).value || ''); } catch (e) {}
-  if (!input || !input.verified) return { ok: false, msg: '未确认当前输入框正在回复“' + (item.nick || '目标用户') + '”，已中止发送' };
-  if (dry) return { ok: true, dry: true, msg: '草稿:已确认正在回复“' + (item.nick || '目标用户') + '”(未输入、未发送)' };
-  await client.click({ target, x: input.x, y: input.y });
+  if (!input || !input.verified) return { ok: false, code: 'reply_target_mismatch', detail: input && input.reason, msg: '未确认当前输入框正在回复“' + (item.nick || '目标用户') + '”，已中止发送' };
+  if (dry) return { ok: true, dry: true, code: 'dry_run', msg: '草稿:已确认正在回复“' + (item.nick || '目标用户') + '”(未输入、未发送)' };
+  await client.click({ target, x: input.x, y: input.y, jitter: false });
   await client.typeText({ target, text });
   await sleep(rand(800, 1400));
-  if (shouldStop()) return { ok: false, stopped: true, msg: 'machine_stopped_before_send' };
+  if (shouldStop()) return { ok: false, stopped: true, code: 'machine_stopped_before_send', msg: 'machine_stopped_before_send' };
   let send = null;
   const sendExpr = '(' + _openNoteReplySendFn.toString() + ')(' + JSON.stringify(item.nick || '') + ',' + JSON.stringify(point.token || '') + ',' + JSON.stringify(text) + ')';
   try { send = JSON.parse((await client.evaluate({ target, expression: sendExpr })).value || ''); } catch (e) {}
-  if (!send || !send.verified) return { ok: false, msg: '回复对象或发送按钮校验失败，已中止发送' };
-  await client.click({ target, x: send.x, y: send.y });
-  await sleep(1600);
-  return { ok: true, dry: false, msg: '评论区回复已发送' };
+  if (!send || !send.verified) return { ok: false, code: 'reply_send_not_found', detail: send && send.reason, msg: '回复对象或发送按钮校验失败，已中止发送' };
+  await client.click({ target, x: send.x, y: send.y, jitter: false });
+  let confirmation = null;
+  const sentExpr = '(' + _openNoteReplySentFn.toString() + ')(' + JSON.stringify(point.token || '') + ',' + JSON.stringify(text) + ')';
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await sleep(attempt === 0 ? 700 : 350);
+    try { confirmation = JSON.parse((await client.evaluate({ target, expression: sentExpr })).value || ''); } catch (e) {}
+    if (confirmation && confirmation.confirmed) return { ok: true, dry: false, code: 'sent', evidence: confirmation.evidence, msg: '评论区回复已发送' };
+  }
+  return { ok: false, dry: false, code: 'send_unconfirmed', detail: confirmation && confirmation.reason, msg: '已点击发送，但页面没有确认发送成功' };
 }
 
-module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, waitForVerifiedSearchPage, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, shouldInspectNoteCommenters, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };
+module.exports = { connect, buildSearchUrl, normalizeSearchKeyword, decodeSearchKeyword, searchPageMatches, parseSearchPageProbe, parseSearchInputProbe, SEARCH_INPUT_PROBE, SEARCH_SUBMIT_PROBE, searchFromPageUi, waitForVerifiedSearchPage, searchPageMismatchError, isSearchPageMismatchError, scanClean, sortVisualNotes, matchNotes, prepareNotesForDetailClassification, prepareNotesForLlmClassification, isLlmNoteClassificationEnabled, classifyDetailedNote, classifyDetailedNoteByKeywords, classifyDetailedNoteByLlm, validateLlmLocation, normalizeLocationAliases, locationAliasDecision, classifyNotePublisher, noteClassificationDecision, shouldCommentNoteAuthor, shouldInspectNoteCommenters, categoryClassificationDecision, residentialLongTermAudienceDecision, serviceAreaDecision, readDetail, scanOpenNoteComments, genComment, makeComment, buildCommentDirection, analyzeCommentNeed, formatCommentContext, classify, check, rejectsAgent, applyFilters, scanInbox, inboxIntent, shouldReply, makeReply, hasUnread, replyInboxItem, leadTextDecision, leadActorDecision, commenterLeadDecision, replyOpenNoteComment, detailExtractExpr, detailSignature, assertNoAccountSecurityPage, accountSecurityError, isAccountSecurityError, canReturnHomeFromSecurityPage, returnHomeFromSecurityPage, _replyFindFn, _openNoteReplyFindFn, _openNoteReplyComposerFn, _openNoteReplySendFn, _openNoteReplySentFn, _inboxReplyComposerProbeFn, _inboxSendProbeFn, _inboxSentProbeFn };
 module.exports.isSearchRecoveryError = isSearchRecoveryError;

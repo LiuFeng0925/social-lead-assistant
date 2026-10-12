@@ -203,14 +203,14 @@ class XhsCdpClient {
   }
 
   // 拟人点击:贝塞尔移过去 → 落点±抖动(不总点正中心)→ mousedown → dwell → mouseup(release 微抖)
-  async click({ target, x, y }) {
-    let X = Math.round(Number(x) + (Math.random() - 0.5) * 8);
-    let Y = Math.round(Number(y) + (Math.random() - 0.5) * 6);
+  async click({ target, x, y, jitter = true }) {
+    let X = Math.round(Number(x) + (jitter ? (Math.random() - 0.5) * 8 : 0));
+    let Y = Math.round(Number(y) + (jitter ? (Math.random() - 0.5) * 6 : 0));
     await this.sendCommand({ target, method: 'Page.bringToFront', params: {}, timeoutMs: 2500 });
     await this.humanMove({ target, toX: X, toY: Y });
     if (this.onPointer) { try { this.onPointer({ type: 'click', x: X, y: Y }); } catch (e) {} }
-    const releaseX = X + (Math.random() * 2 - 1);
-    const releaseY = Y + (Math.random() * 2 - 1);
+    const releaseX = X + (jitter ? (Math.random() * 2 - 1) : 0);
+    const releaseY = Y + (jitter ? (Math.random() * 2 - 1) : 0);
     await this.sendCommandSequence({
       target,
       timeoutMs: 2500,

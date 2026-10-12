@@ -33,6 +33,10 @@ test('send button is selected only from enabled semantic candidates', () => {
   const disabled = { x: 90, y: 200, classes: 'btn submit gray', text: '发送', disabled: true, score: disabledScore };
 
   assert.ok(disabledScore > 500);
+  assert.ok(sendCandidateScore({ visible: true, tag: 'DIV', role: 'button', ariaLabel: '发送', text: '', inComposer: true, hitTested: true }) > 300,
+    'new composer variants may expose send only through aria-label and role');
+  assert.ok(sendCandidateScore({ visible: true, tag: 'BUTTON', type: 'submit', classes: 'publish-control', text: '', inComposer: true }) > 200,
+    'a scoped submit button is a valid send control even without visible text');
   assert.ok(sendCandidateScore({ visible: true, tag: 'DIV', classes: 'right-btn-area', text: '收藏', inComposer: true }) < 0, 'unrelated composer controls must not become send buttons');
   assert.equal(pickEnabledSendButton({ sendBtns: [disabled, enabled] }), enabled);
   assert.equal(pickEnabledSendButton({ sendBtns: [disabled] }), null);
@@ -50,5 +54,7 @@ test('browser probe scopes controls to the note composer and detects modern Xiao
   assert.match(COMMENT_COMPOSER_PROBE, /\.engage-bar/);
   assert.match(COMMENT_COMPOSER_PROBE, /\[class\*="search"\]/);
   assert.match(COMMENT_COMPOSER_PROBE, /buttonRoot\.querySelectorAll/);
+  assert.match(COMMENT_COMPOSER_PROBE, /data-sla-comment-editor/);
+  assert.match(COMMENT_COMPOSER_PROBE, /data-testid/);
   assert.match(COMMENT_COMPOSER_PROBE, /disabled:/);
 });

@@ -275,6 +275,19 @@ test('service-area request disables DeepSeek thinking', async () => {
   assert.equal(captured.body.max_tokens, 800);
 });
 
+test('service-area prompt treats workplace plus commute range as a demand-area anchor', () => {
+  const messages = llm.buildServiceAreaClassificationMessages({
+    note: { title: '方兆科技园求租', desc: '工作地点方兆科技园，通勤20分钟内均可，长租自住' },
+    extracted: { location: '方兆科技园', locationEvidence: '通勤20分钟内均可' },
+    localWords: ['石家庄三环内'],
+    locationAliases: [{ alias: '方兆科技园', serviceArea: '石家庄三环内' }]
+  });
+
+  assert.match(messages[0].content, /有效的需求区域锚点/);
+  assert.match(messages[0].content, /地标映射/);
+  assert.match(messages[1].content, /方兆科技园 => 石家庄三环内/);
+});
+
 test('service-area request does not retry a valid JSON response', async () => {
   let calls = 0;
   await llm.classifyServiceArea({
@@ -363,6 +376,36 @@ test('llm match without configured area and body evidence is downgraded to unkno
 
   assert.equal(decision.locationMatch, 'unknown');
   assert.match(decision.reason, /证据不足/);
+});
+
+test('configured commute landmark upgrades an unknown tenant location to a safe service-area match', () => {
+  const decision = engine.locationAliasDecision({
+    title: '石家庄租房｜方兆科技园求租，只求可做饭',
+    desc: '工作地点：方兆科技园，通勤20分钟内均可，长租稳定自住'
+  }, {
+    lead_local_words: ['石家庄三环内'],
+    lead_location_aliases: [{ alias: '方兆科技园', serviceArea: '石家庄三环内' }]
+  });
+
+  assert.equal(decision.locationMatch, 'match');
+  assert.equal(decision.matchedServiceArea, '石家庄三环内');
+  assert.equal(decision.locationEvidence, '方兆科技园');
+});
+
+test('a confident tenant with unknown area is marked for review instead of useless or auto-send', () => {
+  const decision = engine.categoryClassificationDecision({
+    category: { id: 'seek_rent', name: '求租笔记', action: 'comment' },
+    confidence: 0.95,
+    reason: '发布者本人明确长租住宅',
+    locationMatch: 'unknown',
+    method: 'llm',
+    cfg: { lead_local_words: ['石家庄三环内'] }
+  });
+
+  assert.equal(decision.eligible, false);
+  assert.equal(decision.reviewRequired, true);
+  assert.equal(decision.classificationStatus, 'review');
+  assert.match(decision.decisionReason, /地区待确认/);
 });
 
 test('lead model switch independently chooses keyword or llm classification', () => {
