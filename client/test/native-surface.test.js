@@ -15,14 +15,38 @@ test('native account owns no BrowserView and cannot be shown by stale visibility
   assert.equal(usesBrowser('5'), false);
   const functionCode = main.slice(main.indexOf('function layoutBrowserView()'), main.indexOf('\nfunction selectAccount'));
   const events = [];
-  const ctx = vm.createContext({ usesBrowser, browserVisible: true, activeAccountId: 5,
-    accountViews: new Map([[1, {}], [5, {}]]),
-    win: { removeBrowserView: v => events.push(['remove',v]), setBrowserView: v => events.push(['attach',v]) }
+  const makeView = id => ({ id, setBounds: bounds => events.push(['bounds', id, bounds]), webContents: { setZoomFactor: zoom => events.push(['zoom', id, zoom]) } });
+  const ctx = vm.createContext({ usesBrowser, xhsZoomFactor: () => 1, browserVisible: true, activeAccountId: 5,
+    accountViews: new Map([[1, makeView(1)], [5, makeView(5)]]),
+    win: { getContentSize: () => [1520, 960], removeBrowserView: v => events.push(['remove',v.id]), addBrowserView: v => events.push(['attach',v.id]) }
   });
   vm.runInContext(functionCode + ';layoutBrowserView()', ctx);
   assert.equal(events.filter(e => e[0] === 'remove').length, 2);
-  assert.equal(events.some(e => e[0] === 'attach'), false);
+  assert.deepEqual(events.filter(e => e[0] === 'attach'), [['attach', 1]]);
+  assert.equal(events.some(e => e[0] === 'bounds' && e[1] === 5), false);
+  assert.ok(events.some(e => e[0] === 'bounds' && e[1] === 1 && e[2].x === 1519 && e[2].y === 959));
   assert.match(main, /for \(let id = 1; id <= ACCOUNT_COUNT; id\+\+\) \{\s*if \(!usesBrowser\(id\)\) continue;/);
+});
+
+test('background browser accounts keep a nonzero viewport without being displayed', () => {
+  const functionCode = main.slice(main.indexOf('function layoutBrowserView()'), main.indexOf('\nfunction selectAccount'));
+  const events = [];
+  const makeView = id => ({ id, setBounds: bounds => events.push(['bounds', id, bounds]), webContents: { setZoomFactor: zoom => events.push(['zoom', id, zoom]) } });
+  const first = makeView(1);
+  const second = makeView(2);
+  const ctx = vm.createContext({ usesBrowser, xhsZoomFactor: () => 0.9, browserVisible: true, activeAccountId: 1,
+    accountViews: new Map([[1, first], [2, second]]),
+    win: { getContentSize: () => [1520, 960], removeBrowserView: view => events.push(['remove', view.id]), addBrowserView: view => events.push(['attach', view.id]) }
+  });
+
+  vm.runInContext(functionCode + ';layoutBrowserView()', ctx);
+
+  const backgroundBounds = events.find(event => event[0] === 'bounds' && event[1] === 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(backgroundBounds[2])), { x: 1519, y: 959, width: 760, height: 960 });
+  assert.deepEqual(events.filter(event => event[0] === 'attach'), [['attach', 2], ['attach', 1]]);
+  const activeBounds = events.find(event => event[0] === 'bounds' && event[1] === 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(activeBounds[2])), { x: 760, y: 0, width: 760, height: 960 });
+  assert.ok(events.some(event => event[0] === 'zoom' && event[1] === 2 && event[2] === 0.9));
 });
 
 function monitorFixture() {

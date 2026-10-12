@@ -88,16 +88,27 @@ function markBrowserAccount(view, marker) {
 
 function layoutBrowserView() {
   if (!win) return;
-  for (const view of accountViews.values()) win.removeBrowserView(view);
-  if (!browserVisible || !usesBrowser(activeAccountId)) return;
-  const view = accountViews.get(activeAccountId);
-  if (!view) return;
   const [w, h] = win.getContentSize();
   const x = Math.round(w * 0.5);
   const width = Math.max(1, w - x);
-  win.setBrowserView(view);
-  view.setBounds({ x, y: 0, width, height: h });
-  view.webContents.setZoomFactor(xhsZoomFactor(width, h));
+  const visibleBounds = { x, y: 0, width, height: Math.max(1, h) };
+  // 留 1×1 像素与窗口相交，避免 Chromium 把完全位于窗口外的页面判定
+  // 为不可见并把渲染视口重新压成 0×0。当前账号最后挂载，会覆盖该像素。
+  const backgroundBounds = { x: Math.max(0, w - 1), y: Math.max(0, h - 1), width, height: Math.max(1, h) };
+  const zoom = xhsZoomFactor(width, h);
+  for (const view of accountViews.values()) win.removeBrowserView(view);
+  const activeView = browserVisible && usesBrowser(activeAccountId) ? accountViews.get(activeAccountId) : null;
+  // BrowserView 只有挂在 BrowserWindow 上才会保留有效渲染视口。后台账号
+  // 继续挂载到窗口外的不可见区域，既不会覆盖当前界面，也不会变成 0×0。
+  // 先挂后台、最后挂当前账号，确保当前账号处于最上层。
+  const browserEntries = Array.from(accountViews.entries()).filter(([id]) => usesBrowser(id));
+  const orderedViews = browserEntries.map(([, view]) => view).filter((view) => view !== activeView);
+  if (activeView) orderedViews.push(activeView);
+  for (const view of orderedViews) {
+    win.addBrowserView(view);
+    view.setBounds(view === activeView ? visibleBounds : backgroundBounds);
+    view.webContents.setZoomFactor(zoom);
+  }
 }
 
 function selectAccount(accountId) {
