@@ -49,11 +49,12 @@ test('console provides a manual Xiaohongshu refresh that pauses work without cle
   assert.equal(server.includes("handleBrowserRefresh(req, res) {\n  clearMachineCache"), false);
 });
 
-test('shared console provides a home button for browser and native App accounts', () => {
+test('shared console provides a browser home button for every account', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.match(html, /goXhsHome\(\)/);
   assert.match(html, /小红书首页/);
-  assert.match(html, /goNativeXhsHome/);
+  assert.match(html, /fetch\('\/api\/browser\/home'\)/);
+  assert.doesNotMatch(html, /goNativeXhsHome/);
 });
 
 test('task settings expose fixed outreach copy and clarify pending analysis count', () => {

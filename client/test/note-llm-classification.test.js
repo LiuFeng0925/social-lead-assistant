@@ -392,7 +392,7 @@ test('configured commute landmark upgrades an unknown tenant location to a safe 
   assert.equal(decision.locationEvidence, '方兆科技园');
 });
 
-test('a confident tenant with unknown area is marked for review instead of useless or auto-send', () => {
+test('a confident tenant with unknown area keeps the review mark and is allowed to receive a reply', () => {
   const decision = engine.categoryClassificationDecision({
     category: { id: 'seek_rent', name: '求租笔记', action: 'comment' },
     confidence: 0.95,
@@ -406,6 +406,14 @@ test('a confident tenant with unknown area is marked for review instead of usele
   assert.equal(decision.reviewRequired, true);
   assert.equal(decision.classificationStatus, 'review');
   assert.match(decision.decisionReason, /地区待确认/);
+  assert.equal(engine.shouldCommentNoteAuthor(decision), true);
+});
+
+test('unknown-area release never includes explicit mismatch, supply, agent, or low-confidence results', () => {
+  assert.equal(engine.shouldCommentNoteAuthor({ role: 'tenant', eligible: false, reviewRequired: true, locationMatch: 'mismatch' }), false);
+  assert.equal(engine.shouldCommentNoteAuthor({ role: 'supply', eligible: false, reviewRequired: true, locationMatch: 'unknown' }), false);
+  assert.equal(engine.shouldCommentNoteAuthor({ role: 'agent', eligible: false, reviewRequired: true, locationMatch: 'unknown' }), false);
+  assert.equal(engine.shouldCommentNoteAuthor({ role: 'tenant', eligible: false, reviewRequired: false, locationMatch: 'unknown' }), false);
 });
 
 test('lead model switch independently chooses keyword or llm classification', () => {

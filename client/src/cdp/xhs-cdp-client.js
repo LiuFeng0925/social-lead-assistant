@@ -60,7 +60,10 @@ class XhsCdpClient {
     if (!accountMarker) return preferred[0] || pages[0];
 
     // 首屏加载前，URL 中也带有标记，先走零开销的快速定位。
-    const urlMatched = preferred.find((p) => p.url.includes(accountMarker));
+    const urlMatched = preferred.find((p) => {
+      try { return new URL(p.url).searchParams.get('sla_account') === accountMarker; }
+      catch (_) { return false; }
+    });
     if (urlMatched) return urlMatched;
 
     // 搜索、详情等页面跳转会丢掉 URL 参数，但同一个 BrowserView 的

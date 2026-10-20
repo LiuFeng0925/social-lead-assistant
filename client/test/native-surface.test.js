@@ -10,24 +10,6 @@ const { NativeXhsTask } = require('../electron/native-xhs-task');
 const ui = fs.readFileSync(path.join(__dirname, '../public/app.html'), 'utf8');
 const main = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8');
 
-test('native account owns no BrowserView and cannot be shown by stale visibility messages', () => {
-  assert.deepEqual([1,2,3,4,5,6].filter(usesBrowser), [1,2,3,4,6]);
-  assert.equal(usesBrowser('5'), false);
-  const functionCode = main.slice(main.indexOf('function layoutBrowserView()'), main.indexOf('\nfunction selectAccount'));
-  const events = [];
-  const makeView = id => ({ id, setBounds: bounds => events.push(['bounds', id, bounds]), webContents: { setZoomFactor: zoom => events.push(['zoom', id, zoom]) } });
-  const ctx = vm.createContext({ usesBrowser, xhsZoomFactor: () => 1, browserVisible: true, activeAccountId: 5,
-    accountViews: new Map([[1, makeView(1)], [5, makeView(5)]]),
-    win: { getContentSize: () => [1520, 960], removeBrowserView: v => events.push(['remove',v.id]), addBrowserView: v => events.push(['attach',v.id]) }
-  });
-  vm.runInContext(functionCode + ';layoutBrowserView()', ctx);
-  assert.equal(events.filter(e => e[0] === 'remove').length, 2);
-  assert.deepEqual(events.filter(e => e[0] === 'attach'), [['attach', 1]]);
-  assert.equal(events.some(e => e[0] === 'bounds' && e[1] === 5), false);
-  assert.ok(events.some(e => e[0] === 'bounds' && e[1] === 1 && e[2].x === 1519 && e[2].y === 959));
-  assert.match(main, /for \(let id = 1; id <= ACCOUNT_COUNT; id\+\+\) \{\s*if \(!usesBrowser\(id\)\) continue;/);
-});
-
 test('background browser accounts keep a nonzero viewport without being displayed', () => {
   const functionCode = main.slice(main.indexOf('function layoutBrowserView()'), main.indexOf('\nfunction selectAccount'));
   const events = [];
@@ -72,56 +54,22 @@ function monitorFixture() {
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-test('switching to native immediately clears old browser image and rejects a late browser frame', async () => {
+test('account 5 and account 15 use browser monitoring and reject stale frames', () => {
   const f = monitorFixture(); f.select(1);
-  f.streams[0].emit('frame', { d: 'browser-A' });
-  assert.match(f.elements.cast.src, /browser-A/);
+  f.streams[0].emit('frame', { d: 'account-1' });
   f.select(5);
-  await flush();
+  assert.equal(f.streams[0].closed, true);
   assert.equal(f.elements.cast.src, undefined);
-  assert.equal(f.elements.cast.style.display, 'none');
-  f.streams[0].emit('frame', { d: 'stale-browser' });
+  f.streams[0].emit('frame', { d: 'stale-1' });
   assert.equal(f.elements.cast.src, undefined);
-  f.captureWaits[0].resolve({ ok: true, image: 'native-image' }); await flush();
-  assert.equal(f.elements.cast.src, 'data:image/png;base64,native-image');
-});
-
-test('late native frame cannot overwrite another account and refreshes do not overlap', async () => {
-  const f = monitorFixture(); f.select(5);
-  await flush();
-  assert.equal(f.captureWaits.length, 1);
-  assert.equal(f.timers.size, 0);
-  f.select(2);
-  f.captureWaits[0].resolve({ ok: true, image: 'old-native' }); await flush();
+  f.streams[1].emit('frame', { d: 'account-5' });
+  assert.match(f.elements.cast.src, /account-5/);
+  f.select(15);
+  f.streams[1].emit('frame', { d: 'stale-5' });
   assert.equal(f.elements.cast.src, undefined);
-  assert.equal(f.timers.size, 0);
-  f.streams[0].emit('frame', { d: 'browser-B' });
-  assert.match(f.elements.cast.src, /browser-B/);
-});
-
-test('unavailable native capture clears cached pixels and reports read-only unavailability', async () => {
-  const f = monitorFixture(); f.select(5);
-  await flush();
-  f.captureWaits[0].resolve({ ok: false, message: 'App 已最小化；不会自动唤起' }); await flush();
-  assert.equal(f.elements.cast.src, undefined);
-  assert.match(f.elements.castempty.textContent, /不会自动唤起/);
-  assert.equal(f.timers.size, 1);
-});
-
-test('new UI never calls old capture implementation without passive capability', async () => {
-  const f = monitorFixture();
-  f.ctx.window.electronView.nativeXhsStatus = async () => ({ installed: true });
-  f.select(5); await flush();
+  f.streams[2].emit('frame', { d: 'account-15' });
+  assert.match(f.elements.cast.src, /account-15/);
   assert.equal(f.captureWaits.length, 0);
-  assert.match(f.elements.castempty.textContent, /不会调用旧版抢前台/);
-});
-
-test('restoring page5 applies native right-pane layout without needing an account click', () => {
-  assert.match(ui, /const initialShowsBrowser = activeAccountId !== 5/);
-  assert.match(ui, /classList.toggle\('native-console', activeAccountId === 5\)/);
-  assert.match(ui, /native-console #monitor-card\{[^}]*position:fixed;left:50vw/);
-  assert.match(ui, /实时画面（只读）/);
-  assert.match(main, /captureWindow\(\{ passive: true \}\)/);
 });
 
 test('background start is blocked without explicit foreground-test consent', async () => {

@@ -19,18 +19,11 @@ function labelsFixture() {
     }
   };
   vm.createContext(context);
-  const state = html.slice(html.indexOf('function readCachedAccountLabels()'), html.indexOf('let nativeGalleryProperties'));
+  const state = html.slice(html.indexOf('function readCachedAccountLabels()'), html.indexOf('const nativeFetch ='));
   const loader = html.slice(html.indexOf('async function loadAccountLabels()'), html.indexOf('function editActiveAccountLabel()'));
-  vm.runInContext('const ACCOUNT_COUNT=6, ACCOUNT_PORT_BASE=3100;' + state + loader, context);
+  vm.runInContext('const ACCOUNT_COUNT=15, ACCOUNT_PORT_BASE=3100;' + state + loader, context);
   return { context, storage, state: () => JSON.parse(vm.runInContext('JSON.stringify({accountLabels,accountAvailability})', context)) };
 }
-
-test('five production accounts precede the test tab without changing persistent account IDs', () => {
-  const order = [...html.matchAll(/<button data-account="(\d)"/g)].map((m) => Number(m[1]));
-  assert.deepEqual(order, [1, 2, 3, 4, 6, 5]);
-  assert.equal(order.filter(usesBrowser).length, 5);
-  assert.equal(usesBrowser(5), false);
-});
 
 test('an offline account retains its cached label and reports unavailability', async () => {
   const fixture = labelsFixture();

@@ -258,10 +258,14 @@ function noteClassificationDecision(classification, minConfidence = 0.65) {
   return Object.assign({}, c, { label, eligible, decisionReason: reason });
 }
 
-// 外呼只面向笔记作者本人，且必须是已确认的求租者。
-// 不把“评论区里看起来在找房的人”作为外呼对象，避免在房东或同行笔记下触达。
+// 外呼只面向笔记作者本人。已确认的服务区租户直接触达；如果模型已高置信
+// 判定作者是租户、只是正文没有足够地区信息，则保留“地区待确认”标记但也
+// 允许触达。明确异地、房源方、同行和低置信结果仍然不会放行。
 function shouldCommentNoteAuthor(decision) {
-  return !!decision && decision.eligible === true && decision.role === 'tenant';
+  return !!decision
+    && decision.role === 'tenant'
+    && (decision.eligible === true || decision.reviewRequired === true)
+    && decision.locationMatch !== 'mismatch';
 }
 
 // 评论区线索可来自两种场景：

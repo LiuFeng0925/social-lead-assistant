@@ -6,19 +6,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { XhsCdpClient } = require('../src/cdp/xhs-cdp-client');
 
-test('fifth isolated account reuses the full console with a native App executor', () => {
-  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
-  const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.match(main, /const ACCOUNT_COUNT = 6/);
-  assert.match(ui, /data-account="5"/);
-  assert.match(ui, /账号 5 · App/);
-  assert.match(ui, /id="page-console"/);
-  assert.match(ui, /id="page-comments"/);
-  assert.match(ui, /id="page-notes"/);
-  assert.equal(ui.includes('id="page-publish"'), false);
-  assert.match(ui, /nativeXhsTaskStart/);
-});
-
 function clientWithTargets(targets, names) {
   const client = new XhsCdpClient({ endpoint: 'http://127.0.0.1:9333' });
   client.listTargets = async () => targets;
@@ -41,4 +28,13 @@ test('multi-account target resolver fails closed instead of using another accoun
     () => client.resolvePageTarget({ accountMarker: 'xhs-lead-account-2' }),
     /account_page_target_not_ready:xhs-lead-account-2/
   );
+});
+
+test('two-digit account markers cannot be mistaken for account 1', async () => {
+  const targets = [10, 11, 15, 1].map(id => ({ id: String(id), type: 'page', url: 'https://www.xiaohongshu.com/?sla_account=xhs-lead-account-' + id }));
+  const client = clientWithTargets(targets, {});
+  assert.equal((await client.resolvePageTarget({ accountMarker: 'xhs-lead-account-1' })).id, '1');
+  assert.equal((await client.resolvePageTarget({ accountMarker: 'xhs-lead-account-15' })).id, '15');
+  client.listTargets = async () => targets.slice(0, 3);
+  await assert.rejects(() => client.resolvePageTarget({ accountMarker: 'xhs-lead-account-1' }), /account_page_target_not_ready/);
 });

@@ -6,8 +6,8 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const engine = require('./engine');
+const { ACCOUNT_COUNT, UI_PORT_BASE } = require('./account-config');
 const { createSseWriter, selectSseReplay } = require('./sse-writer');
 const { startScreencast } = require('./cdp/screencast');
 const db = require('./db');
@@ -18,9 +18,6 @@ const { readLoginStatus, recoverInteractiveAccess } = require('./login-status');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 const { parseKeywords, uniqueNotes, keywordScanPlan } = require('./keyword-utils');
 const { launchChromeForCdp } = require('./browser-launch');
-const { runPublishTest } = require('./publish-test');
-const { buildReplyPlan, demandSummary, saveReplyPlan } = require('./native-reply-plan');
-const { validateCatalog } = require('./rental-gallery');
 const {
   COMMENT_COMPOSER_PROBE: PROBE,
   pickCommentInput,
@@ -37,8 +34,6 @@ const CHROME_PROFILE = path.join(__dirname, '..', '.xhs-chrome-profile');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
-const nativeAssessments = new Map();
-const NATIVE_GALLERY_PATH = path.join(process.env.XHS_DATA_DIR ? path.resolve(process.env.XHS_DATA_DIR) : path.join(__dirname, '..', 'data'), 'native-gallery.json');
 
 const REFRESH_ACTIVE_COMMENT_INPUT = `(function(){
   var el=document.querySelector('[data-sla-comment-editor="active"]');
@@ -200,7 +195,7 @@ async function handleRun(req, res, q) {
         category_reply_strategy: publisher.categoryReplyStrategy,
         intent: publisher.categoryName
       });
-      const comment = publisher.eligible ? await engine.makeComment(classifiedNote, direction, cfg) : '';
+      const comment = engine.shouldCommentNoteAuthor(publisher) ? await engine.makeComment(classifiedNote, direction, cfg) : '';
       const comp = comment ? engine.check(comment) : { ok: false, violations: ['当前分类不允许评论作者或地区不匹配'] };
       const agentReject = engine.rejectsAgent((d.title || '') + (d.desc || ''));
       const r = {
@@ -433,171 +428,6 @@ async function handleThrottle(req, res) {
 async function handleSaveConfig(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try { const data = JSON.parse(q.get('data') || '{}'); db.setConfig(data); res.end(JSON.stringify({ ok: true })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
-}
-
-function readJsonBody(req, maxBytes = 12000) {
-  return new Promise((resolve, reject) => {
-    let body = ''; let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > maxBytes) { reject(new Error('请求内容过长')); req.destroy(); return; }
-      body += chunk;
-    });
-    req.on('end', () => {
-      try { resolve(JSON.parse(body || '{}')); } catch (e) { reject(new Error('请求格式错误')); }
-    });
-    req.on('error', reject);
-  });
-}
-
-// 第 5 号原生 App 引擎通过屏幕 OCR 传入当前笔记的可见标题和正文。
-// 本接口只复用现有获客模型做判断与生成，原生 App 操作和发送仍由 Electron 主进程单独控制。
-async function handleNativeAppAssess(req, res) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '原生 App 测试仅限第 5 个账号。' })); return; }
-  try {
-    const raw = await readJsonBody(req, 64000);
-    const title = String(raw.title || '').trim().slice(0, 160);
-    const desc = String(raw.desc || '').trim().slice(0, 6000);
-    const author = String(raw.author || '').trim().slice(0, 80);
-    if (!title && !desc) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: '请先粘贴笔记标题或正文。' })); return; }
-    const cfg = db.getConfig();
-    if (!cfg.llm_enabled || !String(cfg.llm_api_key || '').trim() || !engine.isLlmNoteClassificationEnabled(cfg)) {
-      res.statusCode = 409;
-      res.end(JSON.stringify({ ok: false, msg: '请先在第 5 个账号的「模型设置」启用 AI，并在「获客模型」开启大模型分类。' }));
-      return;
-    }
-    const note = { id: String(raw.id || 'native-app-preview'), title, desc, author, tags: [] };
-    const decision = await engine.classifyDetailedNote(note, { ...cfg, native_extract_demand: true });
-    if (decision.error) {
-      res.end(JSON.stringify({ ok: false, model_failed: true, msg: '大模型调用失败' }));
-      return;
-    }
-    nativeAssessments.set(note.id, { note, decision });
-    if (nativeAssessments.size > 100) nativeAssessments.delete(nativeAssessments.keys().next().value);
-    res.end(JSON.stringify({ ok: true, decision }));
-  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) })); }
-}
-
-async function handleNativeGallery(req, res) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '图库联调仅限第 5 号 App。' })); return; }
-  try {
-    if (req.method === 'POST') {
-      const catalog = validateCatalog(await readJsonBody(req, 512000));
-      fs.mkdirSync(path.dirname(NATIVE_GALLERY_PATH), { recursive: true });
-      fs.writeFileSync(NATIVE_GALLERY_PATH + '.tmp', JSON.stringify(catalog, null, 2));
-      fs.renameSync(NATIVE_GALLERY_PATH + '.tmp', NATIVE_GALLERY_PATH);
-      res.end(JSON.stringify({ ok: true, count: catalog.properties.length }));
-    } else if (req.method === 'GET') {
-      const catalog = fs.existsSync(NATIVE_GALLERY_PATH) ? validateCatalog(JSON.parse(fs.readFileSync(NATIVE_GALLERY_PATH, 'utf8'))) : { version: 1, properties: [] };
-      res.end(JSON.stringify({ ok: true, source: 'local', catalog }));
-    } else { res.statusCode = 405; res.end(JSON.stringify({ ok: false, msg: '请求方式不支持' })); }
-  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message })); }
-}
-
-async function handleNativeReplyPlan(req, res) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '按需选图仅限第 5 号 App。' })); return; }
-  try {
-    const raw = await readJsonBody(req);
-    const assessed = nativeAssessments.get(String(raw.noteId || ''));
-    if (!assessed) throw new Error('当前笔记需求尚未判断，请重新读取笔记');
-    const plan = await buildReplyPlan({ decision: assessed.decision, catalogPath: NATIVE_GALLERY_PATH, check: engine.check });
-    const summary = demandSummary(plan.demand || {});
-    const decision = { ...assessed.decision, decisionReason: (assessed.decision.decisionReason || assessed.decision.reason || '') + '\n需求：' + summary + '\n图库：' + plan.reason + (plan.property ? '；房源编号=' + plan.property.id : '') };
-    saveReplyPlan(db.open(), { runId: raw.runId, noteId: assessed.note.id, keyword: raw.keyword || '', plan });
-    db.recordTaskRunDecision({ runId: raw.runId, keyword: raw.keyword, note: assessed.note, decision });
-    res.end(JSON.stringify({ ok: true, plan, decision }));
-  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message })); }
-}
-
-function handleNativeReplyImage(req, res, params) {
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(); return; }
-  try {
-    const row = db.open().prepare('select plan_json from native_reply_plans where run_id=? and note_id=? and keyword=?')
-      .get(Number(params.get('run_id')) || 0, params.get('note_id') || '', params.get('keyword') || '');
-    const plan = row && JSON.parse(row.plan_json);
-    if (!plan || !plan.imagePath) throw new Error('no_image');
-    const stat = fs.statSync(plan.imagePath);
-    if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('bad_image');
-    const data = fs.readFileSync(plan.imagePath);
-    if (plan.imageSha256 && crypto.createHash('sha256').update(data).digest('hex') !== plan.imageSha256) throw new Error('image_changed');
-    let type = '';
-    if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) type = 'image/png';
-    else if (data[0] === 255 && data[1] === 216 && data[2] === 255) type = 'image/jpeg';
-    else if (['GIF87a', 'GIF89a'].includes(data.toString('ascii', 0, 6))) type = 'image/gif';
-    else if (data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP') type = 'image/webp';
-    if (!type) throw new Error('unsupported_preview');
-    res.setHeader('Content-Type', type);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.end(data);
-  } catch (_) { res.statusCode = 404; res.end('匹配图片无法预览'); }
-}
-
-// 第 5 号账号沿用原有控制台、配置与 SQLite 记录，只把实际操作端换成
-// Mac 小红书 App。Electron 原生执行器通过这两个本机接口读取运行参数并
-// 回写采集、判断、评论和每轮统计，因此页面上的原有功能无需另做一套。
-async function handleNativeAppConfig(req, res) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '原生 App 模式仅用于第 5 个账号。' })); return; }
-  try {
-    const cfg = db.getConfig();
-    const gate = throttle.status();
-    res.end(JSON.stringify({
-      ok: true,
-      keywords: parseKeywords(cfg.task_keyword),
-      maxNotes: throttle.currentScanLimit(cfg),
-      rescanMinutes: Math.max(1, Number(cfg.rescan_minutes) || 15),
-      liveSend: cfg.live_send === true,
-      scheduleEnabled: cfg.schedule_enabled !== false,
-      inWork: gate.inWork,
-      workReason: gate.workReason || ''
-    }));
-  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) })); }
-}
-
-async function handleNativeAppRecord(req, res) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '原生 App 模式仅用于第 5 个账号。' })); return; }
-  try {
-    const raw = await readJsonBody(req, 128000);
-    const action = String(raw.action || '');
-    const note = raw.note || {};
-    const keyword = String(raw.keyword || '').trim() || '未标记关键词';
-    const runId = Number(raw.runId) || 0;
-    let result = {};
-    if (action === 'start') {
-      nativeAssessments.clear();
-      result.runId = db.createTaskRun({ live: raw.live === true });
-    } else if (action === 'scan') {
-      if (!note.id) throw new Error('native_note_id_missing');
-      db.upsertNote(note);
-      db.addTaskRunScan(runId, keyword, 1);
-    } else if (action === 'decision') {
-      if (!note.id) throw new Error('native_note_id_missing');
-      db.upsertNote(Object.assign({}, note, { intent: (raw.decision && (raw.decision.categoryName || raw.decision.label)) || note.intent || '' }));
-      db.recordTaskRunDecision({ runId, keyword, note, decision: raw.decision || { eligible: false }, replyCount: 0 });
-    } else if (action === 'sent') {
-      if (!note.id) throw new Error('native_note_id_missing');
-      db.insertComment({ noteId: note.id, noteTitle: note.title, noteUrl: note.url, content: raw.comment, images: raw.imagePath, status: 'sent' });
-      db.recordTaskRunDecision({ runId, keyword, note, decision: raw.decision || { eligible: true }, replyCount: 1 });
-    } else if (action === 'reply-plan') {
-      if (!note.id || !raw.plan) throw new Error('native_reply_plan_missing');
-      saveReplyPlan(db.open(), { runId, noteId: note.id, keyword, plan: raw.plan });
-      db.recordTaskRunDecision({ runId, keyword, note, decision: raw.decision });
-    } else if (action === 'commented') {
-      result.commented = note.id ? db.hasCommented(note.id) : false;
-    } else if (action === 'gate') {
-      result.gate = throttle.canComment();
-    } else if (action === 'finish') {
-      db.finishTaskRun(runId, String(raw.status || 'stopped'));
-    } else {
-      throw new Error('native_record_action_invalid');
-    }
-    res.end(JSON.stringify({ ok: true, ...result }));
-  } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) })); }
 }
 
 async function handleLoginStatus(req, res) {
@@ -1076,7 +906,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
       delivery({ targetType: 'author', targetKey: merged.author || '', status: 'already_commented', reason: '本地已有成功发送记录' });
     }
   } else {
-    log('作者跳过:' + authorDecision.decisionReason + '；仅触达已确认的求租笔记作者');
+    log('作者跳过:' + authorDecision.decisionReason + '；仅触达求租笔记作者（地区待确认的高置信租户可放行）');
   }
 
   const inspectCommenters = engine.shouldInspectNoteCommenters(authorDecision, cfg);
@@ -1288,22 +1118,6 @@ async function handleBrowserHome(req, res) {
   }
 }
 
-// 发布功能的第一阶段只允许第五个「发布测试」账号使用：进入图文编辑器、
-// 上传本地测试图并填写内容；此接口中没有任何点击“发布”的实现。
-async function handlePublishTest(req, res) {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (ACCOUNT_ID !== 5) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '请切换到顶部的「发布测试」账号后再运行。' })); return; }
-  if (machine.running || runState.running) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '发布测试前请先停止第五个账号正在执行的任务。' })); return; }
-  try {
-    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
-    lastRun = { client, target, results: (lastRun && lastRun.results) || [] };
-    const result = await runPublishTest({ client, target, onLog: emitLog });
-    res.end(JSON.stringify(result));
-  } catch (e) {
-    res.end(JSON.stringify({ ok: false, msg: e && e.message ? e.message : String(e) }));
-  }
-}
-
 const server = http.createServer(async (req, res) => {
   // 控制台切换账号时会请求另一个本地账号服务。仅限本机端口，开放 CORS
   // 让 EventSource 和 fetch 可以无刷新切换，绝不对外网监听。
@@ -1311,6 +1125,10 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   const u = new URL(req.url, `http://localhost:${PORT}`);
+  if (u.pathname === '/account-config.js') {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end('window.xhsAccountConfig = ' + JSON.stringify({ count: ACCOUNT_COUNT, portBase: UI_PORT_BASE }) + ';'); return;
+  }
   if (u.pathname === '/') {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1330,13 +1148,6 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
   if (u.pathname === '/api/browser/refresh') { await handleBrowserRefresh(req, res); return; }
   if (u.pathname === '/api/browser/home') { await handleBrowserHome(req, res); return; }
-  if (u.pathname === '/api/publish/test') { await handlePublishTest(req, res); return; }
-  if (u.pathname === '/api/native/app-assess') { await handleNativeAppAssess(req, res); return; }
-  if (u.pathname === '/api/native/gallery') { await handleNativeGallery(req, res); return; }
-  if (u.pathname === '/api/native/reply-plan') { await handleNativeReplyPlan(req, res); return; }
-  if (u.pathname === '/api/native/reply-image') { handleNativeReplyImage(req, res, u.searchParams); return; }
-  if (u.pathname === '/api/native/app-config') { await handleNativeAppConfig(req, res); return; }
-  if (u.pathname === '/api/native/app-record') { await handleNativeAppRecord(req, res); return; }
   if (u.pathname === '/api/engine/clear-cache') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     if (!clearMachineCache()) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '任务仍在运行，请先停止' })); return; }
