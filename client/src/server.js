@@ -18,6 +18,8 @@ const { readLoginStatus, recoverInteractiveAccess } = require('./login-status');
 const { openNoteFromList, closeCurrentNote } = require('./note-navigation');
 const { parseKeywords, uniqueNotes, keywordScanPlan } = require('./keyword-utils');
 const { launchChromeForCdp } = require('./browser-launch');
+const { createOutreachPicker } = require('./outreach-copy');
+const { verifyCommentVisibility } = require('./comment-visibility');
 const {
   COMMENT_COMPOSER_PROBE: PROBE,
   pickCommentInput,
@@ -34,6 +36,7 @@ const CHROME_PROFILE = path.join(__dirname, '..', '.xhs-chrome-profile');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
+const outreachPicker = createOutreachPicker();
 
 const REFRESH_ACTIVE_COMMENT_INPUT = `(function(){
   var el=document.querySelector('[data-sla-comment-editor="active"]');
@@ -890,7 +893,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
   if (engine.shouldCommentNoteAuthor(authorDecision)) {
     let already = false; try { already = db.hasCommented(note.id); } catch (e) {}
     if (!already) {
-      const text = String(cfg.outreach_fixed_text || '').trim() || await engine.makeComment(classifiedNote, cfg.task_direction || '', cfg);
+      const text = outreachPicker.pick(cfg) || await engine.makeComment(classifiedNote, cfg.task_direction || '', cfg);
       if (engine.check(text).ok) {
         log((dry ? '[草稿] ' : '') + '作者有需求，顶层评论:' + text);
         if (shouldStop()) return { sent, done, stopped: true };
@@ -941,7 +944,7 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
     if (processedOutboundLeads.has(key)) { log('评论者跳过(本次已处理):' + item.nick); delivery({ targetType: 'commenter', targetKey: key, status: 'duplicate_in_run', reason: '本轮已处理' }); continue; }
     processedOutboundLeads.add(key);
     const prepared = { type: 'comment', nick: item.nick, content: item.content, basis_text: '来自《' + (note.title || '无标题') + '》评论区', can_auto_reply: true };
-    const text = String(cfg.outreach_fixed_text || '').trim() || await engine.makeReply(prepared, cfg);
+    const text = outreachPicker.pick(cfg) || await engine.makeReply(prepared, cfg);
     if (!engine.check(text).ok) { log('评论者跳过(文案合规不过):' + item.nick); delivery({ targetType: 'commenter', targetKey: key, status: 'copy_invalid', reason: '回复文案合规校验未通过' }); continue; }
     if (!dry) {
       const gate = throttle.canComment({ ignoreGap: true });
@@ -1072,6 +1075,65 @@ async function handleConfig(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try { res.end(JSON.stringify({ ok: true, config: db.getConfig() })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
+async function handleVisibilityCandidates(req, res, q) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try {
+    res.end(JSON.stringify({
+      ok: true,
+      accountId: ACCOUNT_ID,
+      items: db.listVisibilityCandidates(q.get('limit')),
+      stats: db.visibilityStats()
+    }));
+  } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+async function handleAccountIdentity(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try {
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    const state = await readLoginStatus(client, target);
+    res.end(JSON.stringify({
+      ok: true,
+      accountId: ACCOUNT_ID,
+      loggedIn: state.loggedIn,
+      busy: machine.running || runState.running,
+      userId: state.userId || '',
+      nickname: state.nickname || ''
+    }));
+  } catch (e) {
+    res.end(JSON.stringify({ ok: false, accountId: ACCOUNT_ID, busy: machine.running || runState.running, msg: e.message }));
+  }
+}
+async function handleVisibilityCheck(req, res, q) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const sourceAccount = Number(q.get('source_account')) || 0;
+  if (sourceAccount === ACCOUNT_ID) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '必须由另一个账号进行可见性抽检' })); return; }
+  if (machine.running || runState.running) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, busy: true, msg: '抽检账号正在执行任务' })); return; }
+  try {
+    const { client, target } = await engine.connect(ENDPOINT, broadcastPointer);
+    const verifier = await readLoginStatus(client, target);
+    if (!verifier.loggedIn) { res.statusCode = 409; res.end(JSON.stringify({ ok: false, msg: '抽检账号未登录' })); return; }
+    const result = await verifyCommentVisibility({
+      client, target,
+      noteUrl: q.get('note_url') || '',
+      userId: q.get('user_id') || '',
+      nickname: q.get('nickname') || '',
+      content: q.get('content') || '',
+      maxScrolls: Math.max(2, Math.min(20, Number(q.get('max_scrolls')) || 12))
+    });
+    res.end(JSON.stringify({ ok: true, verifierAccount: ACCOUNT_ID, result }));
+  } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
+async function handleVisibilityMark(req, res, q) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try {
+    const changed = db.updateCommentVisibility(q.get('comment_id'), {
+      status: q.get('status'),
+      verifierAccount: q.get('verifier_account'),
+      reason: q.get('reason')
+    });
+    res.end(JSON.stringify({ ok: true, changed: Number(changed.changes) || 0, stats: db.visibilityStats() }));
+  } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+}
 async function handleRunStats(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try { res.end(JSON.stringify({ ok: true, ...db.taskRunReport(q.get('run_id') || machine.runId) })); }
@@ -1173,6 +1235,10 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/stop') { await handleStop(req, res); return; }
   if (u.pathname === '/api/cursor-install') { await handleCursorInstall(req, res); return; }
   if (u.pathname === '/api/config') { await handleConfig(req, res); return; }
+  if (u.pathname === '/api/account/identity') { await handleAccountIdentity(req, res); return; }
+  if (u.pathname === '/api/visibility/candidates') { await handleVisibilityCandidates(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/visibility/check') { await handleVisibilityCheck(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/visibility/mark') { await handleVisibilityMark(req, res, u.searchParams); return; }
   if (u.pathname === '/api/account') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, accountId: ACCOUNT_ID, port: PORT })); return; }
   if (u.pathname === '/api/throttle') { await handleThrottle(req, res); return; }
   if (u.pathname === '/api/save-config') { await handleSaveConfig(req, res, u.searchParams); return; }

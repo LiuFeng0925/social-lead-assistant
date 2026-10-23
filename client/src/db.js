@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const inboxUtils = require('./inbox-utils');
 const leadModel = require('./lead-model');
 const { parseKeywords, migrateLegacyTotalSchedule } = require('./keyword-utils');
+const { normalizeOutreachTexts } = require('./outreach-copy');
 
 // 多账号模式下，每个账号工作进程传入独立的数据目录。未传入时仍沿用
 // 单账号版本的 data/，保证旧数据和旧启动方式完全兼容。
@@ -100,10 +101,25 @@ function open() {
     create table if not exists config (k text primary key, v text);
   `);
   ensureInboxSchema(db);
+  ensureCommentVisibilitySchema(db);
   ensureTaskRunDecisionSchema(db);
   ensureTaskRunReplyGuards(db);
   backfillInboxIdentities(db);
   return db;
+}
+function close() {
+  if (!db) return;
+  db.close();
+  db = null;
+}
+
+function ensureCommentVisibilitySchema(database) {
+  const cols = new Set(database.prepare('pragma table_info(comments)').all().map((row) => row.name));
+  if (!cols.has('visibility_status')) database.exec("alter table comments add column visibility_status text not null default 'unverified'");
+  if (!cols.has('visibility_checked_at')) database.exec('alter table comments add column visibility_checked_at text');
+  if (!cols.has('visibility_verifier_account')) database.exec('alter table comments add column visibility_verifier_account integer');
+  if (!cols.has('visibility_reason')) database.exec('alter table comments add column visibility_reason text');
+  database.exec('create index if not exists idx_comments_visibility on comments(status, visibility_status, created_at)');
 }
 
 function ensureTaskRunDecisionSchema(database) {
@@ -216,6 +232,31 @@ function listComments(limit = 100, range = {}) {
   const r = rangeWhere('created_at', range);
   const where = r.clauses.length ? `where ${r.clauses.join(' and ')}` : '';
   return open().prepare(`select * from comments ${where} order by id desc limit ?`).all(...r.args, limit);
+}
+function listVisibilityCandidates(limit = 30) {
+  const max = Math.max(1, Math.min(200, Number(limit) || 30));
+  return open().prepare(`select id, note_id, note_title, note_url, content, created_at,
+    coalesce(visibility_status,'unverified') visibility_status, visibility_checked_at,
+    visibility_verifier_account, visibility_reason
+    from comments
+    where status='sent' and trim(coalesce(note_url,''))<>''
+    order by case when coalesce(visibility_status,'unverified')='unverified' then 0 else 1 end,
+      coalesce(visibility_checked_at,'') asc, id desc limit ?`).all(max);
+}
+function updateCommentVisibility(id, result = {}) {
+  const allowed = new Set(['visible', 'not_found', 'error', 'unverified']);
+  const status = allowed.has(String(result.status || '')) ? String(result.status) : 'error';
+  return open().prepare(`update comments set visibility_status=?, visibility_checked_at=?,
+    visibility_verifier_account=?, visibility_reason=? where id=?`).run(
+      status, now(), Number(result.verifierAccount) || null,
+      String(result.reason || '').slice(0, 500), Number(id));
+}
+function visibilityStats() {
+  const rows = open().prepare(`select coalesce(visibility_status,'unverified') status, count(*) count
+    from comments where status='sent' and trim(coalesce(note_url,''))<>'' group by coalesce(visibility_status,'unverified')`).all();
+  const out = { total: 0, unverified: 0, visible: 0, not_found: 0, error: 0 };
+  for (const row of rows) { const key = Object.prototype.hasOwnProperty.call(out, row.status) ? row.status : 'error'; out[key] += Number(row.count) || 0; out.total += Number(row.count) || 0; }
+  return out;
 }
 function listNotes(limit = 200, range = {}) {
   const r = rangeWhere('last_seen_at', range);
@@ -529,6 +570,7 @@ const DEFAULT_CONFIG = {
   task_keyword: '朝阳 租房',
   task_direction: '结合对方诉求友好回应,引导看主页/私聊,绝不留联系方式',
   outreach_fixed_text: '',           // 外呼固定短句；留空才使用 AI/模板生成
+  outreach_fixed_texts: [],          // 外呼固定话术池；1-10 条，逐轮随机使用
   lead_local_words: [],              // 可服务区域；命中明确外地城市时整篇跳过
   lead_location_aliases: [],         // 通勤地标到服务区域的已确认映射
   lead_layout_policy: 'any',        // 目标户型：默认不限；可在界面单独收紧为一居室整租
@@ -609,6 +651,7 @@ function getConfig() {
     setConfig({ schedule: cfg.schedule, task_max: cfg.task_max, scan_quota_mode: cfg.scan_quota_mode });
   }
   cfg.lead_model = leadModel.normalizeLeadModel(cfg.lead_model);
+  cfg.outreach_fixed_texts = normalizeOutreachTexts(cfg.outreach_fixed_texts, cfg.outreach_fixed_text);
   return cfg;
 }
 function setConfig(partial) {
@@ -633,4 +676,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, upsertNote, hasCommented, insertComment, insertLead, listComments, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, recordTaskRunDelivery, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
+module.exports = { open, close, upsertNote, hasCommented, insertComment, insertLead, listComments, listVisibilityCandidates, updateCommentVisibility, visibilityStats, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, recordTaskRunDelivery, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };

@@ -10,6 +10,12 @@ const {
   safeXhsUrl
 } = require('../src/login-status');
 
+test('login status keeps the current Xiaohongshu identity for cross-account visibility checks', () => {
+  const parsed = parseLoginStatusValue(JSON.stringify({ loggedIn: true, userId: 'abc123', nickname: '房东小王' }));
+  assert.equal(parsed.userId, 'abc123');
+  assert.equal(parsed.nickname, '房东小王');
+});
+
 test('parseLoginStatusValue keeps soft login wall separate from hard security wall', () => {
   const parsed = parseLoginStatusValue(JSON.stringify({
     loggedIn: false,

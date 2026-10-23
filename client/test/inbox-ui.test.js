@@ -57,11 +57,26 @@ test('shared console provides a browser home button for every account', () => {
   assert.doesNotMatch(html, /goNativeXhsHome/);
 });
 
-test('task settings expose fixed outreach copy and clarify pending analysis count', () => {
+test('task settings expose up to ten fixed outreach copies and clarify pending analysis count', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.ok(html.includes('id="outreach_fixed_text"'));
+  assert.ok(html.includes('id="outreach_fixed_texts"'));
+  assert.ok(html.includes('发送时随机选择'));
+  assert.ok(html.includes('host.children.length >= 10'));
+  assert.ok(html.includes('outreach_fixed_texts: outreachCopies'));
   assert.ok(html.includes('待分析笔记'));
   assert.equal(html.includes('<div class="l">待评论</div>'), false);
+});
+
+test('shared console exposes one global cross-account comment visibility audit', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.ok(html.includes('data-p="visibility"'));
+  assert.ok(html.includes('id="page-visibility"'));
+  assert.ok(html.includes('全账号评论抽检'));
+  assert.ok(html.includes('candidate.accountId !== item.accountId'), 'the author account must never verify itself');
+  assert.ok(html.includes("'/api/visibility/check?'"));
+  assert.ok(server.includes("u.pathname === '/api/visibility/check'"));
+  assert.ok(server.includes('machine.running || runState.running'), 'busy accounts must not be used as verifiers');
 });
 
 test('record pages expose compact date filters with custom seconds', () => {

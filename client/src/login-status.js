@@ -22,6 +22,7 @@ const LOGIN_STATUS_EXPR = `(function(){
   var user = unwrap(s.user) || {};
   var info = unwrap(user.userInfo) || unwrap(user.user_info) || unwrap(user.info) || {};
   var userId = info.userId || info.user_id || user.userId || user.user_id || '';
+  var nickname = info.nickname || info.nickName || info.name || user.nickname || user.nickName || '';
   var loggedFlag = unwrap(user.loggedIn) === true;
   var token = storage('RWP_LOGIN_TOKEN');
   var body = clean(document.body && document.body.innerText);
@@ -56,6 +57,8 @@ const LOGIN_STATUS_EXPR = `(function(){
   var loggedIn=sessionEvidence&&!loginWall&&!securityWall;
   return JSON.stringify({
     loggedIn:!!loggedIn,
+    userId:String(userId||''),
+    nickname:clean(nickname),
     sessionEvidence:!!sessionEvidence,
     hasUserId:!!userId,
     loggedFlag:!!loggedFlag,
@@ -88,6 +91,8 @@ function parseLoginStatusValue(value) {
   const securityWall = !!data.securityWall || !!pageReason;
   return {
     loggedIn: !!data.loggedIn && !securityWall,
+    userId: String(data.userId || ''),
+    nickname: String(data.nickname || ''),
     sessionEvidence: !!(data.sessionEvidence || data.hasUserId || data.loggedFlag || data.hasToken),
     hasUserId: !!data.hasUserId,
     loggedFlag: !!data.loggedFlag,
