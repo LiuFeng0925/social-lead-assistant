@@ -103,7 +103,7 @@ test('maintenance finishes before worker and browser creation on startup', () =>
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8');
   const startup = source.slice(source.indexOf('app.whenReady().then(async () => {'));
   assert.ok(startup.indexOf('await clearBrowserCachesOnRequest(') >= 0);
-  assert.ok(startup.indexOf('await clearBrowserCachesOnRequest(') < startup.indexOf('startWorker(id)'));
+  assert.ok(startup.indexOf('await clearBrowserCachesOnRequest(') < startup.search(/startWorker\(id(?:,|\))/));
   assert.ok(startup.indexOf('await clearBrowserCachesOnRequest(') < startup.indexOf('new BrowserWindow('));
   assert.match(startup, /Array.from\(\{ length: ACCOUNT_COUNT \}, \(_, index\) => accountMeta\(index \+ 1\)\)/);
 });

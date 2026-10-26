@@ -187,11 +187,12 @@
   <p>更新：2026-10-19。一个管理窗口集中操作 15 个网页账号，顶部按编号排列并自动换行，可备注城市或负责人。</p>
   <table><tr><th>功能目的</th><td>统一管理账号；点击切换对应控制台，切换不停止其他账号任务。</td></tr>
   <tr><th>隔离规则</th><td>每账号独立登录、任务、配置、限频、数据库与统计。</td></tr>
+  <tr><th>城市出口</th><td>每个账号在「获客模型」的服务区域上方用一个下拉框选择石家庄或成都，系统自动使用对应固定 HTTP 代理。客户端启动时检测真实公网 IP 与城市；代理失败或城市不符时禁止直连与启动任务，不回落到本机 IP。凭据只保存在本机账号数据库，接口不回传明文密码。</td></tr>
   <tr><th>数据兼容</th><td>原账号编号和登录分区保持不变；账号 5 恢复为网页账号，历史测试数据保留；新增账号需扫码登录。</td></tr>
   <tr><th>默认行为</th><td>启动不自动运行获客任务；移除 Mac 原生 App 和发布测试入口。</td></tr>
   <tr><th>配置</th><td>默认 15 个，XHS_ACCOUNT_COUNT 可配置 1–50；容量需实测。</td></tr></table>
   <div style="padding:16px;background:#f5f6f8;border:1px solid #e6e9ef;border-radius:12px"><strong>15 个网页账号 · 点击切换</strong><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:10px"><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 1</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 2</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 3</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 4</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff0f2;padding:7px 10px;text-align:center">账号 5</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 6</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 7</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 8</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 9</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 10</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 11</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 12</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 13</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 14</span><span style="border:1px solid #d6dae2;border-radius:7px;background:#fff;padding:7px 10px;text-align:center">账号 15</span></div><p>账号 5 · 独立登录、任务和统计　✏ 备注</p></div>
-  <p><strong>验收：</strong>1–15 可选择和网页登录；5、10、15 使用各自服务；账号 1 不会匹配账号 10–15；备注和数据独立保存；旧账号的延迟画面、日志不覆盖新账号；重开恢复所选账号。</p></section>
+  <p><strong>验收：</strong>1–15 可选择和网页登录；5、10、15 使用各自服务；账号 1 不会匹配账号 10–15；备注和数据独立保存；旧账号的延迟画面、日志不覆盖新账号；重开恢复所选账号。启用石家庄代理时仅在检测结果为石家庄后加载小红书；代理失败或城市不符时显示阻断页且任务不能开始。</p></section>
 
   <section id="search"><h2 class="sec"><span class="n">2.2</span>任务设置:检索条件 + 筛选 <span class="badge p0">P0</span> <span class="done" style="font-size:13px">✅已实现</span></h2>
   <p class="msub" style="margin-bottom:14px">↓ 「任务设置」页 = 整体条件(关键词/筛选/评论方向/抓取上限)+ 排班(见 2.10);本节讲整体条件。</p>
@@ -200,7 +201,7 @@
     <div class="fhead">功能卡 · 任务设置:检索条件 + 筛选</div>
     <table class="ftbl">
       <tr><th>功能目的</th><td>让运营自定义检索条件,系统据此在小红书上找到相关求租/房源笔记及其评论区,作为后续匹配与触达的来源。</td></tr>
-      <tr><th>用户怎么用</th><td>在「任务设置」页配置:搜索关键词、<strong>筛选</strong>(排序/发布时间/笔记类型/搜索范围,= 小红书搜索页原生筛选)、评论主方向、抓取上限 → 点"保存";控制台「▶ 开始」即按保存的设置跑。</td></tr>
+      <tr><th>用户怎么用</th><td>在「获客模型」页用一个下拉框选择当前账号 IP 城市（石家庄/成都），再填写服务区域；在「任务设置」页配置搜索关键词、<strong>筛选</strong>(排序/发布时间/笔记类型/搜索范围,= 小红书搜索页原生筛选)、评论主方向、抓取上限 → 点"保存"。IP 城市选择自动保存，重启后完成出口校验。</td></tr>
       <tr><th>详细规则</th><td>
         ① 用关键词生成检索词进搜索页;<br>
         ② <strong>筛选用拟人点击应用</strong>——不在 URL 拼参数,而是导航后像真人一样点开筛选面板、按可见文字("最新""一周内""图文"等)点选(排序若是下拉先展开),按文字定位、抗改版,命中/未命中都打日志;<br>
@@ -211,6 +212,7 @@
         <table class="cfg">
           <tr><th>配置项</th><th>默认</th><th>取值/说明</th></tr>
           <tr><td>地区匹配开关</td><td>开</td><td>关闭则不限城市</td></tr>
+          <tr><td>当前账号 IP 城市</td><td>石家庄</td><td>获客模型页服务区域上方下拉选择石家庄/成都；不展示代理地址与密码，校验失败即禁止直连</td></tr>
           <tr><td>目标城市</td><td>空</td><td>可多城;<strong>不绑账号属地</strong>(人在A城业务在B城)</td></tr>
           <tr><td>搜索关键词</td><td>空</td><td>多个,逗号/换行分隔</td></tr>
           <tr><td>笔记类型</td><td>求租+房源</td><td>求租帖 / 房源帖 可分别勾选</td></tr>
@@ -347,7 +349,9 @@
         ① 画面用 CDP 截图流(screencast)实时推送;<br>
         ② 红点=机器鼠标位置:移动按贝塞尔轨迹、滚动随页翻动、点击放扩散环,走过留<strong>淡出彗星尾巴</strong>画出路径;<br>
         ③ 监控画面一连上,红点<strong>居中常驻显示</strong>(呼吸脉动)便于辨认;<br>
-        ④ 画面可点击 = 直接在监控里操作内嵌浏览器;坐标按画面缩放比映射。</td></tr>
+        ④ 画面可点击 = 直接在监控里操作内嵌浏览器;坐标按画面缩放比映射;<br>
+        ⑤ 任务漏斗按本轮唯一笔记 ID 统计,同一笔记被重复检索不重复计入“看到”,并满足“看到 = 已判断 + 读取失败 + 待判断”;<br>
+        ⑥ 笔记详情读取失败自动重试一次,再次失败单列为“读取失败”,不伪装成待判断。</td></tr>
       <tr><th>异常与边界</th><td>监控画面未连上(无截图帧)时红点不显示——属预期,连上即居中出现。</td></tr>
       <tr><th>优先级</th><td><span class="badge p2">P1</span></td></tr>
       <tr><th>关联需求</th><td><code>FR-C</code> · 反检测清单第 6 类</td></tr>
@@ -358,6 +362,8 @@
         <li>跑检索时,红点沿轨迹移动、滚动翻页拖尾巴、点开笔记放扩散环。</li>
         <li>红点足够明显(约 42px + 红心白环红晕 + 脉动),白底页面清晰可见。</li>
         <li>在监控画面上点击能驱动内嵌浏览器。</li>
+        <li>同一笔记被多个关键词或多轮检索命中时,“看到”只增加一次,且不会被重复加入判断队列。</li>
+        <li>运行漏斗始终满足“看到 = 已判断 + 读取失败 + 待判断”;模型调用失败与详情读取失败分开显示。</li>
       </ul>
     </div>
   </div>

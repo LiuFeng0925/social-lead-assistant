@@ -86,6 +86,24 @@ function open() {
       decided_at text not null,
       unique (run_id, keyword, note_id)
     );
+    create table if not exists task_run_notes (
+      run_id integer not null,
+      note_id text not null,
+      keyword text not null,
+      title text,
+      author text,
+      url text,
+      status text not null default 'pending',
+      attempt_count integer not null default 0,
+      failure_reason text,
+      first_seen_at text not null,
+      last_seen_at text not null,
+      finished_at text,
+      duplicate_count integer not null default 0,
+      primary key (run_id, note_id)
+    );
+    create index if not exists idx_task_run_notes_status on task_run_notes(run_id, status);
+    create index if not exists idx_task_run_notes_keyword on task_run_notes(run_id, keyword);
     create table if not exists task_run_deliveries (
       id integer primary key autoincrement,
       run_id integer not null,
@@ -103,6 +121,7 @@ function open() {
   ensureInboxSchema(db);
   ensureCommentVisibilitySchema(db);
   ensureTaskRunDecisionSchema(db);
+  ensureTaskRunNoteSchema(db);
   ensureTaskRunReplyGuards(db);
   backfillInboxIdentities(db);
   return db;
@@ -125,6 +144,20 @@ function ensureCommentVisibilitySchema(database) {
 function ensureTaskRunDecisionSchema(database) {
   const cols = new Set(database.prepare('pragma table_info(task_run_decisions)').all().map((row) => row.name));
   if (!cols.has('review_required')) database.exec('alter table task_run_decisions add column review_required integer not null default 0');
+}
+
+function ensureTaskRunNoteSchema(database) {
+  // 旧版本只保存了“扫描次数”和最终判断，无法还原每一次重复扫描的笔记 ID。
+  // 能确定完成判断的历史记录按唯一笔记回填，避免旧轮次继续显示虚假的巨大待判断数。
+  database.exec(`
+    insert or ignore into task_run_notes
+      (run_id, note_id, keyword, title, author, url, status, attempt_count,
+       failure_reason, first_seen_at, last_seen_at, finished_at, duplicate_count)
+    select run_id, note_id, keyword, title, author, url, 'judged', 0,
+      '', decided_at, decided_at, decided_at, 0
+    from task_run_decisions
+    order by id;
+  `);
 }
 
 // 兼容仍在运行的旧服务进程：即使它用旧的“覆盖”方式写入统计，SQLite
@@ -281,6 +314,72 @@ function addTaskRunScan(runId, keyword, count) {
     on conflict(run_id, keyword) do update set scanned_count=scanned_count + excluded.scanned_count`)
     .run(runId, String(keyword).trim(), Number(count));
 }
+
+function recordTaskRunNotes({ runId, keyword, notes } = {}) {
+  const id = Number(runId);
+  const key = String(keyword || '').trim();
+  if (!id || !key || !Array.isArray(notes) || !notes.length) return [];
+  const d = open();
+  const inserted = [];
+  const insert = d.prepare(`insert into task_run_notes
+    (run_id, note_id, keyword, title, author, url, status, attempt_count,
+     failure_reason, first_seen_at, last_seen_at, finished_at, duplicate_count)
+    values (?,?,?,?,?,?,'pending',0,'',?,?,null,0)
+    on conflict(run_id, note_id) do nothing`);
+  const touch = d.prepare(`update task_run_notes set
+    title=case when trim(?)<>'' then ? else title end,
+    author=case when trim(?)<>'' then ? else author end,
+    url=case when trim(?)<>'' then ? else url end,
+    last_seen_at=?, duplicate_count=duplicate_count+1
+    where run_id=? and note_id=?`);
+  const at = now();
+  d.exec('begin');
+  try {
+    d.prepare(`insert into task_run_keywords (run_id, keyword, scanned_count, reply_count)
+      values (?,?,0,0) on conflict(run_id, keyword) do nothing`).run(id, key);
+    for (const note of notes) {
+      const noteId = String(note && note.id || '').trim();
+      if (!noteId) continue;
+      const title = String(note.title || '');
+      const author = String(note.author || '');
+      const url = String(note.url || '');
+      const result = insert.run(id, noteId, key, title, author, url, at, at);
+      if (Number(result.changes) > 0) inserted.push(note);
+      else touch.run(title, title, author, author, url, url, at, id, noteId);
+    }
+    if (inserted.length) {
+      d.prepare(`update task_run_keywords set scanned_count=scanned_count+?
+        where run_id=? and keyword=?`).run(inserted.length, id, key);
+    }
+    d.exec('commit');
+  } catch (error) {
+    try { d.exec('rollback'); } catch (ignored) {}
+    throw error;
+  }
+  return inserted;
+}
+
+function startTaskRunNoteAttempt(runId, noteId) {
+  if (!Number(runId) || !String(noteId || '').trim()) return { changes: 0 };
+  return open().prepare(`update task_run_notes set status='processing',
+    attempt_count=attempt_count+1, last_seen_at=? where run_id=? and note_id=?`)
+    .run(now(), Number(runId), String(noteId));
+}
+
+function recordTaskRunReadFailure({ runId, noteId, reason, maxAttempts = 2 } = {}) {
+  const id = Number(runId);
+  const key = String(noteId || '').trim();
+  if (!id || !key) return { retry: false, attempts: 0, status: 'read_failed' };
+  const d = open();
+  const row = d.prepare(`select attempt_count from task_run_notes where run_id=? and note_id=?`).get(id, key);
+  const attempts = Math.max(1, Number(row && row.attempt_count) || 1);
+  const retry = attempts < Math.max(1, Number(maxAttempts) || 2);
+  const status = retry ? 'pending' : 'read_failed';
+  d.prepare(`update task_run_notes set status=?, failure_reason=?, finished_at=?
+    where run_id=? and note_id=?`).run(status, String(reason || '详情读取失败').slice(0, 500), retry ? null : now(), id, key);
+  return { retry, attempts, status };
+}
+
 function recordTaskRunDecision({ runId, keyword, note, decision, replyCount = 0 } = {}) {
   if (!Number(runId) || !String(keyword || '').trim() || !note || !note.id || !decision) return;
   const d = open();
@@ -310,6 +409,18 @@ function recordTaskRunDecision({ runId, keyword, note, decision, replyCount = 0 
   d.prepare(`insert into task_run_keywords (run_id, keyword, scanned_count, reply_count) values (?,?,0,?)
     on conflict(run_id, keyword) do update set reply_count=max(0, reply_count + excluded.reply_count)`)
     .run(runId, key, replies);
+  const tracked = d.prepare(`select 1 from task_run_notes where run_id=? and note_id=?`).get(runId, String(note.id));
+  if (!tracked) {
+    const at = now();
+    d.prepare(`insert into task_run_notes
+      (run_id, note_id, keyword, title, author, url, status, attempt_count,
+       failure_reason, first_seen_at, last_seen_at, finished_at, duplicate_count)
+      values (?,?,?,?,?,?,'judged',0,'',?,?,?,0)`)
+      .run(runId, String(note.id), key, note.title || '', note.author || '', note.url || '', at, at, at);
+  } else {
+    d.prepare(`update task_run_notes set status='judged', failure_reason='', finished_at=?
+      where run_id=? and note_id=?`).run(now(), runId, String(note.id));
+  }
 }
 
 function recordTaskRunDelivery({ runId, keyword, noteId, targetType, targetKey, status, reason } = {}) {
@@ -361,26 +472,50 @@ function taskRunReport(runId) {
   const run = selectedId ? d.prepare(`select id, started_at, stopped_at, status, live from task_runs where id=?`).get(selectedId) : null;
   if (!run) return { run: null, runs, keywords: [], decisions: [], deliveries: [], summary: {} };
   rebuildTaskRunReplyCounts(run.id);
-  const keywords = d.prepare(`select k.keyword, k.scanned_count,
-    count(d.id) as judged_count,
-    coalesce(sum(case when d.useful=1 then 1 else 0 end),0) as useful_count,
-    coalesce(sum(case when d.review_required=1 then 1 else 0 end),0) as review_count,
-    coalesce(sum(case when d.useful=0 and d.review_required=0 and d.reason not like '%大模型分类失败%' then 1 else 0 end),0) as useless_count,
-    coalesce(sum(case when d.reason like '%大模型分类失败%' then 1 else 0 end),0) as failed_count,
+  const keywords = d.prepare(`select k.keyword,
+    count(n.note_id) as scanned_count,
+    coalesce(sum(case when n.status='judged' then 1 else 0 end),0) as judged_count,
+    coalesce(sum(case when n.status='read_failed' then 1 else 0 end),0) as read_failed_count,
+    coalesce(sum(case when n.status in ('pending','processing') then 1 else 0 end),0) as pending_count,
+    coalesce(sum(case when n.status='judged' and decision.useful=1 then 1 else 0 end),0) as useful_count,
+    coalesce(sum(case when n.status='judged' and decision.review_required=1 then 1 else 0 end),0) as review_count,
+    coalesce(sum(case when n.status='judged' and decision.useful=0 and decision.review_required=0
+      and decision.reason not like '%大模型分类失败%' then 1 else 0 end),0) as useless_count,
+    coalesce(sum(case when n.status='judged' and decision.reason like '%大模型分类失败%' then 1 else 0 end),0) as failed_count,
     k.reply_count
-    from task_run_keywords k left join task_run_decisions d on d.run_id=k.run_id and d.keyword=k.keyword
-    where k.run_id=? group by k.run_id, k.keyword, k.scanned_count, k.reply_count order by k.rowid`).all(run.id)
-    .map((row) => Object.assign(row, { pending_count: Math.max(0, Number(row.scanned_count) - Number(row.judged_count)) }));
+    from task_run_keywords k
+    left join task_run_notes n on n.run_id=k.run_id and n.keyword=k.keyword
+    left join task_run_decisions decision on decision.id=(
+      select latest.id from task_run_decisions latest
+      where latest.run_id=n.run_id and latest.note_id=n.note_id
+      order by latest.id desc limit 1
+    )
+    where k.run_id=? group by k.run_id, k.keyword, k.reply_count order by k.rowid`).all(run.id);
   const decisions = d.prepare(`select keyword, note_id, title, author, url, category_name, location_match, useful, review_required, reason, evidence, location_evidence, reply_count, decided_at,
     case when reason like '%大模型分类失败%' then 1 else 0 end as model_failed
     from task_run_decisions where run_id=? order by id desc limit 300`).all(run.id);
   const deliveries = d.prepare(`select status, count(*) as count from task_run_deliveries where run_id=? group by status order by count(*) desc`).all(run.id);
+  const readFailures = d.prepare(`select keyword, note_id, title, author, url,
+    attempt_count, failure_reason, finished_at
+    from task_run_notes where run_id=? and status='read_failed'
+    order by finished_at desc limit 100`).all(run.id);
   const useful = d.prepare(`select count(*) as row_count, count(distinct note_id) as unique_count from task_run_decisions where run_id=? and useful=1`).get(run.id) || {};
+  const tracking = d.prepare(`select count(*) as seen_count,
+    coalesce(sum(case when status='judged' then 1 else 0 end),0) as judged_count,
+    coalesce(sum(case when status='read_failed' then 1 else 0 end),0) as read_failed_count,
+    coalesce(sum(case when status in ('pending','processing') then 1 else 0 end),0) as pending_count,
+    coalesce(sum(duplicate_count),0) as duplicate_seen_count
+    from task_run_notes where run_id=?`).get(run.id) || {};
   const summary = {
+    seen_count: Number(tracking.seen_count) || 0,
+    judged_count: Number(tracking.judged_count) || 0,
+    read_failed_count: Number(tracking.read_failed_count) || 0,
+    pending_count: Number(tracking.pending_count) || 0,
+    duplicate_seen_count: Number(tracking.duplicate_seen_count) || 0,
     unique_useful_count: Number(useful.unique_count) || 0,
     duplicate_useful_count: Math.max(0, (Number(useful.row_count) || 0) - (Number(useful.unique_count) || 0))
   };
-  return { run, runs, keywords, decisions, deliveries, summary };
+  return { run, runs, keywords, decisions, deliveries, readFailures, summary };
 }
 
 function listFailedTaskRunDecisions(runId) {
@@ -575,6 +710,15 @@ const DEFAULT_CONFIG = {
   lead_location_aliases: [],         // 通勤地标到服务区域的已确认映射
   lead_layout_policy: 'any',        // 目标户型：默认不限；可在界面单独收紧为一居室整租
   reply_under_supply_enabled: false, // 是否在服务区内房源/同行笔记下回复明确求租评论者
+  // ── 账号网络出口：由 Electron 在启动时读取并校验；启用后校验失败会禁止直连 ──
+  proxy_enabled: false,
+  proxy_city: '',
+  proxy_protocol: 'http',
+  proxy_host: '',
+  proxy_port: 0,
+  proxy_username: '',
+  proxy_password: '',
+  proxy_profiles: {},               // 本机保存的城市代理档案；接口只返回城市列表，不回传凭据
   task_max: 40,
   scan_quota_mode: 'per_keyword',
   task_sort: '综合', task_note_time: '不限', task_note_type: '不限', task_note_range: '不限',
@@ -676,4 +820,4 @@ function commentStats() {
   return { today: today.c, lastHour: hour.c, lastAt: last.m || null };
 }
 
-module.exports = { open, close, upsertNote, hasCommented, insertComment, insertLead, listComments, listVisibilityCandidates, updateCommentVisibility, visibilityStats, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunDecision, recordTaskRunDelivery, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };
+module.exports = { open, close, upsertNote, hasCommented, insertComment, insertLead, listComments, listVisibilityCandidates, updateCommentVisibility, visibilityStats, listNotes, listLeads, createTaskRun, finishTaskRun, addTaskRunScan, recordTaskRunNotes, startTaskRunNoteAttempt, recordTaskRunReadFailure, recordTaskRunDecision, recordTaskRunDelivery, rebuildTaskRunReplyCounts, taskRunReport, listFailedTaskRunDecisions, stats, getConfig, setConfig, firstUsedAt, commentStats, commentCountSince, insertInbox, listInbox, inboxStats, updateInboxByKey, repliedToday, findInboxByEventKey, hasRecentInboxReply };

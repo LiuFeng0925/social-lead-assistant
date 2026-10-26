@@ -31,6 +31,12 @@ const {
 const PORT = Number(process.env.XHS_UI_PORT || 3000);
 const ENDPOINT = process.env.XHS_CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const ACCOUNT_ID = Math.max(1, Number(process.env.XHS_ACCOUNT_ID || 1));
+const PROXY_RUNTIME = {
+  status: String(process.env.XHS_PROXY_STATUS || 'disabled'),
+  city: String(process.env.XHS_PROXY_CITY || ''),
+  ip: String(process.env.XHS_PROXY_IP || ''),
+  message: String(process.env.XHS_PROXY_MESSAGE || '')
+};
 const TMP = path.join(__dirname, '..', 'tmp');
 const CHROME_PROFILE = path.join(__dirname, '..', '.xhs-chrome-profile');
 const DETAIL_N = Number(process.env.XHS_DETAIL_N || 5);
@@ -433,6 +439,81 @@ async function handleSaveConfig(req, res, q) {
   try { const data = JSON.parse(q.get('data') || '{}'); db.setConfig(data); res.end(JSON.stringify({ ok: true })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 
+async function readJsonBody(req, maxBytes = 65536) {
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (Buffer.byteLength(body, 'utf8') > maxBytes) throw new Error('请求内容过大');
+  }
+  return JSON.parse(body || '{}');
+}
+
+async function handleSaveProxyConfig(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ ok: false, msg: '仅支持 POST' })); return; }
+  try {
+    const input = await readJsonBody(req);
+    const existing = db.getConfig();
+    const data = {
+      proxy_enabled: input.proxy_enabled === true,
+      proxy_city: String(input.proxy_city || '').trim().slice(0, 40),
+      proxy_protocol: 'http',
+      proxy_host: String(input.proxy_host || '').trim().slice(0, 255),
+      proxy_port: Math.max(0, Math.min(65535, Math.floor(Number(input.proxy_port) || 0))),
+      proxy_username: String(input.proxy_username || '').slice(0, 255),
+      proxy_password: input.proxy_password ? String(input.proxy_password).slice(0, 255) : String(existing.proxy_password || '')
+    };
+    if (data.proxy_enabled && (!data.proxy_city || !data.proxy_host || !data.proxy_port || !data.proxy_username || !data.proxy_password)) {
+      res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: '启用代理时必须完整填写城市、主机、端口、用户名和密码' })); return;
+    }
+    db.setConfig(data);
+    res.end(JSON.stringify({ ok: true, restartRequired: true }));
+  } catch (e) {
+    res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message }));
+  }
+}
+
+function normalizeProxyCity(value) {
+  return String(value || '').replace(/[省市\s]/g, '').trim();
+}
+
+function findProxyProfile(profiles, city) {
+  const wanted = normalizeProxyCity(city);
+  if (!profiles || typeof profiles !== 'object' || !wanted) return null;
+  const key = Object.keys(profiles).find(name => normalizeProxyCity(name) === wanted);
+  const profile = key && profiles[key];
+  return profile && typeof profile === 'object' ? { key, profile } : null;
+}
+
+async function handleSelectProxyCity(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ ok: false, msg: '仅支持 POST' })); return; }
+  try {
+    const input = await readJsonBody(req);
+    const existing = db.getConfig();
+    const found = findProxyProfile(existing.proxy_profiles, input.city);
+    if (!found) {
+      res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: '该城市的固定 IP 尚未配置' })); return;
+    }
+    const profile = found.profile;
+    if (!profile.host || !Number(profile.port) || !profile.username || !profile.password) {
+      res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: '该城市的固定 IP 配置不完整' })); return;
+    }
+    db.setConfig({
+      proxy_enabled: true,
+      proxy_city: found.key,
+      proxy_protocol: 'http',
+      proxy_host: String(profile.host),
+      proxy_port: Number(profile.port),
+      proxy_username: String(profile.username),
+      proxy_password: String(profile.password)
+    });
+    res.end(JSON.stringify({ ok: true, city: found.key, restartRequired: true }));
+  } catch (e) {
+    res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message }));
+  }
+}
+
 async function handleLoginStatus(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
@@ -643,7 +724,7 @@ function busSend(type, data) { if (type === 'log') emitLog(data); else emitEvent
 const OUTBOUND_FRESH_BATCH_SIZE = 8;
 const machine = { running: false, phase: 'idle', client: null, target: null, targets: [], lastScan: 0, lastInboxCheck: 0, sent: 0, replied: 0, done: 0, keywordIndex: 0, keywordTotal: 0, keywordSignature: '', scanCycleActive: false, scanSeen: new Set(), keywordCollected: new Map(), scanCollected: 0, runId: null, retrySourceRunId: 0, retryIdsByKeyword: new Map(), retryTotal: 0, retryScanComplete: false };
 const processedOutboundLeads = new Set();
-function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done, keywordIndex: machine.keywordIndex, keywordTotal: machine.keywordTotal, runId: machine.runId }; }
+function machineStatus() { return { running: machine.running, phase: machine.phase, live: db.getConfig().live_send === true, sent: machine.sent, replied: machine.replied, done: machine.done, keywordIndex: machine.keywordIndex, keywordTotal: machine.keywordTotal, runId: machine.runId, proxy: PROXY_RUNTIME }; }
 function resetMachineConnection() { machine.client = null; machine.target = null; }
 function isCdpConnectionError(error) { return /cdp_|no_page_target/i.test(String(error && error.message || error || '')); }
 function emitRunStats() { emitEvent('run-stats', db.taskRunReport(machine.runId)); }
@@ -839,9 +920,11 @@ async function _scanNextKeywordTargets(cfg, runId = machine.runId) {
   for (const note of notes) machine.scanSeen.add(note.id || note.url);
   const keywordCollected = alreadyCollected + notes.length;
   machine.keywordCollected.set(plan.keyword, keywordCollected);
-  machine.scanCollected += notes.length;
-  db.addTaskRunScan(runId, plan.keyword, notes.length);
-  const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(notes, cfg);
+  // “看到”按本轮唯一笔记计数。同一笔记在下一轮刷新或另一个关键词里再次
+  // 出现，只更新重复次数，不再重复入队，也不会制造虚假的待判断积压。
+  const freshNotes = db.recordTaskRunNotes({ runId, keyword: plan.keyword, notes });
+  machine.scanCollected += freshNotes.length;
+  const { tagged, targets, byIntent } = engine.prepareNotesForDetailClassification(freshNotes, cfg);
   tagged.forEach((n) => { try { db.upsertNote(n); } catch (e) {} });
   // 检索页只有标题；不能再按标题或评论数提前过滤。每篇都打开详情读取正文后分类。
   machine.targets = targets.map((t) => Object.assign({}, t, { classificationPending: true, sourceKeyword: plan.keyword }));
@@ -858,9 +941,9 @@ async function _scanNextKeywordTargets(cfg, runId = machine.runId) {
       machine.retryScanComplete = true;
     }
   }
-  emitEvent('stats', { total: notes.length, byIntent, targetCount: machine.targets.length });
+  emitEvent('stats', { total: freshNotes.length, byIntent, targetCount: machine.targets.length });
   emitRunStats();
-  emitLog('本关键词当前批次 ' + notes.length + ' 篇,' + formatCategoryCounts(byIntent) + ',全部打开详情读取标题+正文');
+  emitLog('本关键词当前批次扫描 ' + notes.length + ' 篇，其中本轮新笔记 ' + freshNotes.length + ' 篇,' + formatCategoryCounts(byIntent) + (freshNotes.length ? ',全部打开详情读取标题+正文' : ',重复笔记不再入队'));
 }
 
 async function engageOpenNote({ client, target, note, detail, cfg, dry, log, result, delivery = () => {}, shouldStop = () => false }) {
@@ -975,14 +1058,17 @@ async function engageOpenNote({ client, target, note, detail, cfg, dry, log, res
 
 async function _processOutbound(cfg, t, dry) {
   if (!machine.running) return;
+  const taskRunId = machine.runId;
+  let decisionRecorded = false;
+  db.startTaskRunNoteAttempt(taskRunId, t.id);
   const client = machine.client, target = machine.target;
   const browse = { imagesMin: cfg.browse_images_min, imagesMax: cfg.browse_images_max, bodyMin: cfg.browse_body_dwell_min, bodyMax: cfg.browse_body_dwell_max, cScrollMin: cfg.browse_comment_scrolls_min, cScrollMax: cfg.browse_comment_scrolls_max, cDwellMin: cfg.browse_comment_dwell_min, cDwellMax: cfg.browse_comment_dwell_max };
   try {
     await engine.readDetail({ client, target, note: t, browse, onLog: (m) => emitLog('  ' + m), shouldStop: () => !machine.running, onBeforeClose: async ({ detail }) => {
-      if (!machine.running) return;
+      if (!machine.running || machine.runId !== taskRunId) return;
       const keyword = t.sourceKeyword || '未标记关键词';
       const recordDelivery = (lead) => db.recordTaskRunDelivery({
-        runId: machine.runId,
+        runId: taskRunId,
         keyword,
         noteId: t.id,
         targetType: lead.targetType,
@@ -1000,11 +1086,30 @@ async function _processOutbound(cfg, t, dry) {
         emitLog('⚠ 检测到真实账号安全限制，已暂停这个账号，等人工验证后再开始');
         machine.running = false;
       }
-      if (totals.decision) db.recordTaskRunDecision({ runId: machine.runId, keyword: t.sourceKeyword || '未标记关键词', note: t, decision: totals.decision, replyCount: totals.sent });
+      if (totals.decision) {
+        db.recordTaskRunDecision({ runId: taskRunId, keyword: t.sourceKeyword || '未标记关键词', note: t, decision: totals.decision, replyCount: totals.sent });
+        decisionRecorded = true;
+      }
       emitEvent('status', machineStatus());
       emitRunStats();
     } });
-  } catch (e) { if (isCdpConnectionError(e)) resetMachineConnection(); emitLog('  跳过:' + e.message); }
+    if (!decisionRecorded && machine.running && machine.runId === taskRunId) throw new Error('note_detail_finished_without_decision');
+  } catch (e) {
+    if (engine.isAccountSecurityError(e)) throw e;
+    if (isCdpConnectionError(e)) resetMachineConnection();
+    if (!decisionRecorded && machine.running && machine.runId === taskRunId) {
+      const failure = db.recordTaskRunReadFailure({ runId: taskRunId, noteId: t.id, reason: e.message, maxAttempts: 2 });
+      if (failure.retry) {
+        machine.targets.push(t);
+        emitLog(`  详情读取失败:${e.message}；稍后自动重试 ${failure.attempts + 1}/2`);
+      } else {
+        emitLog(`  读取失败(已重试):${e.message}；单独计入读取失败，不再算待判断`);
+      }
+      emitRunStats();
+    } else {
+      emitLog('  跳过:' + e.message);
+    }
+  }
 }
 
 async function handleAutoRun(req, res, q) {
@@ -1073,7 +1178,14 @@ async function handleAutoRun(req, res, q) {
 
 async function handleConfig(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  try { res.end(JSON.stringify({ ok: true, config: db.getConfig() })); } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
+  try {
+    const config = db.getConfig();
+    config.proxy_cities = Object.keys(config.proxy_profiles && typeof config.proxy_profiles === 'object' ? config.proxy_profiles : {});
+    delete config.proxy_profiles;
+    config.proxy_password_set = !!config.proxy_password;
+    config.proxy_password = '';
+    res.end(JSON.stringify({ ok: true, config, proxy: PROXY_RUNTIME }));
+  } catch (e) { res.end(JSON.stringify({ ok: false, msg: e.message })); }
 }
 async function handleVisibilityCandidates(req, res, q) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1205,7 +1317,11 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/inbox-scan') { await handleInboxScan(req, res, u.searchParams); return; }
   if (u.pathname === '/api/inbox-list') { await handleInboxList(req, res, u.searchParams); return; }
   if (u.pathname === '/api/inbox-run') { await handleInboxRun(req, res, u.searchParams); return; }
-  if (u.pathname === '/api/engine/start') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine(), status: machineStatus() })); return; }
+  if (u.pathname === '/api/engine/start') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (PROXY_RUNTIME.status === 'blocked') { res.statusCode = 409; res.end(JSON.stringify({ ok: false, started: false, msg: PROXY_RUNTIME.message || '代理出口校验失败', status: machineStatus() })); return; }
+    res.end(JSON.stringify({ ok: true, started: startMachine(), status: machineStatus() })); return;
+  }
   if (u.pathname === '/api/engine/retry-failed') { const retryRunId = Number(u.searchParams.get('run_id')) || 0; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, started: startMachine({ retryRunId }), status: machineStatus() })); return; }
   if (u.pathname === '/api/engine/stop') { stopMachine(); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, status: machineStatus() })); return; }
   if (u.pathname === '/api/browser/refresh') { await handleBrowserRefresh(req, res); return; }
@@ -1239,9 +1355,11 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/visibility/candidates') { await handleVisibilityCandidates(req, res, u.searchParams); return; }
   if (u.pathname === '/api/visibility/check') { await handleVisibilityCheck(req, res, u.searchParams); return; }
   if (u.pathname === '/api/visibility/mark') { await handleVisibilityMark(req, res, u.searchParams); return; }
-  if (u.pathname === '/api/account') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, accountId: ACCOUNT_ID, port: PORT })); return; }
+  if (u.pathname === '/api/account') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, accountId: ACCOUNT_ID, port: PORT, proxy: PROXY_RUNTIME })); return; }
   if (u.pathname === '/api/throttle') { await handleThrottle(req, res); return; }
   if (u.pathname === '/api/save-config') { await handleSaveConfig(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/proxy-city') { await handleSelectProxyCity(req, res); return; }
+  if (u.pathname === '/api/proxy-config') { await handleSaveProxyConfig(req, res); return; }
   res.writeHead(404); res.end('not found');
 });
 

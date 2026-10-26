@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const { xhsZoomFactor } = require('../src/view-scale');
 const { usesBrowser } = require('./account-surface');
 const { clearBrowserCachesOnRequest } = require('./cache-maintenance');
+const { readAccountProxy, verifyHttpProxy, applyProxyToSession } = require('./proxy-runtime');
 
 const { ACCOUNT_COUNT, UI_PORT_BASE, normalizeAccountId } = require('../src/account-config');
 const CDP_PORT = 9333;
@@ -24,6 +25,8 @@ let taskWakeLockId = null;
 const accountViews = new Map();
 const accountWorkers = new Map();
 const runningAccounts = new Set();
+const accountProxyStates = new Map();
+const proxyCredentialsByContentsId = new Map();
 function accountMeta(id) {
   return {
     id,
@@ -104,7 +107,7 @@ function selectAccount(accountId) {
   layoutBrowserView();
 }
 
-function startWorker(id) {
+function startWorker(id, proxyState = { status: 'disabled', city: '', ip: '', message: '' }) {
   const meta = accountMeta(id);
   initializeAccountData(id);
   const worker = fork(path.join(__dirname, '..', 'src', 'server.js'), [], {
@@ -115,7 +118,11 @@ function startWorker(id) {
       XHS_CDP_ENDPOINT: `http://127.0.0.1:${CDP_PORT}`,
       XHS_ACCOUNT_ID: String(meta.id),
       XHS_ACCOUNT_MARKER: meta.marker,
-      XHS_DATA_DIR: meta.dataDir
+      XHS_DATA_DIR: meta.dataDir,
+      XHS_PROXY_STATUS: String(proxyState.status || 'disabled'),
+      XHS_PROXY_CITY: String(proxyState.city || ''),
+      XHS_PROXY_IP: String(proxyState.ip || ''),
+      XHS_PROXY_MESSAGE: String(proxyState.message || '')
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc']
   });
@@ -128,6 +135,38 @@ function startWorker(id) {
   });
   worker.on('exit', () => { runningAccounts.delete(id); syncTaskWakeLock(); accountWorkers.delete(id); });
   accountWorkers.set(id, worker);
+}
+
+async function prepareAccountProxyStates() {
+  const checks = new Map();
+  for (let id = 1; id <= ACCOUNT_COUNT; id++) {
+    initializeAccountData(id);
+    const meta = accountMeta(id);
+    let config;
+    try { config = readAccountProxy(meta.dataDir); }
+    catch (error) {
+      accountProxyStates.set(id, { status: 'blocked', city: '', ip: '', message: `代理配置读取失败：${error.message}`, config: null });
+      continue;
+    }
+    if (!config.enabled) {
+      accountProxyStates.set(id, { status: 'disabled', city: '', ip: '', message: '未启用代理', config });
+      continue;
+    }
+    if (config.error) {
+      accountProxyStates.set(id, { status: 'blocked', city: '', ip: '', message: config.error, config });
+      continue;
+    }
+    const signature = [config.protocol, config.host, config.port, config.username, config.password, config.expectedCity].join('|');
+    if (!checks.has(signature)) checks.set(signature, verifyHttpProxy(config));
+    const checked = await checks.get(signature);
+    accountProxyStates.set(id, { ...checked, config });
+  }
+  return accountProxyStates;
+}
+
+function blockedProxyPage(id, state) {
+  const message = String(state && state.message || '代理配置不可用').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><meta charset="utf-8"><style>body{font-family:system-ui;padding:48px;color:#344054}h2{color:#d92d20}</style><h2>账号 ${id} 已停止联网</h2><p>${message}</p><p>请在任务设置中修正代理并重启软件。</p>`);
 }
 
 function stopWorkers() {
@@ -144,14 +183,23 @@ ipcMain.on('view-visible', (e, visible) => {
   layoutBrowserView();
 });
 ipcMain.on('account-selected', (e, accountId) => selectAccount(accountId));
+app.on('login', (event, webContents, details, authInfo, callback) => {
+  if (!authInfo || !authInfo.isProxy || !webContents) return;
+  const credentials = proxyCredentialsByContentsId.get(webContents.id);
+  if (!credentials) return;
+  event.preventDefault();
+  callback(credentials.username, credentials.password);
+});
 app.whenReady().then(async () => {
   // 仅显式维护启动清缓存。包含账号 5 旧网页分区，不删除 Cookie、设置、图库或数据库。
   await clearBrowserCachesOnRequest({
     argv: process.argv, session,
     accounts: Array.from({ length: ACCOUNT_COUNT }, (_, index) => accountMeta(index + 1))
   });
-  // 每个网页账号拥有独立任务服务与持久登录页面，启动时不自动运行获客任务。
-  for (let id = 1; id <= ACCOUNT_COUNT; id++) startWorker(id);
+  // 每个网页账号拥有独立任务服务与持久登录页面，启动时先验证其固定出口。
+  // 启用了代理但校验失败的账号会 fail-closed，不会回落到本机直连。
+  await prepareAccountProxyStates();
+  for (let id = 1; id <= ACCOUNT_COUNT; id++) startWorker(id, accountProxyStates.get(id));
 
   win = new BrowserWindow({
     width: 1520,
@@ -171,8 +219,16 @@ app.whenReady().then(async () => {
     view.webContents.setBackgroundThrottling(false);
     markBrowserAccount(view, meta.marker);
     view.webContents.on('did-finish-load', layoutBrowserView);
+    const proxyState = accountProxyStates.get(id) || { status: 'disabled', config: null };
+    if (proxyState.status === 'ready') {
+      proxyCredentialsByContentsId.set(view.webContents.id, { username: proxyState.config.username, password: proxyState.config.password });
+      await applyProxyToSession(view.webContents.session, proxyState.config);
+      console.log(`[账号${id}] 固定出口已验证：${proxyState.city} ${proxyState.ip}`);
+    }
     // URL 标记是首屏的快速绑定；后续页面由 window.name 保持账号身份。
-    view.webContents.loadURL(`https://www.xiaohongshu.com/?sla_account=${encodeURIComponent(meta.marker)}`);
+    view.webContents.loadURL(proxyState.status === 'blocked'
+      ? blockedProxyPage(id, proxyState)
+      : `https://www.xiaohongshu.com/?sla_account=${encodeURIComponent(meta.marker)}`);
     accountViews.set(id, view);
   }
   layoutBrowserView();

@@ -4,6 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+
+test('console inline script parses before the app is launched', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const scripts = html.split('<script>').slice(1).map(block => block.split('</script>')[0]);
+  assert.ok(scripts.length > 0);
+  for (const [index, source] of scripts.entries()) assert.doesNotThrow(() => new vm.Script(source, { filename: `app-inline-${index}.js` }));
+});
 
 test('inbox basis context is collapsed after the reply content', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
@@ -25,7 +33,10 @@ test('console exposes per-run keyword statistics and judgement evidence', () => 
   assert.ok(html.includes('/api/engine/run-stats'), 'statistics should load from the run-statistics endpoint');
   assert.ok(html.includes('判断明细'), 'the panel should expose judgement evidence');
   assert.ok(html.includes("Number(item.model_failed)"), 'model failures should render as their own decision state');
-  assert.ok(html.includes("['调用失败', totals.failed_count]"), 'model failures should have their own summary metric');
+  assert.ok(html.includes("['模型调用失败', totals.failed_count]"), 'model failures should have their own summary metric');
+  assert.ok(html.includes("['读取失败', readFailedCount]"), 'detail-read failures should have their own summary metric');
+  assert.ok(html.includes('看到＝已判断＋读取失败＋待判断'), 'the unique-note funnel identity should be visible');
+  assert.ok(html.includes('d.readFailures || []'), 'read-failure details should be rendered separately');
   assert.ok(html.includes('有用＝笔记作者符合获客模型且地区匹配'), 'the useful-note definition should be visible');
 });
 
@@ -65,6 +76,17 @@ test('task settings expose up to ten fixed outreach copies and clarify pending a
   assert.ok(html.includes('outreach_fixed_texts: outreachCopies'));
   assert.ok(html.includes('待分析笔记'));
   assert.equal(html.includes('<div class="l">待评论</div>'), false);
+});
+
+test('lead model exposes a simple per-account city IP selector', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="lm_proxy_city"'));
+  assert.ok(html.includes('<option value="石家庄">石家庄</option>'));
+  assert.ok(html.includes('<option value="成都">成都</option>'));
+  assert.ok(html.indexOf('id="lm_proxy_city"') < html.indexOf('id="lm_service_areas"'));
+  assert.ok(html.includes("fetch('/api/proxy-city'"));
+  assert.ok(html.includes('验证失败会禁止直连'));
+  for (const removed of ['id="proxy_host"', 'id="proxy_port"', 'id="proxy_username"', 'id="proxy_password"']) assert.equal(html.includes(removed), false);
 });
 
 test('shared console exposes one global cross-account comment visibility audit', () => {

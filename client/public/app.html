@@ -326,7 +326,7 @@
           <span class="hint">每次从「开始」到「停止」自动保留</span>
           <select id="runstats-select" onchange="loadRunStats(this.value)" style="margin-left:auto;max-width:260px"></select>
         </div>
-        <div class="hint" style="margin-bottom:8px">有用＝笔记作者符合获客模型且地区匹配；无用＝分类、地区或置信度不符合。已回复只统计实际成功发送的消息。</div>
+        <div class="hint" style="margin-bottom:8px">看到＝本轮按笔记 ID 去重后的数量；看到＝已判断＋读取失败＋待判断。有用＝笔记作者符合获客模型且地区匹配；无用＝分类、地区或置信度不符合。详情读取会自动重试一次，仍失败才计入读取失败；已回复只统计实际成功发送的消息。</div>
         <div id="runstats" class="hint">还没有执行统计，开始一次任务后会在这里显示。</div>
       </div>
 
@@ -463,6 +463,13 @@
         <div style="padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;margin:6px 0 14px">
           <label style="cursor:pointer;font-weight:700"><input type="checkbox" id="lm_llm_classification_enabled"> 调用大模型判断笔记分类</label>
           <div class="hint" style="margin-top:6px">无论开关状态，每篇笔记都会先打开并读取标题＋完整正文。关闭时按下面的命中/排除关键词分类；打开时按每个分类的“LLM 判断说明”分类。模型服务商和 API Key 在“模型设置”中配置。</div>
+        </div>
+        <div class="row">
+          <div class="fld">
+            <label>当前账号 IP 城市</label>
+            <select id="lm_proxy_city" onchange="selectProxyCity(this.value)" style="min-width:150px"><option value="石家庄">石家庄</option><option value="成都">成都</option></select>
+            <div class="hint" id="lm_proxy_runtime_hint">选择后自动保存；软件下次打开时验证真实出口城市，验证失败会禁止直连。</div>
+          </div>
         </div>
         <div class="row">
           <div class="fld" style="flex:1">
@@ -701,9 +708,9 @@ renderAccountSwitcher();
 if (window.electronView) { window.electronView.selectAccount(activeAccountId); window.electronView.setVisible(true); }
 loadAccountLabels();
 
-var _cfg = {};
+var _cfg = {}, _proxyRuntime = {};
 async function getCfg() {
-  try { const d = await fetch('/api/config').then(r => r.json()); _cfg = (d && d.config) || {}; } catch (e) { _cfg = {}; }
+  try { const d = await fetch('/api/config').then(r => r.json()); _cfg = (d && d.config) || {}; _proxyRuntime = (d && d.proxy) || {}; } catch (e) { _cfg = {}; _proxyRuntime = {}; }
   return _cfg;
 }
 function setVal(id, v) { const el = $(id); if (el != null && v != null) el.value = v; }
@@ -853,10 +860,30 @@ async function loadLeadModelSettings() {
   const m = c.lead_model || {};
   setVal('lm_name', m.name || '租房获客');
   if ($('lm_llm_classification_enabled')) $('lm_llm_classification_enabled').checked = m.llmClassificationEnabled === true;
+  setVal('lm_proxy_city', c.proxy_city || '石家庄');
+  if ($('lm_proxy_runtime_hint')) {
+    const p = _proxyRuntime || {};
+    const label = p.status === 'ready' ? ('✓ 当前出口：' + (p.city || '') + ' · ' + (p.ip || '')) : (p.status === 'blocked' ? ('✗ 已阻止直连：' + (p.message || '固定 IP 不可用')) : '选择后自动保存，软件下次打开时生效');
+    $('lm_proxy_runtime_hint').textContent = label;
+    $('lm_proxy_runtime_hint').style.color = p.status === 'ready' ? '#17633d' : (p.status === 'blocked' ? 'var(--red)' : '');
+  }
   setVal('lm_service_areas', (Array.isArray(c.lead_local_words) ? c.lead_local_words : []).join('，'));
   setVal('lm_location_aliases', (Array.isArray(c.lead_location_aliases) ? c.lead_location_aliases : []).map(function (item) { return String((item && item.alias) || '') + ' => ' + String((item && item.serviceArea) || ''); }).filter(function (line) { return !/^\s*=>\s*$/.test(line); }).join('\n'));
   renderLeadSlots(m.slots || []);
   renderLeadCategories(m.categories || []);
+}
+async function selectProxyCity(city) {
+  const hint = $('lm_proxy_runtime_hint');
+  hint.style.color = ''; hint.textContent = '正在保存 ' + city + ' 固定 IP…';
+  try {
+    const response = await fetch('/api/proxy-city', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ city: city }) });
+    const result = await response.json();
+    if (!result.ok) throw new Error(result.msg || '保存失败');
+    _cfg.proxy_city = result.city;
+    hint.style.color = '#17633d'; hint.textContent = '✓ 已选择 ' + result.city + '；重新打开软件后自动校验并使用该城市 IP。';
+  } catch (error) {
+    hint.style.color = 'var(--red)'; hint.textContent = '✗ ' + error.message;
+  }
 }
 function parseWords(v) { return String(v || '').split(/[，,、\n]+/).map(function (s) { return s.trim(); }).filter(Boolean); }
 function parseLocationAliases(v, serviceAreas) {
@@ -1502,20 +1529,28 @@ function renderRunStats(d) {
   if (!run) { out.innerHTML = '还没有执行统计，开始一次任务后会在这里显示。'; return; }
   const keywords = d.keywords || [];
   const totals = keywords.reduce(function (acc, row) {
-    ['scanned_count','judged_count','useful_count','review_count','useless_count','failed_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
+    ['scanned_count','judged_count','useful_count','review_count','useless_count','failed_count','read_failed_count','reply_count','pending_count'].forEach(function (key) { acc[key] += Number(row[key]) || 0; });
     return acc;
-  }, { scanned_count: 0, judged_count: 0, useful_count: 0, review_count: 0, useless_count: 0, failed_count: 0, reply_count: 0, pending_count: 0 });
+  }, { scanned_count: 0, judged_count: 0, useful_count: 0, review_count: 0, useless_count: 0, failed_count: 0, read_failed_count: 0, reply_count: 0, pending_count: 0 });
   const deliveryCounts = (d.deliveries || []).reduce(function (acc, row) { acc[row.status] = Number(row.count) || 0; return acc; }, {});
   const runSummary = d.summary || {};
+  const seenCount = Object.prototype.hasOwnProperty.call(runSummary, 'seen_count') ? Number(runSummary.seen_count) || 0 : totals.scanned_count;
+  const judgedCount = Object.prototype.hasOwnProperty.call(runSummary, 'judged_count') ? Number(runSummary.judged_count) || 0 : totals.judged_count;
+  const readFailedCount = Object.prototype.hasOwnProperty.call(runSummary, 'read_failed_count') ? Number(runSummary.read_failed_count) || 0 : totals.read_failed_count;
+  const pendingCount = Object.prototype.hasOwnProperty.call(runSummary, 'pending_count') ? Number(runSummary.pending_count) || 0 : totals.pending_count;
   const summary = '<div class="mgrid run-metrics" style="margin:0 0 10px">'
-    + [['看到', totals.scanned_count], ['已判断', totals.judged_count], ['有用', totals.useful_count], ['去重有用', Number(runSummary.unique_useful_count) || 0], ['重复有用', Number(runSummary.duplicate_useful_count) || 0], ['地区待确认', totals.review_count], ['无用', totals.useless_count], ['调用失败', totals.failed_count], ['已回复', totals.reply_count], ['待判断', totals.pending_count]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
+    + [['看到', seenCount], ['已判断', judgedCount], ['有用', totals.useful_count], ['去重有用', Number(runSummary.unique_useful_count) || 0], ['重复有用', Number(runSummary.duplicate_useful_count) || 0], ['地区待确认', totals.review_count], ['无用', totals.useless_count], ['模型调用失败', totals.failed_count], ['读取失败', readFailedCount], ['已回复', totals.reply_count], ['待判断', pendingCount]].map(function (item) { return '<div class="metric"><div class="l">' + item[0] + '</div><div class="v">' + item[1] + '</div></div>'; }).join('')
     + '</div>';
   const deliveryLabels = { sent: '发送成功', dry_run: '演练定位', send_button_not_found: '发送按钮未找到', composer_not_found: '评论框未找到', reply_target_mismatch: '回复对象未确认', reply_send_not_found: '回复发送按钮未找到', send_unconfirmed: '发送未确认', already_commented: '已评论跳过', duplicate_in_run: '本轮重复', copy_invalid: '文案校验未过', rate_limited: '触发限频', account_blocked: '账号受限', typed_text_mismatch: '输入校验失败', input_occupied: '输入框有残留', error: '其他失败' };
   const deliveryRows = Object.keys(deliveryCounts).length ? Object.keys(deliveryCounts).map(function (status) { return '<span class="badge ' + (status === 'sent' ? 'b-ok' : 'b-warn') + '" style="margin:0 6px 6px 0">' + esc(deliveryLabels[status] || status) + ' ' + deliveryCounts[status] + '</span>'; }).join('') : '<span class="hint">本轮还没有产生发送动作。</span>';
   const delivery = '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">发送结果拆分</div><div>' + deliveryRows + '</div>';
-  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>有用</td><td>地区待确认</td><td>无用</td><td>调用失败</td><td>已回复</td><td>待判断</td></tr>'
-    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.review_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.failed_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
+  const table = keywords.length ? '<table class="rec"><tr><td>关键词</td><td>看到</td><td>已判断</td><td>有用</td><td>地区待确认</td><td>无用</td><td>模型调用失败</td><td>读取失败</td><td>已回复</td><td>待判断</td></tr>'
+    + keywords.map(function (row) { return '<tr><td>' + esc(row.keyword) + '</td><td>' + Number(row.scanned_count || 0) + '</td><td>' + Number(row.judged_count || 0) + '</td><td>' + Number(row.useful_count || 0) + '</td><td>' + Number(row.review_count || 0) + '</td><td>' + Number(row.useless_count || 0) + '</td><td>' + Number(row.failed_count || 0) + '</td><td>' + Number(row.read_failed_count || 0) + '</td><td>' + Number(row.reply_count || 0) + '</td><td>' + Number(row.pending_count || 0) + '</td></tr>'; }).join('')
     + '</table>' : '<div class="hint">当前这轮还没有检索到笔记。</div>';
+  const readFailures = (d.readFailures || []).map(function (item) {
+    const title = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
+    return '<details class="basis-detail"><summary><span class="badge b-bad">读取失败</span>' + esc(item.keyword) + ' · ' + title + ' · 已尝试 ' + Number(item.attempt_count || 0) + ' 次</summary><div>' + esc(item.failure_reason || '详情读取失败') + '</div></details>';
+  }).join('');
   const decisions = (d.decisions || []).map(function (item) {
     if (Number(item.model_failed)) {
       const failedTitle = item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(item.title || '无标题') + '</a>' : esc(item.title || '无标题');
@@ -1526,7 +1561,7 @@ function renderRunStats(d) {
     const facts = [item.reason ? '判断：' + item.reason : '', item.evidence ? '分类依据：' + item.evidence : '', item.location_evidence ? '地点依据：' + item.location_evidence : ''].filter(Boolean).map(esc).join('\n');
     return '<details class="basis-detail"><summary>' + tag + esc(item.keyword) + ' · ' + title + ' · ' + esc(item.category_name || '未分类') + ' · 地区' + esc(item.location_match || 'unknown') + (Number(item.reply_count) ? ' · 已回复 ' + Number(item.reply_count) : '') + '</summary><div style="white-space:pre-wrap">' + (facts || '未提供更多判断依据') + '</div></details>';
   }).join('');
-  out.innerHTML = '<div class="hint" style="margin-bottom:8px">开始：' + esc(formatLocalSecond(run.started_at) || '') + '　状态：' + (run.status === 'running' ? '运行中' : '已停止') + (run.live ? '　真发' : '　演练') + '</div>' + summary + delivery + table + '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">判断明细</div>' + (decisions || '<div class="hint">尚未完成笔记判断。</div>');
+  out.innerHTML = '<div class="hint" style="margin-bottom:8px">开始：' + esc(formatLocalSecond(run.started_at) || '') + '　状态：' + (run.status === 'running' ? '运行中' : '已停止') + (run.live ? '　真发' : '　演练') + '</div>' + summary + delivery + table + (readFailures ? '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">读取失败明细</div>' + readFailures : '') + '<div style="font-size:13px;font-weight:600;margin:12px 0 6px">判断明细</div>' + (decisions || '<div class="hint">尚未完成笔记判断。</div>');
 }
 // ── 常驻机器:总开关 + 实时日志流(关网页/刷新都不影响机器,只反映状态)──
 let _stream = null, _machineRunning = false;
@@ -1555,7 +1590,7 @@ function applyMachineStatus(s) {
 async function engineStart() {
   if ($('autoreal') && $('autoreal').checked && !confirm('⚠ 真发已开!机器会真的发评论/回复(务必全新小号)。确认开始?')) return;
   $('go').disabled = true;
-  fetch('/api/engine/start').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); }).catch(()=>{ $('go').disabled = false; });
+  fetch('/api/engine/start').then(r => r.json()).then(d => { if (d.status) applyMachineStatus(d.status); if (!d.ok && d.msg) alert('无法开始：' + d.msg); }).catch(()=>{ $('go').disabled = false; });
 }
 function engineStop() {
   $('stopbtn').disabled = true;

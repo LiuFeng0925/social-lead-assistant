@@ -38,6 +38,11 @@ test('one window creates 15 isolated web accounts without starting tasks or nati
     require(name) {
       if (name === 'electron') return electron;
       if (name === 'node:fs') return { existsSync: () => true };
+      if (name === './proxy-runtime') return {
+        readAccountProxy: () => ({ enabled: false, error: '' }),
+        verifyHttpProxy: async () => ({ ok: true, status: 'disabled', city: '', ip: '' }),
+        applyProxyToSession: async () => {}
+      };
       if (name === 'node:child_process') return { fork(file, args, options) {
         const worker = { file, options, stdout: { on() {} }, stderr: { on() {} }, on() {}, kill() {} };
         workers.push(worker); return worker;
@@ -60,6 +65,7 @@ test('one window creates 15 isolated web accounts without starting tasks or nati
     const env = workers[id - 1].options.env;
     assert.equal(env.XHS_ACCOUNT_ID, String(id));
     assert.equal(env.XHS_ACCOUNT_MARKER, 'xhs-lead-account-' + id);
+    assert.equal(env.XHS_PROXY_STATUS, 'disabled');
     assert.equal(path.basename(env.XHS_DATA_DIR), 'account-' + id);
     assert.equal(new URL(views[id - 1].url).searchParams.get('sla_account'), env.XHS_ACCOUNT_MARKER);
   }

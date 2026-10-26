@@ -39,7 +39,13 @@ function scanFixture() {
     engine: {
       prepareNotesForDetailClassification: (notes) => ({ tagged: notes, targets: notes, byIntent: { 待分析: notes.length } })
     },
-    db: { addTaskRunScan: (...args) => scans.push(args), upsertNote: (note) => savedNotes.push(note) },
+    db: {
+      recordTaskRunNotes: ({ runId, keyword, notes }) => {
+        scans.push([runId, keyword, notes.length]);
+        return notes;
+      },
+      upsertNote: (note) => savedNotes.push(note)
+    },
     emitLog: (message) => logs.push(message), emitEvent: (...args) => events.push(args),
     emitRunStats: () => {}, formatCategoryCounts: () => ''
   };

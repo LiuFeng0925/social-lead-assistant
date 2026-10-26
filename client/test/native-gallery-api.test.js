@@ -58,3 +58,40 @@ test('web account settings and task history stay isolated', async t => {
   assert.equal((await fetch(first.base + '/api/config').then(r => r.json())).config.account_label, '石家庄五号');
   assert.equal((await fetch(last.base + '/api/config').then(r => r.json())).config.account_label, '成都十五号');
 });
+
+test('account proxy credentials use POST storage and are never returned by config API', async t => {
+  const instance = await startServer(t, 3);
+  const saved = await fetch(instance.base + '/api/proxy-config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proxy_enabled: true, proxy_city: '石家庄', proxy_host: '192.0.2.10', proxy_port: 29100, proxy_username: 'local-user', proxy_password: 'local-pass' })
+  }).then(r => r.json());
+  assert.equal(saved.ok, true);
+  assert.equal(saved.restartRequired, true);
+  const response = await fetch(instance.base + '/api/config').then(r => r.json());
+  assert.equal(response.config.proxy_enabled, true);
+  assert.equal(response.config.proxy_city, '石家庄');
+  assert.equal(response.config.proxy_password, '');
+  assert.equal(response.config.proxy_password_set, true);
+});
+
+test('account selects a saved city profile without exposing either profile credential', async t => {
+  const instance = await startServer(t, 7);
+  const profiles = {
+    '石家庄': { protocol: 'http', host: '192.0.2.10', port: 29100, username: 'sjz-user', password: 'sjz-pass' },
+    '成都': { protocol: 'http', host: '192.0.2.20', port: 29100, username: 'cd-user', password: 'cd-pass' }
+  };
+  const seed = encodeURIComponent(JSON.stringify({ proxy_profiles: profiles }));
+  assert.equal((await fetch(instance.base + '/api/save-config?data=' + seed).then(r => r.json())).ok, true);
+  const selected = await fetch(instance.base + '/api/proxy-city', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ city: '成都' })
+  }).then(r => r.json());
+  assert.equal(selected.ok, true);
+  assert.equal(selected.city, '成都');
+  const response = await fetch(instance.base + '/api/config').then(r => r.json());
+  assert.deepEqual(response.config.proxy_cities.sort(), ['成都', '石家庄']);
+  assert.equal(response.config.proxy_city, '成都');
+  assert.equal(response.config.proxy_password, '');
+  assert.equal(Object.hasOwn(response.config, 'proxy_profiles'), false);
+  assert.equal(JSON.stringify(response).includes('sjz-pass'), false);
+  assert.equal(JSON.stringify(response).includes('cd-pass'), false);
+});

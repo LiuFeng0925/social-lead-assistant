@@ -72,3 +72,60 @@ test('run report counts location-review tenants separately from useless notes', 
   assert.equal(report.keywords[0].useless_count, 0);
   assert.equal(report.decisions[0].review_required, 1);
 });
+
+test('run funnel counts unique notes and keeps pending plus read failures truthful', () => {
+  const runId = db.createTaskRun({ live: true });
+  const first = [
+    { id: 'unique-a', title: '求租一室' },
+    { id: 'unique-b', title: '求租两室' }
+  ];
+  const addedFirst = db.recordTaskRunNotes({ runId, keyword: '石家庄求租', notes: first });
+  const addedAgain = db.recordTaskRunNotes({ runId, keyword: '石家庄求租', notes: [first[0]] });
+  const addedOtherKeyword = db.recordTaskRunNotes({
+    runId,
+    keyword: '长安区求租',
+    notes: [first[0], { id: 'unique-c', title: '长安找房' }]
+  });
+
+  assert.deepEqual(addedFirst.map((note) => note.id), ['unique-a', 'unique-b']);
+  assert.deepEqual(addedAgain, []);
+  assert.deepEqual(addedOtherKeyword.map((note) => note.id), ['unique-c']);
+
+  db.startTaskRunNoteAttempt(runId, 'unique-a');
+  db.recordTaskRunDecision({
+    runId,
+    keyword: '石家庄求租',
+    note: first[0],
+    decision: { eligible: true, categoryName: '求租笔记', locationMatch: 'match', decisionReason: '符合条件' }
+  });
+
+  db.startTaskRunNoteAttempt(runId, 'unique-b');
+  const firstFailure = db.recordTaskRunReadFailure({ runId, noteId: 'unique-b', reason: 'note_card_not_found', maxAttempts: 2 });
+  assert.equal(firstFailure.retry, true);
+  db.startTaskRunNoteAttempt(runId, 'unique-b');
+  const finalFailure = db.recordTaskRunReadFailure({ runId, noteId: 'unique-b', reason: 'note_detail_not_opened', maxAttempts: 2 });
+  assert.equal(finalFailure.retry, false);
+
+  const report = db.taskRunReport(runId);
+  assert.deepEqual({
+    seen: report.summary.seen_count,
+    judged: report.summary.judged_count,
+    failed: report.summary.read_failed_count,
+    pending: report.summary.pending_count,
+    duplicates: report.summary.duplicate_seen_count
+  }, { seen: 3, judged: 1, failed: 1, pending: 1, duplicates: 2 });
+  assert.equal(report.summary.seen_count,
+    report.summary.judged_count + report.summary.read_failed_count + report.summary.pending_count);
+  assert.equal(report.readFailures[0].note_id, 'unique-b');
+  assert.equal(report.readFailures[0].attempt_count, 2);
+  assert.deepEqual(report.keywords.map((row) => ({
+    keyword: row.keyword,
+    seen: row.scanned_count,
+    judged: row.judged_count,
+    failed: row.read_failed_count,
+    pending: row.pending_count
+  })), [
+    { keyword: '石家庄求租', seen: 2, judged: 1, failed: 1, pending: 0 },
+    { keyword: '长安区求租', seen: 1, judged: 0, failed: 0, pending: 1 }
+  ]);
+});
