@@ -466,9 +466,10 @@
         </div>
         <div class="row">
           <div class="fld">
+            <label style="cursor:pointer;font-weight:700;margin-bottom:8px"><input type="checkbox" id="lm_proxy_enabled" onchange="setProxyEnabled(this.checked)"> 启用城市代理</label>
             <label>当前账号 IP 城市</label>
             <select id="lm_proxy_city" onchange="selectProxyCity(this.value)" style="min-width:150px"><option value="石家庄">石家庄</option><option value="成都">成都</option></select>
-            <div class="hint" id="lm_proxy_runtime_hint">选择后自动保存；软件下次打开时验证真实出口城市，验证失败会禁止直连。</div>
+            <div class="hint" id="lm_proxy_runtime_hint">关闭后保留城市和代理资料；重新打开软件后改用本机网络。</div>
           </div>
         </div>
         <div class="row">
@@ -860,17 +861,46 @@ async function loadLeadModelSettings() {
   const m = c.lead_model || {};
   setVal('lm_name', m.name || '租房获客');
   if ($('lm_llm_classification_enabled')) $('lm_llm_classification_enabled').checked = m.llmClassificationEnabled === true;
+  if ($('lm_proxy_enabled')) $('lm_proxy_enabled').checked = c.proxy_enabled === true;
   setVal('lm_proxy_city', c.proxy_city || '石家庄');
+  if ($('lm_proxy_city')) $('lm_proxy_city').disabled = c.proxy_enabled !== true;
   if ($('lm_proxy_runtime_hint')) {
     const p = _proxyRuntime || {};
-    const label = p.status === 'ready' ? ('✓ 当前出口：' + (p.city || '') + ' · ' + (p.ip || '')) : (p.status === 'blocked' ? ('✗ 已阻止直连：' + (p.message || '固定 IP 不可用')) : '选择后自动保存，软件下次打开时生效');
+    const label = c.proxy_enabled !== true
+      ? (p.status === 'disabled' ? '代理已关闭，当前使用本机网络。' : '已保存关闭；重新打开软件后改用本机网络。')
+      : (p.status === 'ready' ? ('✓ 当前出口：' + (p.city || '') + ' · ' + (p.ip || '')) : (p.status === 'blocked' ? ('✗ 已阻止直连：' + (p.message || '固定 IP 不可用')) : '已启用代理；重新打开软件后校验并生效。'));
     $('lm_proxy_runtime_hint').textContent = label;
-    $('lm_proxy_runtime_hint').style.color = p.status === 'ready' ? '#17633d' : (p.status === 'blocked' ? 'var(--red)' : '');
+    $('lm_proxy_runtime_hint').style.color = c.proxy_enabled !== true ? '' : (p.status === 'ready' ? '#17633d' : (p.status === 'blocked' ? 'var(--red)' : ''));
   }
   setVal('lm_service_areas', (Array.isArray(c.lead_local_words) ? c.lead_local_words : []).join('，'));
   setVal('lm_location_aliases', (Array.isArray(c.lead_location_aliases) ? c.lead_location_aliases : []).map(function (item) { return String((item && item.alias) || '') + ' => ' + String((item && item.serviceArea) || ''); }).filter(function (line) { return !/^\s*=>\s*$/.test(line); }).join('\n'));
   renderLeadSlots(m.slots || []);
   renderLeadCategories(m.categories || []);
+}
+async function setProxyEnabled(enabled) {
+  const toggle = $('lm_proxy_enabled');
+  const city = $('lm_proxy_city');
+  const hint = $('lm_proxy_runtime_hint');
+  toggle.disabled = true;
+  hint.style.color = ''; hint.textContent = enabled ? '正在启用城市代理…' : '正在关闭城市代理…';
+  try {
+    const response = await fetch('/api/proxy-enabled', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) });
+    const result = await response.json();
+    if (!result.ok) throw new Error(result.msg || '保存失败');
+    _cfg.proxy_enabled = result.enabled === true;
+    toggle.checked = _cfg.proxy_enabled;
+    city.disabled = !_cfg.proxy_enabled;
+    hint.style.color = '#17633d';
+    hint.textContent = _cfg.proxy_enabled
+      ? '✓ 已启用 ' + (result.city || city.value) + ' 代理；重新打开软件后校验并生效。'
+      : '✓ 已关闭代理；重新打开软件后使用本机网络。城市和代理资料已保留。';
+  } catch (error) {
+    toggle.checked = !enabled;
+    city.disabled = enabled;
+    hint.style.color = 'var(--red)'; hint.textContent = '✗ ' + error.message;
+  } finally {
+    toggle.disabled = false;
+  }
 }
 async function selectProxyCity(city) {
   const hint = $('lm_proxy_runtime_hint');

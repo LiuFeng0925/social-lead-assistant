@@ -80,12 +80,15 @@ test('task settings expose up to ten fixed outreach copies and clarify pending a
 
 test('lead model exposes a simple per-account city IP selector', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="lm_proxy_enabled"'));
+  assert.ok(html.includes("fetch('/api/proxy-enabled'"));
+  assert.ok(html.includes('关闭后保留城市和代理资料'));
   assert.ok(html.includes('id="lm_proxy_city"'));
   assert.ok(html.includes('<option value="石家庄">石家庄</option>'));
   assert.ok(html.includes('<option value="成都">成都</option>'));
   assert.ok(html.indexOf('id="lm_proxy_city"') < html.indexOf('id="lm_service_areas"'));
   assert.ok(html.includes("fetch('/api/proxy-city'"));
-  assert.ok(html.includes('验证失败会禁止直连'));
+  assert.ok(html.includes('重新打开软件后校验并生效'));
   for (const removed of ['id="proxy_host"', 'id="proxy_port"', 'id="proxy_username"', 'id="proxy_password"']) assert.equal(html.includes(removed), false);
 });
 

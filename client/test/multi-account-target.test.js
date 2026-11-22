@@ -38,3 +38,34 @@ test('two-digit account markers cannot be mistaken for account 1', async () => {
   client.listTargets = async () => targets.slice(0, 3);
   await assert.rejects(() => client.resolvePageTarget({ accountMarker: 'xhs-lead-account-1' }), /account_page_target_not_ready/);
 });
+
+test('remembered account target survives URL and page marker changes', async () => {
+  const initial = { id: 'stable-account-4', type: 'page', url: 'https://www.xiaohongshu.com/?sla_account=xhs-lead-account-4', webSocketDebuggerUrl: 'ws://stable-account-4' };
+  const client = clientWithTargets([initial], {});
+  assert.equal((await client.resolvePageTarget({ accountMarker: 'xhs-lead-account-4' })).id, 'stable-account-4');
+
+  const navigated = { ...initial, url: 'https://www.xiaohongshu.com/search_result_ai?keyword=%E6%96%B0%E5%8D%8E%E5%8C%BA%E6%89%BE%E6%88%BF' };
+  client.listTargets = async () => [navigated];
+  client.sendCommand = async () => { throw new Error('page marker was cleared'); };
+  assert.equal((await client.resolvePageTarget({ accountMarker: 'xhs-lead-account-4' })).id, 'stable-account-4');
+});
+
+test('persistent storage marker can rebind an account after target recreation', async () => {
+  const recreated = { id: 'recreated-account-5', type: 'page', url: 'https://www.xiaohongshu.com/search_result?keyword=B', webSocketDebuggerUrl: 'ws://recreated-account-5' };
+  const client = clientWithTargets([recreated], { 'recreated-account-5': 'xhs-lead-account-5' });
+  const target = await client.resolvePageTarget({ accountMarker: 'xhs-lead-account-5' });
+  assert.equal(target.id, 'recreated-account-5');
+});
+
+test('Electron account marker writes a partition-local persistent identity', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8');
+  assert.match(source, /localStorage\.setItem\('__xhs_lead_account_marker'/);
+});
+
+test('an unresponsive account browser recovers only its own BrowserView', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8');
+  assert.match(source, /function installBrowserRecovery/);
+  assert.match(source, /webContents\.on\('unresponsive'/);
+  assert.match(source, /webContents\.on\('render-process-gone'/);
+  assert.doesNotMatch(source, /unresponsive[^]*app\.relaunch/);
+});

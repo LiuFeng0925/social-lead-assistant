@@ -5,6 +5,16 @@
 
 const { cdpFetch, cdpConnectWebSocket, alignCdpWebSocketUrl } = require('./cdp-fetch');
 
+// engine.connect() 会为登录检测、手动刷新等操作创建新的客户端实例。
+// 因此账号与 DevTools target 的绑定必须保存在进程级，而不能只放在实例上。
+// 每个账号工作进程相互隔离，这个缓存不会在账号之间串用。
+const rememberedTargetIds = new Map();
+const ACCOUNT_STORAGE_KEY = '__xhs_lead_account_marker';
+
+function accountTargetCacheKey(endpoint, accountMarker) {
+  return `${endpoint}\n${accountMarker}`;
+}
+
 async function waitForCommandResult(conn, id, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let skipped = 0;
@@ -59,24 +69,44 @@ class XhsCdpClient {
     const preferred = pages.filter((p) => p.url.includes(preferHost));
     if (!accountMarker) return preferred[0] || pages[0];
 
+    const cacheKey = accountTargetCacheKey(this.endpoint, accountMarker);
+    const rememberedId = rememberedTargetIds.get(cacheKey);
+    if (rememberedId) {
+      const remembered = preferred.find((p) => p.id === rememberedId);
+      // 同一个 BrowserView 在搜索页、详情页间跳转时 target id 不变。
+      // 优先复用首次精确绑定的 target，避免再次依赖会被站点改写的页面状态。
+      if (remembered) return remembered;
+      // BrowserView 被重建或 renderer 崩溃后 target id 会变化，允许下面重新发现。
+      rememberedTargetIds.delete(cacheKey);
+    }
+
+    const remember = (target) => {
+      rememberedTargetIds.set(cacheKey, target.id);
+      return target;
+    };
+
     // 首屏加载前，URL 中也带有标记，先走零开销的快速定位。
     const urlMatched = preferred.find((p) => {
       try { return new URL(p.url).searchParams.get('sla_account') === accountMarker; }
       catch (_) { return false; }
     });
-    if (urlMatched) return urlMatched;
+    if (urlMatched) return remember(urlMatched);
 
-    // 搜索、详情等页面跳转会丢掉 URL 参数，但同一个 BrowserView 的
-    // window.name 会持续存在；逐个探测后精确绑定到对应账号。
+    // 搜索、详情等页面跳转会丢掉 URL 参数，小红书也可能重写 window.name。
+    // Electron 会在账号自己的持久 session 中写入 localStorage 标记；先读它，
+    // 再兼容旧版本的 window.name，逐个探测后精确绑定到对应账号。
     for (const target of preferred) {
       try {
         const value = await this.sendCommand({
           target,
           method: 'Runtime.evaluate',
-          params: { expression: 'String(window.name || "")', returnByValue: true },
+          params: {
+            expression: `(() => { try { return String(localStorage.getItem(${JSON.stringify(ACCOUNT_STORAGE_KEY)}) || window.name || ""); } catch (_) { return String(window.name || ""); } })()`,
+            returnByValue: true
+          },
           timeoutMs: 1800
         });
-        if (value && value.value === accountMarker) return target;
+        if (value && value.value === accountMarker) return remember(target);
       } catch (e) { /* 页面正在跳转，继续检查其他候选页 */ }
     }
     throw new Error(`account_page_target_not_ready:${accountMarker}`);

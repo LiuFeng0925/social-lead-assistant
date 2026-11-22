@@ -69,11 +69,42 @@ process.on('xhs:task-wake-lock', setTaskWakeLock);
 function syncTaskWakeLock() { setTaskWakeLock(runningAccounts.size > 0); }
 
 function markBrowserAccount(view, marker) {
-  // 页面每次跳转后都重新标记；window.name 会跨同一个 BrowserView 的搜索/详情页
-  // 跳转保留，后端据此只驱动本账号的页面。
-  const apply = () => view.webContents.executeJavaScript(`window.name=${JSON.stringify(marker)};`, true).catch(() => {});
+  // window.name 可能被小红书页面脚本清空。账号 BrowserView 使用独立 partition，
+  // 因此再写一份 origin 内持久标记，页面跳转或 target 重建后仍能精确找回本账号。
+  const serialized = JSON.stringify(marker);
+  const apply = () => view.webContents.executeJavaScript(
+    `(() => { window.name=${serialized}; try { localStorage.setItem('__xhs_lead_account_marker', ${serialized}); } catch (_) {} })();`,
+    true
+  ).catch(() => {});
   view.webContents.on('dom-ready', apply);
   view.webContents.on('did-finish-load', apply);
+}
+
+function installBrowserRecovery(view, accountId, entryUrl) {
+  let recovering = false;
+  const resetRecovery = () => { recovering = false; };
+
+  // Chromium 明确报告页面失去响应时，只刷新这个账号。BrowserView 的
+  // partition 不变，所以 Cookie/扫码登录态仍保留，其他账号也不受影响。
+  view.webContents.on('unresponsive', () => {
+    if (recovering || view.webContents.isDestroyed()) return;
+    recovering = true;
+    console.error(`[账号${accountId}] 小红书页面无响应，正在单账号重载`);
+    view.webContents.reload();
+  });
+  view.webContents.on('responsive', resetRecovery);
+  view.webContents.on('did-finish-load', resetRecovery);
+
+  // renderer 真正崩溃时 reload 已无对象可用；同一个 BrowserView 重新打开
+  // 带账号标记的首页，随后由持久标记重新绑定新的 DevTools target。
+  view.webContents.on('render-process-gone', (_event, details = {}) => {
+    if (details.reason === 'clean-exit' || view.webContents.isDestroyed()) return;
+    recovering = true;
+    console.error(`[账号${accountId}] 小红书渲染进程退出(${details.reason || 'unknown'})，正在恢复`);
+    setTimeout(() => {
+      if (!view.webContents.isDestroyed()) view.webContents.loadURL(entryUrl).catch(() => {});
+    }, 500);
+  });
 }
 
 function layoutBrowserView() {
@@ -225,10 +256,12 @@ app.whenReady().then(async () => {
       await applyProxyToSession(view.webContents.session, proxyState.config);
       console.log(`[账号${id}] 固定出口已验证：${proxyState.city} ${proxyState.ip}`);
     }
-    // URL 标记是首屏的快速绑定；后续页面由 window.name 保持账号身份。
-    view.webContents.loadURL(proxyState.status === 'blocked'
+    const entryUrl = proxyState.status === 'blocked'
       ? blockedProxyPage(id, proxyState)
-      : `https://www.xiaohongshu.com/?sla_account=${encodeURIComponent(meta.marker)}`);
+      : `https://www.xiaohongshu.com/?sla_account=${encodeURIComponent(meta.marker)}`;
+    installBrowserRecovery(view, id, entryUrl);
+    // URL 标记是首屏的快速绑定；后续页面由 window.name 保持账号身份。
+    view.webContents.loadURL(entryUrl);
     accountViews.set(id, view);
   }
   layoutBrowserView();

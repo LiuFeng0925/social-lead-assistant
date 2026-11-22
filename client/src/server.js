@@ -514,6 +514,45 @@ async function handleSelectProxyCity(req, res) {
   }
 }
 
+async function handleSetProxyEnabled(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ ok: false, msg: '仅支持 POST' })); return; }
+  try {
+    const input = await readJsonBody(req);
+    const enabled = input.enabled === true;
+    const existing = db.getConfig();
+    if (!enabled) {
+      db.setConfig({ proxy_enabled: false });
+      res.end(JSON.stringify({ ok: true, enabled: false, restartRequired: true }));
+      return;
+    }
+
+    const found = findProxyProfile(existing.proxy_profiles, existing.proxy_city);
+    const profile = found ? found.profile : {
+      host: existing.proxy_host,
+      port: existing.proxy_port,
+      username: existing.proxy_username,
+      password: existing.proxy_password
+    };
+    const city = found ? found.key : String(existing.proxy_city || '').trim();
+    if (!city || !profile.host || !Number(profile.port) || !profile.username || !profile.password) {
+      res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: '请先选择并配置一个可用的城市代理' })); return;
+    }
+    db.setConfig({
+      proxy_enabled: true,
+      proxy_city: city,
+      proxy_protocol: 'http',
+      proxy_host: String(profile.host),
+      proxy_port: Number(profile.port),
+      proxy_username: String(profile.username),
+      proxy_password: String(profile.password)
+    });
+    res.end(JSON.stringify({ ok: true, enabled: true, city, restartRequired: true }));
+  } catch (e) {
+    res.statusCode = 400; res.end(JSON.stringify({ ok: false, msg: e.message }));
+  }
+}
+
 async function handleLoginStatus(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
@@ -1297,6 +1336,7 @@ const server = http.createServer(async (req, res) => {
   // 让 EventSource 和 fetch 可以无刷新切换，绝不对外网监听。
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   const u = new URL(req.url, `http://localhost:${PORT}`);
   if (u.pathname === '/account-config.js') {
@@ -1358,6 +1398,7 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/api/account') { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify({ ok: true, accountId: ACCOUNT_ID, port: PORT, proxy: PROXY_RUNTIME })); return; }
   if (u.pathname === '/api/throttle') { await handleThrottle(req, res); return; }
   if (u.pathname === '/api/save-config') { await handleSaveConfig(req, res, u.searchParams); return; }
+  if (u.pathname === '/api/proxy-enabled') { await handleSetProxyEnabled(req, res); return; }
   if (u.pathname === '/api/proxy-city') { await handleSelectProxyCity(req, res); return; }
   if (u.pathname === '/api/proxy-config') { await handleSaveProxyConfig(req, res); return; }
   res.writeHead(404); res.end('not found');

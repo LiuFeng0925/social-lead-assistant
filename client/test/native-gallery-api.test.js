@@ -95,3 +95,45 @@ test('account selects a saved city profile without exposing either profile crede
   assert.equal(JSON.stringify(response).includes('sjz-pass'), false);
   assert.equal(JSON.stringify(response).includes('cd-pass'), false);
 });
+
+test('account can disable and re-enable its proxy without deleting saved city profiles', async t => {
+  const instance = await startServer(t, 7);
+  const profiles = {
+    '石家庄': { protocol: 'http', host: '192.0.2.10', port: 29100, username: 'sjz-user', password: 'sjz-pass' }
+  };
+  const seed = encodeURIComponent(JSON.stringify({ proxy_enabled: true, proxy_city: '石家庄', proxy_profiles: profiles }));
+  assert.equal((await fetch(instance.base + '/api/save-config?data=' + seed).then(r => r.json())).ok, true);
+
+  const disabled = await fetch(instance.base + '/api/proxy-enabled', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false })
+  }).then(r => r.json());
+  assert.deepEqual(disabled, { ok: true, enabled: false, restartRequired: true });
+  let config = await fetch(instance.base + '/api/config').then(r => r.json());
+  assert.equal(config.config.proxy_enabled, false);
+  assert.deepEqual(config.config.proxy_cities, ['石家庄']);
+
+  const enabled = await fetch(instance.base + '/api/proxy-enabled', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true })
+  }).then(r => r.json());
+  assert.deepEqual(enabled, { ok: true, enabled: true, city: '石家庄', restartRequired: true });
+  config = await fetch(instance.base + '/api/config').then(r => r.json());
+  assert.equal(config.config.proxy_enabled, true);
+  assert.equal(config.config.proxy_password, '');
+  assert.equal(JSON.stringify(config).includes('sjz-pass'), false);
+});
+
+test('cross-account JSON settings requests pass the browser CORS preflight', async t => {
+  const instance = await startServer(t, 3);
+  const response = await fetch(instance.base + '/api/proxy-enabled', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'http://127.0.0.1:3101',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type'
+    }
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.match(response.headers.get('access-control-allow-methods') || '', /POST/);
+  assert.match(response.headers.get('access-control-allow-headers') || '', /Content-Type/i);
+});
